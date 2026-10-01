@@ -1,0 +1,19 @@
+# 只跟踪源码与构建脚本。
+# 其余全部忽略：AI 工具产物（AI/、.claude/、.codex/、.cindy/、.agents/、.mcp.json、
+# documents/、_local_*/）、IDE 配置（.idea/）、构建输出（cmake-build-debug/）等。
+/*
+!/.gitignore
+!/CMakeLists.txt
+!/main.cpp
+!/Runtime/
+
+# macOS / 编辑器噪声
+.DS_Store
+._*
+
+# dingman: skill bridge junction output (auto-managed)
+/.agents/skills/dingman_synlink/
+/.xdmaker/
+/.cindy/*
+/.cindy/project-knowledge/.lock
+/_local_*/
