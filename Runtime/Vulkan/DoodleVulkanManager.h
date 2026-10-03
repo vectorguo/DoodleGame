@@ -4,19 +4,18 @@
 
 #pragma once
 
-#include <vector>
-#include <vulkan/vulkan_core.h>
-
-#include "QueueFamilyIndices.h"
-#include "SwapChainSupportDetails.h"
-#include "Utility/Singleton.h"
+#include "DoodleSwapChain.h"
+#include "DoodleVulkanDevice.h"
 
 //前向声明。必须放在全局作用域
 struct GLFWwindow;
 
 namespace Doodle
 {
-    class DoodleVulkanManager : public Singleton<DoodleVulkanManager>
+    /**
+     * Vulkan子系统门面：持有设备层与交换链层，对外提供统一的Vulkan入口
+     */
+    class DoodleVulkanManager
     {
     public:
         /**
@@ -29,165 +28,47 @@ namespace Doodle
          */
         void Destroy();
 
-    private:
         /**
-         * 创建Vulkan Instance
+         * 获取Vulkan设备
          */
-        void CreateVkInstance();
+        [[nodiscard]] DoodleVulkanDevice& GetDevice()
+        {
+            return m_device;
+        }
 
         /**
-         * 销毁Vulkan Instance
+         * 获取Vulkan设备
          */
-        void DestroyVkInstance();
-
-#ifndef NDEBUG
-        /**
-         * 检查ValidationLayer的支持情况
-         */
-        static bool IsValidationLayerSupported();
-#endif
+        [[nodiscard]] const DoodleVulkanDevice& GetDevice() const
+        {
+            return m_device;
+        }
 
         /**
-         * 获取所需的扩展
-         * @return 所需扩展的名称列表
+         * 获取交换链
          */
-        static std::vector<const char*> GetRequiredExtensions();
+        [[nodiscard]] DoodleSwapChain& GetSwapChain()
+        {
+            return m_swapChain;
+        }
 
         /**
-         * 创建Window Surface
+         * 获取交换链
          */
-        void CreateSurface(GLFWwindow* pWindow);
-
-        /**
-         * 销毁Window Surface
-         */
-        void DestroySurface();
-
-        /**
-         * 选择物理设备
-         */
-        void ChoosePhysicalDevice();
-
-        /**
-         * 判断指定的物理设备是否合适
-         * @param pDevice 指定物理设备Handle
-         * @return 是否合适
-         */
-        bool IsDeviceSuitable(VkPhysicalDevice pDevice) const;
-
-        /**
-         * 检查物理设备是否支持所需扩展
-         * @param pDevice 指定物理设备Handle
-         * @param pExtensionName 扩展名称
-         * @return 是否支持
-         */
-        static bool IsDeviceExtensionSupported(VkPhysicalDevice pDevice, const char* pExtensionName);
-
-        /**
-         * 查找所需的QueueFamily的索引
-         * @param pDevice 指定物理设备Handle
-         * @return QueueFamilyIndices
-         */
-        QueueFamilyIndices FindQueueFamilies(VkPhysicalDevice pDevice) const;
-
-        /**
-         * 创建本地设备
-         */
-        void CreateLogicalDevice();
-
-        /**
-         * 销毁本地设备
-         */
-        void DestroyLogicalDevice();
-
-        /**
-         * 创建交换链
-         */
-        void CreateSwapChain(GLFWwindow* pWindow);
-
-        /**
-         * 销毁交换链
-         */
-        void DestroySwapChain();
-
-        /**
-         * 查询交换链支持
-         * @param pDevice 指定物理设备Handle
-         * @return 交换链支持信息
-         */
-        SwapChainSupportDetails QuerySwapChainSupport(VkPhysicalDevice pDevice) const;
-
-        /**
-         * 选择SurfaceFormat
-         * @param availableSurfaceFormats 可用的SurfaceFormat
-         * @return 选中的SurfaceFormat
-         */
-        static VkSurfaceFormatKHR ChooseSwapChainSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableSurfaceFormats);
-
-        /**
-         * 选择PresentMode
-         * @param availablePresentModes 可用的PresentMode
-         * @return 选中的PresentMode
-         */
-        static VkPresentModeKHR ChooseSwapChainPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
-
-        /**
-         * 选择交换链图像的分辨率
-         * @param surfaceCapabilities 可用的SurfaceCapability
-         * @param pWindow 窗口句柄
-         * @return 交换链图像的分辨率
-         */
-        static VkExtent2D ChooseSwapChainExtent(const VkSurfaceCapabilitiesKHR& surfaceCapabilities, GLFWwindow* pWindow);
+        [[nodiscard]] const DoodleSwapChain& GetSwapChain() const
+        {
+            return m_swapChain;
+        }
 
     private:
         /**
-         * Vulkan实例
+         * Vulkan设备层：Instance / Surface / 物理设备 / 逻辑设备 / 队列
          */
-        VkInstance m_pInstance = VK_NULL_HANDLE;
+        DoodleVulkanDevice m_device;
 
         /**
-         * Window Surface
+         * 交换链层：窗口的呈现目标
          */
-        VkSurfaceKHR m_pSurface = VK_NULL_HANDLE;
-
-        /**
-         * Vulkan物理设备Handle
-         */
-        VkPhysicalDevice m_pPhysicalDevice = VK_NULL_HANDLE;
-
-        /**
-         * Vulkan设备Handle
-         */
-        VkDevice m_pLogicalDevice = VK_NULL_HANDLE;
-
-        /**
-         * 交换链
-         */
-        VkSwapchainKHR m_pSwapChain = VK_NULL_HANDLE;
-
-        /**
-         * 交换链图像
-         */
-        std::vector<VkImage> m_swapChainImages;
-
-        /**
-         * 交换链图像格式
-         */
-        VkFormat m_swapChainImageFormat = VK_FORMAT_UNDEFINED;
-
-        /**
-         * 交换链图像尺寸
-         */
-        VkExtent2D m_swapChainExtent{};
-
-        /**
-         * Graphics Queue
-         */
-        VkQueue m_pGraphicsQueue = VK_NULL_HANDLE;
-
-        /**
-         * Present Queue
-         */
-        VkQueue m_pPresentQueue = VK_NULL_HANDLE;
+        DoodleSwapChain m_swapChain;
     };
 }

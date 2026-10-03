@@ -26,6 +26,6 @@ namespace Doodle
         /**
          * 呈现模式
          */
-        std::vector<VkPresentModeKHR> presentModes;
+        std::vector<VkPresentModeKHR> surfacePresentModes;
     };
 }

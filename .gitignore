@@ -17,3 +17,4 @@
 /.cindy/*
 /.cindy/project-knowledge/.lock
 /_local_*/
+!/.cindy/project-knowledge/

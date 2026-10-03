@@ -78,7 +78,7 @@ namespace Doodle
      */
     void DoodleApplication::InitVulkan()
     {
-        DoodleVulkanManager::Instance().Initialize(m_pWindow);
+        m_vulkanManager.Initialize(m_pWindow);
     }
 
     /**
@@ -86,6 +86,6 @@ namespace Doodle
      */
     void DoodleApplication::DestroyVulkan()
     {
-        DoodleVulkanManager::Instance().Destroy();
+        m_vulkanManager.Destroy();
     }
 }

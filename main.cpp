@@ -9,12 +9,10 @@ using namespace Doodle;
 
 int main()
 {
-    //创建程序
-    DoodleApplication app;
-
     //运行程序
     try
     {
+        DoodleApplication app;
         app.Initialize();
         app.Run();
         app.Destroy();

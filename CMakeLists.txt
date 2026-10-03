@@ -4,10 +4,10 @@ cmake_minimum_required(VERSION 4.3)
 # 工程名 / 主 target 名。后面 add_executable(DoodleGame ...) 必须和这里一致。
 project(DoodleGame)
 
-# STANDARD 20          = 用 C++20
+# STANDARD 23          = 用 C++23
 # STANDARD_REQUIRED ON = 编译器不支持就报错，不悄悄降级
-# EXTENSIONS ON        = 允许 GNU 扩展（gnu++20，而不是纯 c++20）
-set(CMAKE_CXX_STANDARD 20)
+# EXTENSIONS ON        = 允许 GNU 扩展（gnu++23，而不是纯 c++23）
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
@@ -85,10 +85,14 @@ add_executable(DoodleGame MACOSX_BUNDLE
         Runtime/DoodleApplication.cpp
         Runtime/DoodleApplication.h
     Runtime/DoodleRuntimeHeaders.h
+        Runtime/Vulkan/DoodleVulkanDevice.cpp
+        Runtime/Vulkan/DoodleVulkanDevice.h
+        Runtime/Vulkan/DoodleSwapChain.cpp
+        Runtime/Vulkan/DoodleSwapChain.h
         Runtime/Vulkan/DoodleVulkanManager.cpp
         Runtime/Vulkan/DoodleVulkanManager.h
         Runtime/Utility/Singleton.h
-        Runtime/Vulkan/QueueFamilyIndices.h
+        Runtime/Vulkan/QueueFamilySelection.h
         Runtime/Vulkan/SwapChainSupportDetails.h
 )
 

@@ -9,6 +9,8 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include "Vulkan/DoodleVulkanManager.h"
+
 namespace Doodle
 {
     class DoodleApplication
@@ -74,5 +76,10 @@ namespace Doodle
          * 窗口高度
          */
         int32_t m_windowHeight;
+
+        /**
+         * Vulkan子系统
+         */
+        DoodleVulkanManager m_vulkanManager;
     };
 }
