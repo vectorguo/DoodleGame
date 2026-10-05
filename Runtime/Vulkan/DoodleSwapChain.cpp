@@ -17,10 +17,16 @@ namespace Doodle
 
         //创建交换链
         CreateSwapChain(pWindow);
+
+        //创建图像视图
+        CreateImageViews();
     }
 
     void DoodleSwapChain::Destroy()
     {
+        //图像视图依附于交换链图像，必须先于交换链销毁
+        DestroyImageViews();
+
         //销毁交换链
         DestroySwapChain();
     }
@@ -29,8 +35,8 @@ namespace Doodle
     {
         const auto supportDetails = m_pDevice->QuerySwapChainSupport();
         const auto surfaceFormat = SelectSurfaceFormat(supportDetails.surfaceFormats);
-        const auto presentMode = SelectPresentMode(supportDetails.surfacePresentModes);
-        const auto extent = SelectExtent(supportDetails.surfaceCapabilities, pWindow);
+        const auto presentMode = SelectSurfacePresentMode(supportDetails.surfacePresentModes);
+        const auto extent = SelectSurfaceExtent(supportDetails.surfaceCapabilities, pWindow);
 
         //决定交换链里想放多少张图像。实现会规定它能正常工作所需的最小数量
         //但仅仅贴着这个最小值，意味着我们有时不得不等待驱动完成内部操作， 才能获取下一张图像来渲染。因此建议至少比最小值多申请一张
@@ -121,7 +127,7 @@ namespace Doodle
         return availableSurfaceFormats[0];
     }
 
-    VkPresentModeKHR DoodleSwapChain::SelectPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes)
+    VkPresentModeKHR DoodleSwapChain::SelectSurfacePresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes)
     {
         for (const auto& availablePresentMode : availablePresentModes)
         {
@@ -133,7 +139,7 @@ namespace Doodle
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 
-    VkExtent2D DoodleSwapChain::SelectExtent(const VkSurfaceCapabilitiesKHR& surfaceCapabilities, GLFWwindow* pWindow)
+    VkExtent2D DoodleSwapChain::SelectSurfaceExtent(const VkSurfaceCapabilitiesKHR& surfaceCapabilities, GLFWwindow* pWindow)
     {
         if (surfaceCapabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
         {
@@ -151,5 +157,43 @@ namespace Doodle
         framebufferExtent.width = std::clamp(framebufferExtent.width, surfaceCapabilities.minImageExtent.width, surfaceCapabilities.maxImageExtent.width);
         framebufferExtent.height = std::clamp(framebufferExtent.height, surfaceCapabilities.minImageExtent.height, surfaceCapabilities.maxImageExtent.height);
         return framebufferExtent;
+    }
+
+    void DoodleSwapChain::CreateImageViews()
+    {
+        m_swapChainImageViews.resize(m_swapChainImages.size());
+
+        for (size_t i = 0; i < m_swapChainImages.size(); ++i)
+        {
+            VkImageViewCreateInfo createInfo{};
+            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+            createInfo.image = m_swapChainImages[i];
+            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            createInfo.format = m_swapChainImageFormat;
+            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            createInfo.subresourceRange.baseMipLevel = 0;
+            createInfo.subresourceRange.levelCount = 1;
+            createInfo.subresourceRange.baseArrayLayer = 0;
+            createInfo.subresourceRange.layerCount = 1;
+
+            const auto result = vkCreateImageView(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_swapChainImageViews[i]);
+            if (result != VK_SUCCESS)
+            {
+                throw std::runtime_error("failed to create image views!");
+            }
+        }
+    }
+
+    void DoodleSwapChain::DestroyImageViews()
+    {
+        for (const auto imageView : m_swapChainImageViews)
+        {
+            vkDestroyImageView(m_pDevice->GetLogicalDevice(), imageView, nullptr);
+        }
+        m_swapChainImageViews.clear();
     }
 }

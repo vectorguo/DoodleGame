@@ -68,6 +68,14 @@ namespace Doodle
             return m_swapChainImages;
         }
 
+        /**
+         * 获取交换链图像视图
+         */
+        [[nodiscard]] const std::vector<VkImageView>& GetImageViews() const
+        {
+            return m_swapChainImageViews;
+        }
+
     private:
         /**
          * 创建交换链
@@ -92,7 +100,7 @@ namespace Doodle
          * @param availablePresentModes 可用的PresentMode
          * @return 选中的PresentMode
          */
-        [[nodiscard]] static VkPresentModeKHR SelectPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
+        [[nodiscard]] static VkPresentModeKHR SelectSurfacePresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
 
         /**
          * 选择交换链图像的尺寸
@@ -100,7 +108,20 @@ namespace Doodle
          * @param pWindow 窗口句柄
          * @return 交换链图像的尺寸
          */
-        [[nodiscard]] static VkExtent2D SelectExtent(const VkSurfaceCapabilitiesKHR& surfaceCapabilities, GLFWwindow* pWindow);
+        [[nodiscard]] static VkExtent2D SelectSurfaceExtent(const VkSurfaceCapabilitiesKHR& surfaceCapabilities, GLFWwindow* pWindow);
+
+        /**
+         * 创建图像视图，每个交换链图像一个
+         *
+         * 前置条件：m_swapChainImageViews 必须为空。resize 不会重置已有槽位，
+         * 未先销毁就再次调用会静默覆盖旧句柄并泄漏。重建时请走 Destroy 后重新 Initialize
+         */
+        void CreateImageViews();
+
+        /**
+         * 销毁图像视图，并把图像视图数组清空
+         */
+        void DestroyImageViews();
 
     private:
         /**
@@ -114,11 +135,6 @@ namespace Doodle
         VkSwapchainKHR m_pSwapChain = VK_NULL_HANDLE;
 
         /**
-         * 交换链图像
-         */
-        std::vector<VkImage> m_swapChainImages;
-
-        /**
          * 交换链图像格式
          */
         VkFormat m_swapChainImageFormat = VK_FORMAT_UNDEFINED;
@@ -127,5 +143,15 @@ namespace Doodle
          * 交换链图像尺寸
          */
         VkExtent2D m_swapChainImageExtent{};
+
+        /**
+         * 交换链图像
+         */
+        std::vector<VkImage> m_swapChainImages;
+
+        /**
+         * 交换链图像视图
+         */
+        std::vector<VkImageView> m_swapChainImageViews;
     };
 }
