@@ -91,6 +91,8 @@ add_executable(DoodleGame MACOSX_BUNDLE
         Runtime/Vulkan/DoodleSwapChain.h
         Runtime/Vulkan/DoodleVulkanManager.cpp
         Runtime/Vulkan/DoodleVulkanManager.h
+        Runtime/Vulkan/DoodleShaderModule.cpp
+        Runtime/Vulkan/DoodleShaderModule.h
         Runtime/Utility/Singleton.h
         Runtime/Vulkan/QueueFamilySelection.h
         Runtime/Vulkan/SwapChainSupportDetails.h
@@ -159,4 +161,18 @@ if(APPLE)
             COMMENT "Copy ${_dylib} into DoodleGame.app/Contents/Frameworks"
         )
     endforeach()
+
+    # 把 Shaders/ 拷进 .app 的 Contents/Resources/，让包自带着色器字节码。
+    # 运行时的查找顺序见 DoodleShaderModule::ReadFile：
+    #   先按「进程当前工作目录」找（开发时命中源码目录里的最新产物），
+    #   找不到再用 <可执行文件目录>/../Resources/Shaders/（Finder 双击时走这条）。
+    # 之所以放在包内 Resources 而不是可执行文件旁边，是遵循 macOS 的包约定。
+    # copy_directory 会把 .vert/.frag 源码一并拷进去，体积可忽略；
+    # 若以后不想随包分发源码，改成只拷 *.spv 即可。
+    add_custom_command(TARGET DoodleGame POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/Shaders"
+            "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Shaders"
+        COMMENT "Copy Shaders into DoodleGame.app/Contents/Resources/Shaders"
+    )
 endif()

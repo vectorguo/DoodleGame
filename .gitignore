@@ -6,6 +6,10 @@
 !/CMakeLists.txt
 !/main.cpp
 !/Runtime/
+!/Shaders/
+
+# GLSL 源码入库，SPIR-V 编译产物不入库（跑 Shaders/compile.sh 重新生成）
+/Shaders/*.spv
 
 # macOS / 编辑器噪声
 .DS_Store
