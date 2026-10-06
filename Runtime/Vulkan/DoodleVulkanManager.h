@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "DoodleRenderPass.h"
 #include "DoodleSwapChain.h"
 #include "DoodleVulkanDevice.h"
 
@@ -13,7 +14,7 @@ struct GLFWwindow;
 namespace Doodle
 {
     /**
-     * Vulkan子系统门面：持有设备层与交换链层，对外提供统一的Vulkan入口
+     * Vulkan子系统门面：持有设备层、交换链层与渲染通道层，对外提供统一的Vulkan入口
      */
     class DoodleVulkanManager
     {
@@ -60,6 +61,22 @@ namespace Doodle
             return m_swapChain;
         }
 
+        /**
+         * 获取渲染通道
+         */
+        [[nodiscard]] DoodleRenderPass& GetRenderPass()
+        {
+            return m_renderPass;
+        }
+
+        /**
+         * 获取渲染通道
+         */
+        [[nodiscard]] const DoodleRenderPass& GetRenderPass() const
+        {
+            return m_renderPass;
+        }
+
     private:
         /**
          * Vulkan设备层：Instance / Surface / 物理设备 / 逻辑设备 / 队列
@@ -70,5 +87,10 @@ namespace Doodle
          * 交换链层：窗口的呈现目标
          */
         DoodleSwapChain m_swapChain;
+
+        /**
+         * 渲染通道层：本帧的渲染目标结构，格式取自交换链，须排在交换链之后
+         */
+        DoodleRenderPass m_renderPass;
     };
 }
