@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "DoodleGraphicsPipeline.h"
 #include "DoodleRenderPass.h"
 #include "DoodleSwapChain.h"
 #include "DoodleVulkanDevice.h"
@@ -77,6 +78,22 @@ namespace Doodle
             return m_renderPass;
         }
 
+        /**
+         * 获取图形管线
+         */
+        [[nodiscard]] DoodleGraphicsPipeline& GetGraphicsPipeline()
+        {
+            return m_graphicsPipeline;
+        }
+
+        /**
+         * 获取图形管线
+         */
+        [[nodiscard]] const DoodleGraphicsPipeline& GetGraphicsPipeline() const
+        {
+            return m_graphicsPipeline;
+        }
+
     private:
         /**
          * Vulkan设备层：Instance / Surface / 物理设备 / 逻辑设备 / 队列
@@ -92,5 +109,10 @@ namespace Doodle
          * 渲染通道层：本帧的渲染目标结构，格式取自交换链，须排在交换链之后
          */
         DoodleRenderPass m_renderPass;
+
+        /**
+         * 图形管线层：引用渲染通道，须排在渲染通道之后
+         */
+        DoodleGraphicsPipeline m_graphicsPipeline;
     };
 }

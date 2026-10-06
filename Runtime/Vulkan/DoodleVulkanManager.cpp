@@ -11,11 +11,13 @@ namespace Doodle
         m_device.Initialize(pWindow);
         m_swapChain.Initialize(m_device, pWindow);
         m_renderPass.Initialize(m_device, m_swapChain);
+        m_graphicsPipeline.Initialize(m_device, m_renderPass);
     }
 
     void DoodleVulkanManager::Destroy()
     {
         //逆序销毁
+        m_graphicsPipeline.Destroy();
         m_renderPass.Destroy();
         m_swapChain.Destroy();
         m_device.Destroy();
