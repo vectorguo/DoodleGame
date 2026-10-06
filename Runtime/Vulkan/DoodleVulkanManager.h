@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "DoodleFrameBuffer.h"
 #include "DoodleGraphicsPipeline.h"
 #include "DoodleRenderPass.h"
 #include "DoodleSwapChain.h"
@@ -94,6 +95,22 @@ namespace Doodle
             return m_graphicsPipeline;
         }
 
+        /**
+         * 获取帧缓冲
+         */
+        [[nodiscard]] DoodleFrameBuffer& GetFrameBuffer()
+        {
+            return m_frameBuffer;
+        }
+
+        /**
+         * 获取帧缓冲
+         */
+        [[nodiscard]] const DoodleFrameBuffer& GetFrameBuffer() const
+        {
+            return m_frameBuffer;
+        }
+
     private:
         /**
          * Vulkan设备层：Instance / Surface / 物理设备 / 逻辑设备 / 队列
@@ -114,5 +131,10 @@ namespace Doodle
          * 图形管线层：引用渲染通道，须排在渲染通道之后
          */
         DoodleGraphicsPipeline m_graphicsPipeline;
+
+        /**
+         * 帧缓冲层：引用交换链图像视图与渲染通道，须排在两者之后
+         */
+        DoodleFrameBuffer m_frameBuffer;
     };
 }

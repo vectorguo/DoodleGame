@@ -93,6 +93,8 @@ add_executable(DoodleGame MACOSX_BUNDLE
         Runtime/Vulkan/DoodleRenderPass.h
         Runtime/Vulkan/DoodleGraphicsPipeline.cpp
         Runtime/Vulkan/DoodleGraphicsPipeline.h
+        Runtime/Vulkan/DoodleFrameBuffer.cpp
+        Runtime/Vulkan/DoodleFrameBuffer.h
         Runtime/Vulkan/DoodleVulkanManager.cpp
         Runtime/Vulkan/DoodleVulkanManager.h
         Runtime/Vulkan/DoodleShaderModule.cpp
