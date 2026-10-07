@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "DoodleCommandBuffer.h"
 #include "DoodleFrameBuffer.h"
 #include "DoodleGraphicsPipeline.h"
 #include "DoodleRenderPass.h"
@@ -16,7 +17,7 @@ struct GLFWwindow;
 namespace Doodle
 {
     /**
-     * Vulkan子系统门面：持有设备层、交换链层与渲染通道层，对外提供统一的Vulkan入口
+     * Vulkan子系统门面：按依赖顺序持有各层，对外提供统一的Vulkan入口
      */
     class DoodleVulkanManager
     {
@@ -111,6 +112,22 @@ namespace Doodle
             return m_frameBuffer;
         }
 
+        /**
+         * 获取命令缓冲层
+         */
+        [[nodiscard]] DoodleCommandBuffer& GetCommandBuffer()
+        {
+            return m_commandBuffer;
+        }
+
+        /**
+         * 获取命令缓冲层
+         */
+        [[nodiscard]] const DoodleCommandBuffer& GetCommandBuffer() const
+        {
+            return m_commandBuffer;
+        }
+
     private:
         /**
          * Vulkan设备层：Instance / Surface / 物理设备 / 逻辑设备 / 队列
@@ -136,5 +153,10 @@ namespace Doodle
          * 帧缓冲层：引用交换链图像视图与渲染通道，须排在两者之后
          */
         DoodleFrameBuffer m_frameBuffer;
+
+        /**
+         * 命令缓冲层：录制时引用上述各层，须排在帧缓冲之后
+         */
+        DoodleCommandBuffer m_commandBuffer;
     };
 }
