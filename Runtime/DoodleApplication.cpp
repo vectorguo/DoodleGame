@@ -37,6 +37,7 @@ namespace Doodle
         while (!glfwWindowShouldClose(m_pWindow))
         {
             glfwPollEvents();
+            m_vulkanManager.DrawFrame();
         }
     }
 

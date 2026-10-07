@@ -9,6 +9,7 @@
 #include "DoodleGraphicsPipeline.h"
 #include "DoodleRenderPass.h"
 #include "DoodleSwapChain.h"
+#include "DoodleSyncObjects.h"
 #include "DoodleVulkanDevice.h"
 
 //前向声明。必须放在全局作用域
@@ -31,6 +32,19 @@ namespace Doodle
          * 销毁Vulkan
          */
         void Destroy();
+
+        /**
+         * 渲染并呈现一帧
+         *
+         * 主循环每轮调用一次。五步固定：等上一帧结束、取一张交换链图像、
+         * 录制命令缓冲、提交、呈现。顺序不能调换，每一步都在为下一步准备前提条件
+         *
+         * 放在门面而不是上层：它一行窗口相关的东西都不碰，
+         * 只是把本门面自己持有的几层按顺序驱动一遍 —— 那正是门面的分内事
+         *
+         * @note 里面的 Vulkan 调用大多是异步的，返回不代表 GPU 已完成
+         */
+        void DrawFrame();
 
         /**
          * 获取Vulkan设备
@@ -128,6 +142,22 @@ namespace Doodle
             return m_commandBuffer;
         }
 
+        /**
+         * 获取同步对象层
+         */
+        [[nodiscard]] DoodleSyncObjects& GetSyncObjects()
+        {
+            return m_syncObjects;
+        }
+
+        /**
+         * 获取同步对象层
+         */
+        [[nodiscard]] const DoodleSyncObjects& GetSyncObjects() const
+        {
+            return m_syncObjects;
+        }
+
     private:
         /**
          * Vulkan设备层：Instance / Surface / 物理设备 / 逻辑设备 / 队列
@@ -158,5 +188,13 @@ namespace Doodle
          * 命令缓冲层：录制时引用上述各层，须排在帧缓冲之后
          */
         DoodleCommandBuffer m_commandBuffer;
+
+        /**
+         * 同步对象层：帧信号量与栅栏
+         *
+         * renderFinished 按交换链图像数量分配，所以它依赖交换链层，
+         * 且随交换链一起重建，须排在交换链之后
+         */
+        DoodleSyncObjects m_syncObjects;
     };
 }

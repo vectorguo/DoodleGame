@@ -75,7 +75,7 @@ namespace Doodle
         }
     }
 
-    void DoodleCommandBuffer::RecordCommandBuffer(VkCommandBuffer pCommandBuffer, uint32_t imageIndex)
+    void DoodleCommandBuffer::RecordCommandBuffer(VkCommandBuffer pCommandBuffer, const uint32_t imageIndex)
     {
         //录制期间用到的句柄全部现取，本层不缓存副本，
         //这样交换链重建之后重录，拿到的就是新句柄
