@@ -8,6 +8,7 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
+#include "DoodleVulkanConfig.h"
 #include "DoodleSwapChain.h"
 #include "DoodleVulkanDevice.h"
 
@@ -40,17 +41,20 @@ namespace Doodle
         void Destroy();
 
         /**
-         * 获取「图像已获取、可以开始渲染」信号量
+         * 获取第 frameIndex 个「图像已获取、可以开始渲染」信号量
          *
          * 由 vkAcquireNextImageKHR 在呈现引擎释放该图像后发出信号，
          * 由图形队列的提交等待
          *
-         * @note 只此一个。它由本帧的提交等待，而提交完成由帧栅栏保证，
-         * 所以下一帧复用它时必定已被消费
+         * @param frameIndex 当前在途帧索引，见 DoodleVulkanManager::m_currentFrame
+         *
+         * @note 按帧分配。它由本帧的提交等待，而本槽位下一轮复用它之前，
+         * 必定先等过本槽位的栅栏，也就保证了本帧的提交已经执行完、
+         * 这次等待已经被消费掉，信号量必定回到 unsignaled
          */
-        [[nodiscard]] VkSemaphore GetImageAvailableSemaphore() const
+        [[nodiscard]] VkSemaphore GetImageAvailableSemaphore(const uint32_t frameIndex) const
         {
-            return m_pImageAvailableSemaphore;
+            return m_imageAvailableSemaphores[frameIndex];
         }
 
         /**
@@ -68,16 +72,19 @@ namespace Doodle
         }
 
         /**
-         * 获取帧栅栏
+         * 获取第 frameIndex 个帧栅栏
          *
-         * 由图形队列的提交在绘制完成后发出信号，由 host 在下一帧开头等待。
-         * 它的作用是保证命令缓冲不会被覆写 —— GPU 还在用的时候，host 不能往里重录。
+         * 由图形队列的提交在绘制完成后发出信号，由 host 在下一轮的同一槽位上等待。
+         * 它的作用是保证本槽位的资源不会被覆写 —— GPU 还在用的时候，host 不能往里重录。
+         * 同时它也是「本槽位可以再用了」的唯一凭据，本层的另外两个句柄靠它决定何时可复用
          *
-         * @note 只此一个，因为同一时刻只允许一帧在途
+         * @param frameIndex 当前在途帧索引，见 DoodleVulkanManager::m_currentFrame
+         *
+         * @note 按帧分配，与命令缓冲一一对应
          */
-        [[nodiscard]] VkFence GetInFlightFence() const
+        [[nodiscard]] VkFence GetInFlightFence(const uint32_t frameIndex) const
         {
-            return m_pInFlightFence;
+            return m_inFlightFences[frameIndex];
         }
 
     private:
@@ -108,9 +115,9 @@ namespace Doodle
         const DoodleSwapChain* m_pSwapChain = nullptr;
 
         /**
-         * 「图像已获取」信号量
+         * 「图像已获取」信号量，每个在途帧一个
          */
-        VkSemaphore m_pImageAvailableSemaphore = VK_NULL_HANDLE;
+        std::vector<VkSemaphore> m_imageAvailableSemaphores;
 
         /**
          * 「渲染已完成」信号量，每个交换链图像一个，按图像索引取用
@@ -118,8 +125,8 @@ namespace Doodle
         std::vector<VkSemaphore> m_renderFinishedSemaphores;
 
         /**
-         * 帧栅栏，创建时即为已发出信号状态
+         * 帧栅栏，每个在途帧一个，创建时即为已发出信号状态
          */
-        VkFence m_pInFlightFence = VK_NULL_HANDLE;
+        std::vector<VkFence> m_inFlightFences;
     };
 }

@@ -39,13 +39,31 @@ namespace Doodle
         fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-        if (vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr, &m_pImageAvailableSemaphore) != VK_SUCCESS ||
-            vkCreateFence(logicalDevice, &fenceInfo, nullptr, &m_pInFlightFence) != VK_SUCCESS)
+        //imageAvailable 与帧栅栏按「在途帧」分配，每个槽位一套。
+        //
+        //imageAvailable 必须跟着帧拆。它由本帧的提交等待，而「本帧的提交何时执行完」
+        //只有本槽位的栅栏知道。若全场共用一个，第 k 帧的 acquire 又要去 signal 它，
+        //可第 k-1 帧的提交可能还没执行到那次等待 —— 信号量上还挂着未消费的 wait，
+        //这时再 signal 它不合法：
+        //  VUID-vkAcquireNextImageKHR-semaphore-01286  semaphore 必须是 unsignaled
+        //单帧在途时看不出问题，因为每帧开头等的那个栅栏恰好就是上一帧留下的，
+        //它一并保证了上一帧的等待已被消费；一旦开到两帧，这个巧合就不成立了。
+        //
+        //按帧拆即可，不必按图像拆 —— acquire 之前还不知道 imageIndex，
+        //没法按图像索引挑信号量。
+        m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
+        m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
+
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
         {
-            throw std::runtime_error("failed to create sync objects!");
+            if (vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]) != VK_SUCCESS ||
+                vkCreateFence(logicalDevice, &fenceInfo, nullptr, &m_inFlightFences[i]) != VK_SUCCESS)
+            {
+                throw std::runtime_error("failed to create sync objects for a frame!");
+            }
         }
 
-        //renderFinished 每个交换链图像一个，而不是全场只用一个。
+        //renderFinished 每个交换链图像一个，而不是全场只用一个，也不按帧分。
         //
         //只用一个会踩 VUID-vkQueueSubmit-pSignalSemaphores-00067：这个信号量由本帧的提交
         //发出信号、由呈现等待，而「呈现引擎何时消费掉它」不在 inFlightFence 的覆盖范围内
@@ -56,9 +74,8 @@ namespace Doodle
         //按图像分配能根治：能 acquire 到第 k 张图，就说明呈现引擎已经用完第 k 张图了，
         //也就必然完成了对第 k 个信号量的等待，它此刻必定是 unsignaled。
         //
-        //imageAvailable 不需要跟着拆：它是被本帧的提交等待的，
-        //而提交完成由 inFlightFence 保证，单个复用是安全的。
-        //（也拆不了——acquire 之前还不知道 imageIndex，没法按图像索引挑信号量。）
+        //也不按帧分：它的分配维度取决于「谁在用这张图」，而不是「能有几帧在途」，
+        //按帧分会把两个独立维度混在一起，图像数少于在途帧数时依然会撞上同一个竞争。
         const auto imageCount = static_cast<uint32_t>(m_pSwapChain->GetImages().size());
         m_renderFinishedSemaphores.resize(imageCount, VK_NULL_HANDLE);
 
@@ -76,11 +93,14 @@ namespace Doodle
         //所有对象都引用了逻辑设备，必须先于设备层销毁
         const auto logicalDevice = m_pDevice->GetLogicalDevice();
 
-        if (m_pImageAvailableSemaphore != VK_NULL_HANDLE)
+        for (auto& imageAvailableSemaphore : m_imageAvailableSemaphores)
         {
-            vkDestroySemaphore(logicalDevice, m_pImageAvailableSemaphore, nullptr);
-            m_pImageAvailableSemaphore = VK_NULL_HANDLE;
+            if (imageAvailableSemaphore != VK_NULL_HANDLE)
+            {
+                vkDestroySemaphore(logicalDevice, imageAvailableSemaphore, nullptr);
+            }
         }
+        m_imageAvailableSemaphores.clear();
 
         for (auto& renderFinishedSemaphore : m_renderFinishedSemaphores)
         {
@@ -91,10 +111,13 @@ namespace Doodle
         }
         m_renderFinishedSemaphores.clear();
 
-        if (m_pInFlightFence != VK_NULL_HANDLE)
+        for (auto& inFlightFence : m_inFlightFences)
         {
-            vkDestroyFence(logicalDevice, m_pInFlightFence, nullptr);
-            m_pInFlightFence = VK_NULL_HANDLE;
+            if (inFlightFence != VK_NULL_HANDLE)
+            {
+                vkDestroyFence(logicalDevice, inFlightFence, nullptr);
+            }
         }
+        m_inFlightFences.clear();
     }
 }

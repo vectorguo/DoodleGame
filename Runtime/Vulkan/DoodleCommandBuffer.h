@@ -5,9 +5,11 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 #include <vulkan/vulkan_core.h>
 
 #include "DoodleFrameBuffer.h"
+#include "DoodleVulkanConfig.h"
 #include "DoodleGraphicsPipeline.h"
 #include "DoodleRenderPass.h"
 #include "DoodleSwapChain.h"
@@ -51,11 +53,16 @@ namespace Doodle
         void Destroy();
 
         /**
-         * 获取命令缓冲Handle
+         * 获取第 frameIndex 个命令缓冲
+         *
+         * 每帧在途一份：一帧已经在 GPU 上执行时，另一帧要能同时被录制，
+         * 共用一份会让录制覆盖掉正在执行的命令
+         *
+         * @param frameIndex 当前在途帧索引，见 DoodleVulkanManager::m_currentFrame
          */
-        [[nodiscard]] VkCommandBuffer GetCommandBuffer() const
+        [[nodiscard]] VkCommandBuffer GetCommandBuffer(const uint32_t frameIndex) const
         {
-            return m_pCommandBuffer;
+            return m_commandBuffers[frameIndex];
         }
 
         /**
@@ -79,11 +86,12 @@ namespace Doodle
         void DestroyCommandPool();
 
         /**
-         * 从命令池分配命令缓冲
+         * 从命令池分配命令缓冲，每个在途帧一个
          *
-         * 前置条件：m_pCommandPool 已创建
+         * 前置条件：m_pCommandPool 已创建，且 m_commandBuffers 为空。
+         * resize 不会重置已有槽位，未先销毁就再次调用会静默覆盖旧句柄并泄漏
          */
-        void CreateCommandBuffer();
+        void CreateCommandBuffers();
 
     private:
         /**
@@ -117,8 +125,9 @@ namespace Doodle
         VkCommandPool m_pCommandPool = VK_NULL_HANDLE;
 
         /**
-         * 命令缓冲，随命令池释放，不需要单独销毁
+         * 命令缓冲，每个在途帧一个，用帧索引取用。
+         * 随命令池释放，不需要单独销毁
          */
-        VkCommandBuffer m_pCommandBuffer = VK_NULL_HANDLE;
+        std::vector<VkCommandBuffer> m_commandBuffers;
     };
 }

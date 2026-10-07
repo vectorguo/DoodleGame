@@ -4,6 +4,8 @@
 
 #include "DoodleVulkanManager.h"
 
+#include "DoodleVulkanConfig.h"
+
 #include <cstdint>
 #include <stdexcept>
 
@@ -43,13 +45,28 @@ namespace Doodle
     {
         const auto logicalDevice = m_device.GetLogicalDevice();
 
+        //本帧用哪一套 per-frame 资源，全部由 frameIndex 决定。
+        //
+        //在函数开头一次取出并推进，函数体里只认 frameIndex 这个局部量。
+        //把推进放在末尾的话，m_currentFrame 会在函数执行到一半时悄悄变掉 ——
+        //读代码的人得一直记着「下面这行用的是新的还是旧的」，很容易看漏。
+        //先取值再推进，语义就是「m_currentFrame 指向本帧该用的槽位」，
+        //取模让它始终落在 0 .. MAX_FRAMES_IN_FLIGHT-1，同一个槽位要隔满一轮才会再被碰到
+        const uint32_t frameIndex = m_currentFrame;
+        m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+
         //句柄先取到局部变量：getter 都是按值返回，直接对返回值取地址取到的是临时量的地址。
         //renderFinished 不在这里取——它按图像索引区分，要等②拿到 imageIndex 之后才能取
-        const auto inFlightFence = m_syncObjects.GetInFlightFence();
-        const auto imageAvailableSemaphore = m_syncObjects.GetImageAvailableSemaphore();
+        const auto inFlightFence = m_syncObjects.GetInFlightFence(frameIndex);
+        const auto imageAvailableSemaphore = m_syncObjects.GetImageAvailableSemaphore(frameIndex);
 
-        //① 等待上一帧结束。栅栏发出信号说明 GPU 已经用完命令缓冲和这对信号量，
-        //   可以安全复用。必须在 vkResetFences 之前等待——顺序反过来的话，
+        //① 等待本槽位上一轮的工作结束。栅栏发出信号说明 GPU 已经用完这一槽位的
+        //   命令缓冲和 imageAvailable 信号量，可以安全复用。
+        //   注意这里等的是「本槽位的上一轮」，不是「上一帧」：索引轮转，
+        //   第 k 帧等的是第 k-MAX_FRAMES_IN_FLIGHT 帧留下的栅栏，那时 GPU 早就结束了。
+        //   所以正常情况下这一句不会真的阻塞，CPU 不必等 GPU 画完当前帧就能接着录下一帧
+        //   —— 多帧在途要换的正是这一点。
+        //   必须在 vkResetFences 之前等待——顺序反过来的话，
         //   wait 会立刻返回，紧接着就会去覆写 GPU 还在用的命令缓冲
         vkWaitForFences(logicalDevice, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
         vkResetFences(logicalDevice, 1, &inFlightFence);
@@ -66,7 +83,8 @@ namespace Doodle
 
         //③ 录制本帧命令。命令缓冲层不缓存句柄，录制时现取，
         //   所以交换链重建之后重录拿到的自然是新句柄
-        m_commandBuffer.RecordCommandBuffer(m_commandBuffer.GetCommandBuffer(), imageIndex);
+        const auto commandBuffer = m_commandBuffer.GetCommandBuffer(frameIndex);
+        m_commandBuffer.RecordCommandBuffer(commandBuffer, imageIndex);
 
         //④ 提交到图形队列
         VkSubmitInfo submitInfo{};
@@ -82,7 +100,7 @@ namespace Doodle
         submitInfo.pWaitSemaphores = waitSemaphores;
         submitInfo.pWaitDstStageMask = waitStages;
 
-        const VkCommandBuffer commandBuffers[] = {m_commandBuffer.GetCommandBuffer()};
+        const VkCommandBuffer commandBuffers[] = {commandBuffer};
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = commandBuffers;
 

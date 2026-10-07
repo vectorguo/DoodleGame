@@ -22,7 +22,7 @@ namespace Doodle
 
         //命令缓冲从池中分配，池必须先建出来
         CreateCommandPool();
-        CreateCommandBuffer();
+        CreateCommandBuffers();
     }
 
     void DoodleCommandBuffer::Destroy()
@@ -56,19 +56,26 @@ namespace Doodle
         //池引用了逻辑设备，必须先于设备层销毁
         vkDestroyCommandPool(m_pDevice->GetLogicalDevice(), m_pCommandPool, nullptr);
         m_pCommandPool = VK_NULL_HANDLE;
-        m_pCommandBuffer = VK_NULL_HANDLE;
+
+        //缓冲随池一起释放了，这里只是把句柄数组清空，不要再去逐个销毁
+        m_commandBuffers.clear();
     }
 
-    void DoodleCommandBuffer::CreateCommandBuffer()
+    void DoodleCommandBuffer::CreateCommandBuffers()
     {
+        //每个在途帧一份，用帧索引轮转。数量不取交换链图像数：
+        //在途帧数决定「能提前录几帧」，图像数决定「能同时在屏几帧」，两者互不相干
+        m_commandBuffers.resize(MAX_FRAMES_IN_FLIGHT, VK_NULL_HANDLE);
+
         VkCommandBufferAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         allocInfo.commandPool = m_pCommandPool;
         //主级缓冲才能提交到队列，次级只能被主级调用
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandBufferCount = 1;
+        allocInfo.commandBufferCount = static_cast<uint32_t>(m_commandBuffers.size());
 
-        const auto result = vkAllocateCommandBuffers(m_pDevice->GetLogicalDevice(), &allocInfo, &m_pCommandBuffer);
+        //一次分配一批，直接写进 vector 的底层数组
+        const auto result = vkAllocateCommandBuffers(m_pDevice->GetLogicalDevice(), &allocInfo, m_commandBuffers.data());
         if (result != VK_SUCCESS)
         {
             throw std::runtime_error("failed to allocate command buffers!");

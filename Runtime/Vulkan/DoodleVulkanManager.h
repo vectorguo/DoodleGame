@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include "DoodleCommandBuffer.h"
 #include "DoodleFrameBuffer.h"
 #include "DoodleGraphicsPipeline.h"
@@ -36,8 +38,11 @@ namespace Doodle
         /**
          * 渲染并呈现一帧
          *
-         * 主循环每轮调用一次。五步固定：等上一帧结束、取一张交换链图像、
-         * 录制命令缓冲、提交、呈现。顺序不能调换，每一步都在为下一步准备前提条件
+         * 主循环每轮调用一次。六步固定：等本槽位上一轮结束、取一张交换链图像、
+         * 录制命令缓冲、提交、呈现、推进槽位。顺序不能调换，每一步都在为下一步准备前提条件
+         *
+         * 同一时刻允许 MAX_FRAMES_IN_FLIGHT 帧在途：host 录第 k 帧时，
+         * GPU 可以还在跑第 k-1 帧，两者用的是各自槽位的资源，不会互相踩踏
          *
          * 放在门面而不是上层：它一行窗口相关的东西都不碰，
          * 只是把本门面自己持有的几层按顺序驱动一遍 —— 那正是门面的分内事
@@ -196,5 +201,13 @@ namespace Doodle
          * 且随交换链一起重建，须排在交换链之后
          */
         DoodleSyncObjects m_syncObjects;
+
+        /**
+         * 当前在途帧索引，取值 0 .. MAX_FRAMES_IN_FLIGHT-1，每帧结束时推进一格
+         *
+         * 命令缓冲、imageAvailable 信号量、帧栅栏都按它轮转取用。
+         * renderFinished 不按它取 —— 那是按交换链图像索引的，两个维度互不相干
+         */
+        uint32_t m_currentFrame = 0;
     };
 }

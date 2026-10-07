@@ -104,6 +104,7 @@ add_executable(DoodleGame MACOSX_BUNDLE
         Runtime/Vulkan/DoodleShaderModule.cpp
         Runtime/Vulkan/DoodleShaderModule.h
         Runtime/Utility/Singleton.h
+        Runtime/Vulkan/DoodleVulkanConfig.h
         Runtime/Vulkan/QueueFamilySelection.h
         Runtime/Vulkan/SwapChainSupportDetails.h
 )
