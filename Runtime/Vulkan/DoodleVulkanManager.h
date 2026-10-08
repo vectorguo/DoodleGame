@@ -39,17 +39,35 @@ namespace Doodle
          * 渲染并呈现一帧
          *
          * 主循环每轮调用一次。六步固定：等本槽位上一轮结束、取一张交换链图像、
-         * 录制命令缓冲、提交、呈现、推进槽位。顺序不能调换，每一步都在为下一步准备前提条件
+         * 复位栅栏、录制命令缓冲、提交、呈现。顺序不能调换，
+         * 每一步都在为下一步准备前提条件
+         *
+         * 交换链与窗口不再匹配时（缩放窗口等），本函数内部完成重建：
+         * acquire 返回 out-of-date 就立刻重建并放弃本帧；呈现返回 out-of-date /
+         * suboptimal，或收到过 resize 通知，则在呈现之后重建。
+         * 两处判断各有一个固定位置，都不能挪 —— 理由见实现里的注释
          *
          * 同一时刻允许 MAX_FRAMES_IN_FLIGHT 帧在途：host 录第 k 帧时，
          * GPU 可以还在跑第 k-1 帧，两者用的是各自槽位的资源，不会互相踩踏
          *
-         * 放在门面而不是上层：它一行窗口相关的东西都不碰，
-         * 只是把本门面自己持有的几层按顺序驱动一遍 —— 那正是门面的分内事
+         * 放在门面：它把本门面自己持有的几层按顺序驱动一遍，连同它们共有的
+         * 重建时机 —— 那正是门面的分内事
          *
          * @note 里面的 Vulkan 调用大多是异步的，返回不代表 GPU 已完成
          */
         void DrawFrame();
+
+        /**
+         * 通知窗口尺寸发生了变化，下一帧需要重建交换链
+         *
+         * 由上层在 GLFW 的 resize 回调里调用。本层不自己监听窗口事件：
+         * 回调可能在任意时刻触发，在里面做重建会打乱帧的时序。
+         * 这里只记一个标志，把处理留给帧循环，顺带把连续的 resize 事件合并成一次重建
+         */
+        void NotifyWindowResized()
+        {
+            m_windowResized = true;
+        }
 
         /**
          * 获取Vulkan设备
@@ -165,6 +183,24 @@ namespace Doodle
 
     private:
         /**
+         * 重建交换链，以及所有随它一起失效的层
+         *
+         * 顺序：交换链 → 帧缓冲 → 同步对象，与 Initialize 同序、与 Destroy 反序。
+         * 渲染通道与图形管线不重建 —— 只有交换链格式真的变了才需要，那是极罕见的情况，
+         * 代价却是把管线整个重编译一遍。理由详见实现
+         */
+        void RecreateSwapChain();
+
+    private:
+        /**
+         * 窗口句柄，在 Initialize 时绑定
+         *
+         * 只借不放：窗口的创建与销毁都归 DoodleApplication。
+         * 本层需要它，是因为重建交换链时要靠它取窗口的最新像素尺寸
+         */
+        GLFWwindow* m_pWindow = nullptr;
+
+        /**
          * Vulkan设备层：Instance / Surface / 物理设备 / 逻辑设备 / 队列
          */
         DoodleVulkanDevice m_device;
@@ -203,11 +239,19 @@ namespace Doodle
         DoodleSyncObjects m_syncObjects;
 
         /**
-         * 当前在途帧索引，取值 0 .. MAX_FRAMES_IN_FLIGHT-1，每帧结束时推进一格
+         * 当前在途帧索引，取值 0 .. MAX_FRAMES_IN_FLIGHT-1，DrawFrame 开头取用后立即推进一格
          *
          * 命令缓冲、imageAvailable 信号量、帧栅栏都按它轮转取用。
          * renderFinished 不按它取 —— 那是按交换链图像索引的，两个维度互不相干
          */
         uint32_t m_currentFrame = 0;
+
+        /**
+         * 窗口尺寸变化标志
+         *
+         * 由 NotifyWindowResized 置位，DrawFrame 在呈现之后消费并清零。
+         * 不在回调里当场重建，是为了把连续多次 resize 合并到帧边界只处理一次
+         */
+        bool m_windowResized = false;
     };
 }

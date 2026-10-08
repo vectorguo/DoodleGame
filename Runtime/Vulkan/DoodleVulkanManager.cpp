@@ -8,11 +8,15 @@
 
 #include <cstdint>
 #include <stdexcept>
+#include <GLFW/glfw3.h>
 
 namespace Doodle
 {
     void DoodleVulkanManager::Initialize(GLFWwindow* pWindow)
     {
+        //窗口只借不放，本层不负责它的创建与销毁
+        m_pWindow = pWindow;
+
         m_device.Initialize(pWindow);
         m_swapChain.Initialize(m_device, pWindow);
         m_renderPass.Initialize(m_device, m_swapChain);
@@ -69,24 +73,45 @@ namespace Doodle
         //   必须在 vkResetFences 之前等待——顺序反过来的话，
         //   wait 会立刻返回，紧接着就会去覆写 GPU 还在用的命令缓冲
         vkWaitForFences(logicalDevice, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
-        vkResetFences(logicalDevice, 1, &inFlightFence);
 
         //② 从交换链取一张图像。imageIndex 每次调用都可能不同，
         //   它决定本帧画到哪个帧缓冲，不要写死
         uint32_t imageIndex = 0;
-        //这里不检查返回值：可能返回 VK_ERROR_OUT_OF_DATE_KHR / VK_SUBOPTIMAL_KHR，
-        //它们表示交换链与窗口不再匹配，属于要重建交换链的正常状态，而非应当终止程序的错误。
-        //本工程窗口不可缩放(GLFW_RESIZABLE 为 GLFW_FALSE)，基本不会触发，
-        //等以后要做窗口缩放时，和交换链重建逻辑一起补
-        vkAcquireNextImageKHR(logicalDevice, m_swapChain.GetSwapChain(), UINT64_MAX,
-                              imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+        const auto acquireResult = vkAcquireNextImageKHR(logicalDevice, m_swapChain.GetSwapChain(), UINT64_MAX,
+                                                         imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
 
-        //③ 录制本帧命令。命令缓冲层不缓存句柄，录制时现取，
+        //交换链已经和窗口对不上了，这次没拿到可用图像。重建之后直接放弃本帧重来 ——
+        //必须直接返回：imageIndex 是旧交换链的索引，重建后那个位置已经不是同一张图了
+        //
+        //注意 imageAvailableSemaphore 此刻的状态：acquire 失败时它会留在「已发出信号」状态，
+        //而 vkDeviceWaitIdle 覆盖不到它 —— 那个等待只管队列上的提交，
+        //呈现引擎那边发起的信号不在其列。所以它绝不能再拿去 acquire 第二次
+        //（会撞 VUID-vkAcquireNextImageKHR-semaphore-01286：必须是 unsignaled）。
+        //重建时把同步对象整层换新、连同这个信号量一起销毁重来，正是为了绕开这一点
+        if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            RecreateSwapChain();
+            return;
+        }
+
+        //VK_SUBOPTIMAL_KHR 不算错误：交换链略有偏差，但图像可用。
+        //既然已经拿到图了，画完呈现出去比推倒重来划算，等帧尾的呈现之后再重建
+        if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
+        {
+            throw std::runtime_error("failed to acquire swap chain image!");
+        }
+
+        //③ 到这里才把栅栏降下。vkResetFences 的含义是「我承诺马上提交一份工作」，
+        //   所以它必须紧贴着真正提交的那一步 —— 上面任何一条提前返回的路径都会让这个
+        //   承诺落空，栅栏停在未发出信号状态，下一轮等它就永远等不到
+        vkResetFences(logicalDevice, 1, &inFlightFence);
+
+        //④ 录制本帧命令。命令缓冲层不缓存句柄，录制时现取，
         //   所以交换链重建之后重录拿到的自然是新句柄
         const auto commandBuffer = m_commandBuffer.GetCommandBuffer(frameIndex);
         m_commandBuffer.RecordCommandBuffer(commandBuffer, imageIndex);
 
-        //④ 提交到图形队列
+        //⑤ 提交到图形队列
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
@@ -104,7 +129,7 @@ namespace Doodle
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = commandBuffers;
 
-        //绘制完成时发出信号，供⑤的呈现等待。
+        //绘制完成时发出信号，供⑥的呈现等待。
         //这里按图像索引取，而不是用某个固定信号量：能 acquire 到第 imageIndex 张图，
         //说明呈现引擎已经用完它，也就必然完成了对「属于它的那个信号量」的等待，
         //此刻它必定是 unsignaled，signal 它才合法。
@@ -120,7 +145,7 @@ namespace Doodle
             throw std::runtime_error("failed to submit draw command buffer!");
         }
 
-        //⑤ 把这张图像交回交换链呈现。等的是④里刚发出信号的那批信号量，
+        //⑥ 把这张图像交回交换链呈现。等的是⑤里刚发出信号的那批信号量，
         //   也就是「绘制已完成」，保证屏幕上不会出现半成品
         VkPresentInfoKHR presentInfo{};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -132,7 +157,65 @@ namespace Doodle
         presentInfo.pSwapchains = swapChains;
         presentInfo.pImageIndices = &imageIndex;
 
-        //返回值同样不检查，理由见②
-        vkQueuePresentKHR(m_device.GetPresentQueue(), &presentInfo);
+        const auto presentResult = vkQueuePresentKHR(m_device.GetPresentQueue(), &presentInfo);
+
+        //重建判断必须放在呈现之后。提前退出的话，acquire 唤醒的那个
+        //imageAvailable 信号量没人消费，它对应的图像也永远不会归还交换链 ——
+        //下一轮再去 signal 一个已处于信号态的二值信号量是未定义行为。
+        //走到这里时两个信号量都已经被正常等待过，状态是干净的
+        if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR || m_windowResized)
+        {
+            m_windowResized = false;
+            RecreateSwapChain();
+        }
+        else if (presentResult != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to present swap chain image!");
+        }
+    }
+
+    void DoodleVulkanManager::RecreateSwapChain()
+    {
+        //窗口最小化时 framebuffer 尺寸会变成 0×0，那样建不出交换链。
+        //在这里阻塞到窗口回来 —— 反正最小化期间没有内容要画，
+        //让出 CPU 比空转着反复重建要好。
+        //
+        //先查一次是为了应付「尺寸本来就正常」这个常见情况：否则会先白白阻塞在
+        //glfwWaitEvents 上，等一个根本没来的事件，看起来就像随机卡了一下。
+        //循环里先等后查：唤醒之后立刻用最新尺寸判断，尺寸一合法就退出，
+        //不需要再多来一个事件把循环顶出去
+        int width = 0;
+        int height = 0;
+        glfwGetFramebufferSize(m_pWindow, &width, &height);
+        while ((width == 0 || height == 0) && !glfwWindowShouldClose(m_pWindow))
+        {
+            glfwWaitEvents();
+            glfwGetFramebufferSize(m_pWindow, &width, &height);
+        }
+
+        //帧循环里的提交都是异步的，此刻可能还有绘制或呈现在途，
+        //此时销毁它们引用的资源是未定义行为
+        vkDeviceWaitIdle(m_device.GetLogicalDevice());
+
+        //按依赖倒序销毁。同步对象排在最前：它的 renderFinished 数量取决于图像数量，
+        //必须赶在交换链消失之前先处理掉
+        m_syncObjects.Destroy();
+        m_frameBuffer.Destroy();
+        m_swapChain.Destroy();
+
+        //按依赖正序创建，顺序与 Initialize 里这几层的一致。
+        //
+        //渲染通道与图形管线不在这里重建。它们确实依赖交换链的格式，但那个格式要变，
+        //得把窗口拖到另一块不同色域的显示器上，是极罕见的情况；而重建渲染通道意味着
+        //整条图形管线也要跟着重编译，代价几十毫秒。为一次窗口缩放付这个钱不值得。
+        //
+        //命令缓冲也不重建：它不缓存任何上游句柄，每帧录制时现取，
+        //重建后重录拿到的自然是新的
+        m_swapChain.Initialize(m_device, m_pWindow);
+        m_frameBuffer.Initialize(m_device, m_swapChain, m_renderPass);
+        m_syncObjects.Initialize(m_device, m_swapChain);
+
+        //m_currentFrame 不用复位：同步对象整层换新，三个栅栏都是「已发出信号」状态，
+        //重建后第一帧的①会立刻通过，和程序刚启动时是同一个情形
     }
 }

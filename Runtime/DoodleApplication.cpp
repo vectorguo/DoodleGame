@@ -57,9 +57,27 @@ namespace Doodle
     {
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+        //可缩放。窗口尺寸变化后交换链就不再与 surface 匹配，
+        //需要在帧循环里重建 —— 这个标志是那条路径的触发来源
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
         m_pWindow = glfwCreateWindow(m_windowWidth, m_windowHeight, "Doodle", nullptr, nullptr);
+
+        //把 this 存进窗口，供静态回调取回（GLFW 是 C 库，回调没有 this 可用）
+        glfwSetWindowUserPointer(m_pWindow, this);
+        glfwSetFramebufferSizeCallback(m_pWindow, WindowResizeCallback);
+    }
+
+    /**
+     * 窗口尺寸变化回调
+     */
+    void DoodleApplication::WindowResizeCallback(GLFWwindow* pWindow, int width, int height)
+    {
+        //尺寸参数不在这里用：真正的尺寸等重建交换链时现查。
+        //这里只需要记下「变过了」，把处理留给帧循环 —— 拖动窗口边缘时系统会甩出
+        //一连串 resize 事件，逐个处理会把交换链重建到卡死
+        const auto pApplication = static_cast<DoodleApplication*>(glfwGetWindowUserPointer(pWindow));
+        pApplication->m_vulkanManager.NotifyWindowResized();
     }
 
     /**
