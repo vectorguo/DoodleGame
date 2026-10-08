@@ -1,5 +1,21 @@
-# 至少要用 CMake 4.3 来读这份文件（CLion 自带 4.3.1；系统自带的 3.26 读不了）。
-cmake_minimum_required(VERSION 4.3)
+# 最低支持 CMake 3.22。
+#
+# 这份文件里没有任何 4.x 专有语法，用得最新的三处是：
+#   find_library(... REQUIRED)    （3.18）
+#   list(PREPEND)                 （3.15）
+#   CMAKE_CXX_STANDARD 23 这个取值（3.20）
+# 原先写 4.3（CLion 新建工程时按自带版本号填的），结果 Android SDK 自带的
+# CMake 最高只到 4.1.2，两条 Android 路径全被挡住，反而只能依赖 CLion。
+#
+# 降到 3.22 之后两条链各有各的 CMake，互不干扰：
+#   Android：SDK 的 3.22.1 + NDK clang，C++23 展开成 -std=gnu++2b（与 gnu++23 同义）
+#   桌面   ：CLion 自带的 4.3.1
+# 别拿 3.22.1 去建桌面 target —— 它的 AppleClang 表只到 C++20，
+# 会把 C++23 报成「CMake does not know the compile flags」。
+#
+# 另外这一行不只是「声明最低版本」：它把该版本及之前的策略置为 NEW、
+# 之后的保持 OLD，动这个数字等于动了 CMake 的策略基线。
+cmake_minimum_required(VERSION 3.22)
 
 # 工程名 / 主 target 名。后面 add_executable(DoodleGame ...) 必须和这里一致。
 project(DoodleGame)
