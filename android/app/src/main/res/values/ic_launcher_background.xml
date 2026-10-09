@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标的底色。改这里就够了，前景的图形是透明的，不参与 -->
+
+<resources>
+    <color name="ic_launcher_background">#FFC93C</color>
+</resources>

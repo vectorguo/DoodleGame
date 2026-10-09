@@ -18,11 +18,21 @@
         少了它，系统会去找一个不存在的 dex，启动即失败
 
         allowBackup 之类的开关一律关掉 —— 本应用没有需要备份的状态
+
+        icon 与 roundIcon 指向同一套图标的两个变体。为什么两个都要写：
+        API 26 起系统优先读 mipmap-anydpi-v26/ 下那两个 adaptive-icon，
+        自己按桌面风格裁形状，roundIcon 在那些版本上其实是多余的；
+        但 API 25 的 launcher 会单独去找「圆形版」，没有就退回方形版再硬裁，
+        圆的四角会被切掉。本工程 minSdk 是 24，25 这一档还在，所以要给
+
+        图片由 android/icon/make_icon.py 生成，改图形改那里，别手改 PNG
     -->
     <application
         android:allowBackup="false"
         android:hasCode="false"
+        android:icon="@mipmap/ic_launcher"
         android:label="Doodle"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="false">
 
         <!--
