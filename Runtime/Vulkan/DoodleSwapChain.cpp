@@ -7,16 +7,15 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
-#include <GLFW/glfw3.h>
 
 namespace Doodle
 {
-    void DoodleSwapChain::Initialize(const DoodleVulkanDevice& device, GLFWwindow* pWindow)
+    void DoodleSwapChain::Initialize(const DoodleVulkanDevice& device, const DoodleWindow& window)
     {
         m_pDevice = &device;
 
         //创建交换链
-        CreateSwapChain(pWindow);
+        CreateSwapChain(window);
 
         //创建图像视图
         CreateImageViews();
@@ -31,12 +30,13 @@ namespace Doodle
         DestroySwapChain();
     }
 
-    void DoodleSwapChain::CreateSwapChain(GLFWwindow* pWindow)
+    void DoodleSwapChain::CreateSwapChain(const DoodleWindow& window)
     {
         const auto supportDetails = m_pDevice->QuerySwapChainSupport();
         const auto surfaceFormat = SelectSurfaceFormat(supportDetails.surfaceFormats);
         const auto presentMode = SelectSurfacePresentMode(supportDetails.surfacePresentModes);
-        const auto extent = SelectSurfaceExtent(supportDetails.surfaceCapabilities, pWindow);
+        const auto compositeAlpha = SelectCompositeAlpha(supportDetails.surfaceCapabilities);
+        const auto extent = SelectSurfaceExtent(supportDetails.surfaceCapabilities, window);
 
         //决定交换链里想放多少张图像。实现会规定它能正常工作所需的最小数量
         //但仅仅贴着这个最小值，意味着我们有时不得不等待驱动完成内部操作， 才能获取下一张图像来渲染。因此建议至少比最小值多申请一张
@@ -73,8 +73,10 @@ namespace Doodle
             createInfo.pQueueFamilyIndices = queueFamilyIndices;
         }
 
+        //取系统当前给这个表面的变换。Android 上经常是 90/270 度（横竖屏），
+        //这里照填即可 —— 让系统在合成时做旋转，比自己处理省事且不会出错
         createInfo.preTransform = supportDetails.surfaceCapabilities.currentTransform;
-        createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        createInfo.compositeAlpha = compositeAlpha;
         createInfo.presentMode = presentMode;
         createInfo.clipped = VK_TRUE;
         createInfo.oldSwapchain = VK_NULL_HANDLE;
@@ -124,6 +126,10 @@ namespace Doodle
             throw std::runtime_error("No available surface formats found!");
         }
 
+        //退到驱动给的第一项。Android 上常见的是 R8G8B8A8_UNORM 或 B8G8R8A8_UNORM，
+        //都不是 sRGB —— 渲染通道和图形管线都按这个格式建，所以自洽，只是颜色
+        //不在 sRGB 空间里。要精确控制得另开一张 sRGB 中间图再自己转，
+        //当前这个三角形不值得
         return availableSurfaceFormats[0];
     }
 
@@ -136,18 +142,47 @@ namespace Doodle
                 return availablePresentMode;
             }
         }
+        //Android 上一般只有 FIFO，这个兜底本来就命中
         return VK_PRESENT_MODE_FIFO_KHR;
     }
 
-    VkExtent2D DoodleSwapChain::SelectSurfaceExtent(const VkSurfaceCapabilitiesKHR& surfaceCapabilities, GLFWwindow* pWindow)
+    VkCompositeAlphaFlagBitsKHR DoodleSwapChain::SelectCompositeAlpha(const VkSurfaceCapabilitiesKHR& surfaceCapabilities)
     {
+        //本工程画的是不透明内容，优先 OPAQUE。
+        //不能把它写死：桌面驱动基本都支持，而大量 Android 驱动只给 INHERIT
+        constexpr VkCompositeAlphaFlagBitsKHR candidates[] =
+        {
+            VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+            VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+            VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+            VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+        };
+
+        for (const auto candidate : candidates)
+        {
+            if ((surfaceCapabilities.supportedCompositeAlpha & candidate) != 0)
+            {
+                return candidate;
+            }
+        }
+
+        //规范要求 supportedCompositeAlpha 至少有一位，走到这里说明驱动不合规。
+        //给个合法值让后续流程继续，比起当场抛出更容易定位到真正的问题
+        return VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
+    }
+
+    VkExtent2D DoodleSwapChain::SelectSurfaceExtent(const VkSurfaceCapabilitiesKHR& surfaceCapabilities, const DoodleWindow& window)
+    {
+        //currentExtent 不是 uint32_t 的最大值，说明驱动已经把尺寸定死了，
+        //直接用它 —— 这种情况在 Android 上是常态，桌面也常见
         if (surfaceCapabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
         {
             return surfaceCapabilities.currentExtent;
         }
 
-        int width, height;
-        glfwGetFramebufferSize(pWindow, &width, &height);
+        int32_t width = 0;
+        int32_t height = 0;
+        window.GetFramebufferSize(width, height);
         VkExtent2D framebufferExtent =
         {
             .width = static_cast<uint32_t>(width),

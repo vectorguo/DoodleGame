@@ -8,17 +8,16 @@
 
 #include <cstdint>
 #include <stdexcept>
-#include <GLFW/glfw3.h>
 
 namespace Doodle
 {
-    void DoodleVulkanManager::Initialize(GLFWwindow* pWindow)
+    void DoodleVulkanManager::Initialize(DoodleWindow& window)
     {
         //窗口只借不放，本层不负责它的创建与销毁
-        m_pWindow = pWindow;
+        m_pWindow = &window;
 
-        m_device.Initialize(pWindow);
-        m_swapChain.Initialize(m_device, pWindow);
+        m_device.Initialize(window);
+        m_swapChain.Initialize(m_device, window);
         m_renderPass.Initialize(m_device, m_swapChain);
         m_graphicsPipeline.Initialize(m_device, m_renderPass);
         m_frameBuffer.Initialize(m_device, m_swapChain, m_renderPass);
@@ -45,8 +44,51 @@ namespace Doodle
         m_device.Destroy();
     }
 
+    void DoodleVulkanManager::Suspend()
+    {
+        //在途的帧可能还在引用即将拆掉的交换链图像，必须先停稳
+        vkDeviceWaitIdle(m_device.GetLogicalDevice());
+
+        DestroySurfaceDependentLayers();
+
+        //表面本身最后拆。它归设备层管，但失效的时机由窗口决定，
+        //所以由本层在收到通知时转达
+        m_device.DestroySurface();
+    }
+
+    void DoodleVulkanManager::Resume(DoodleWindow& window)
+    {
+        m_pWindow = &window;
+
+        //顺序与 Initialize 里那几层的前半段完全一致，只是实例与设备已经在了
+        m_device.CreateSurface(window);
+
+        //表面换了，present 队列族的支持情况要重查一遍。
+        //同一台设备上不会变，但万变了后面所有提交都是错的
+        m_device.VerifyQueueFamilySelection();
+
+        m_swapChain.Initialize(m_device, window);
+        m_frameBuffer.Initialize(m_device, m_swapChain, m_renderPass);
+        m_syncObjects.Initialize(m_device, m_swapChain);
+
+        //挂起期间攒下的 resize 通知已经兑现了 —— 刚刚这一轮就是按当前窗口尺寸重建的。
+        //不清掉的话，恢复后第一帧会在呈现之后再重建一次交换链，白做一遍
+        m_windowResized = false;
+
+        //m_currentFrame 不复位，理由同 RecreateSwapChain：同步对象整层换新，
+        //三个栅栏都是「已发出信号」状态，恢复后第一帧的①会立刻通过
+    }
+
     void DoodleVulkanManager::DrawFrame()
     {
+        //表面已被 Suspend 拆掉，没有可呈现的目标。
+        //驱动层本就不该在这时调进来，但这个检查比崩溃便宜得多 ——
+        //Android 上漏掉一次状态判断，代价是一段看不出因果的 tombstone
+        if (m_swapChain.GetSwapChain() == VK_NULL_HANDLE)
+        {
+            return;
+        }
+
         const auto logicalDevice = m_device.GetLogicalDevice();
 
         //本帧用哪一套 per-frame 资源，全部由 frameIndex 决定。
@@ -174,34 +216,27 @@ namespace Doodle
         }
     }
 
-    void DoodleVulkanManager::RecreateSwapChain()
+    void DoodleVulkanManager::DestroySurfaceDependentLayers()
     {
-        //窗口最小化时 framebuffer 尺寸会变成 0×0，那样建不出交换链。
-        //在这里阻塞到窗口回来 —— 反正最小化期间没有内容要画，
-        //让出 CPU 比空转着反复重建要好。
-        //
-        //先查一次是为了应付「尺寸本来就正常」这个常见情况：否则会先白白阻塞在
-        //glfwWaitEvents 上，等一个根本没来的事件，看起来就像随机卡了一下。
-        //循环里先等后查：唤醒之后立刻用最新尺寸判断，尺寸一合法就退出，
-        //不需要再多来一个事件把循环顶出去
-        int width = 0;
-        int height = 0;
-        glfwGetFramebufferSize(m_pWindow, &width, &height);
-        while ((width == 0 || height == 0) && !glfwWindowShouldClose(m_pWindow))
-        {
-            glfwWaitEvents();
-            glfwGetFramebufferSize(m_pWindow, &width, &height);
-        }
-
-        //帧循环里的提交都是异步的，此刻可能还有绘制或呈现在途，
-        //此时销毁它们引用的资源是未定义行为
-        vkDeviceWaitIdle(m_device.GetLogicalDevice());
-
         //按依赖倒序销毁。同步对象排在最前：它的 renderFinished 数量取决于图像数量，
         //必须赶在交换链消失之前先处理掉
         m_syncObjects.Destroy();
         m_frameBuffer.Destroy();
         m_swapChain.Destroy();
+    }
+
+    void DoodleVulkanManager::RecreateSwapChain()
+    {
+        //窗口尺寸为 0（桌面上的最小化）时建不出交换链，在这里阻塞到窗口回来。
+        //桌面实现里是 glfwWaitEvents 循环；Android 没有这个状态，实现是空的
+        m_pWindow->WaitForValidFramebufferSize();
+
+        //帧循环里的提交都是异步的，此刻可能还有绘制或呈现在途，
+        //此时销毁它们引用的资源是未定义行为
+        vkDeviceWaitIdle(m_device.GetLogicalDevice());
+
+        //按依赖倒序销毁
+        DestroySurfaceDependentLayers();
 
         //按依赖正序创建，顺序与 Initialize 里这几层的一致。
         //
@@ -211,7 +246,7 @@ namespace Doodle
         //
         //命令缓冲也不重建：它不缓存任何上游句柄，每帧录制时现取，
         //重建后重录拿到的自然是新的
-        m_swapChain.Initialize(m_device, m_pWindow);
+        m_swapChain.Initialize(m_device, *m_pWindow);
         m_frameBuffer.Initialize(m_device, m_swapChain, m_renderPass);
         m_syncObjects.Initialize(m_device, m_swapChain);
 

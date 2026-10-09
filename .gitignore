@@ -4,12 +4,34 @@
 /*
 !/.gitignore
 !/CMakeLists.txt
-!/main.cpp
 !/Runtime/
 !/Shaders/
+!/android/
 
-# GLSL 源码入库，SPIR-V 编译产物不入库（跑 Shaders/compile.sh 重新生成）
+# GLSL 源码入库，编译产物不入库。
+#
+# 编译与内嵌副本的生成现在都是构建的一步（见 CMakeLists.txt 里的
+# add_custom_command），产物落在各个构建目录里，不会污染源码树。
+# 下面两条只覆盖一种情况：手动跑 Shaders/compile.sh 且不给输出目录时，
+# 产物会落在 Shaders/ 自己那里
 /Shaders/*.spv
+/Shaders/DoodleEmbeddedShaders.h
+
+# Android 侧的构建产物与机器相关配置。
+# 源码（settings/build.gradle.kts、AndroidManifest.xml、gradlew）都入库，
+# 只有下面这些是按机器或按次生成的
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/app/.cxx/
+/android/.cxx/
+/android/.kotlin/
+/android/local.properties
+
+# Android Studio 的本地配置。android/.idea/ 自己的 .gitignore 只挡了
+# shelf/ 和 workspace.xml，misc.xml、modules.xml、caches/ 这些会跟着
+# `git add android/` 一起进版本库 —— 挡在这里，别指望那份子 .gitignore
+/android/.idea/
 
 # macOS / 编辑器噪声
 .DS_Store

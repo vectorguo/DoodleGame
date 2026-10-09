@@ -4,6 +4,11 @@
 
 #include "DoodleShaderModule.h"
 
+// 编进二进制的着色器副本。由构建过程生成（见 CMakeLists.txt 里的
+// add_custom_command 与 Shaders/compile.sh），所在目录经 target_include_directories
+// 加进搜索路径，所以这里只写文件名
+#include "DoodleEmbeddedShaders.h"
+
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -105,6 +110,20 @@ namespace Doodle
             file.read(buffer.data(), static_cast<std::streamsize>(fileSize));
             file.close();
             return buffer;
+        }
+
+        // 文件都取不到，退到编进二进制的副本。
+        //
+        // Android 上必然走到这里，而且是常态而非异常：APK 里的东西不是文件系统
+        // 里的文件，std::ifstream 打不开，进程工作目录也不是工程目录。
+        // 副本由 Shaders/compile.sh 生成，键就是这里的 filename
+        for (const auto& shader : EmbeddedShaders::kShaders)
+        {
+            if (filename == shader.pPath)
+            {
+                const auto* pBegin = reinterpret_cast<const char*>(shader.pData);
+                return std::vector<char>(pBegin, pBegin + shader.size);
+            }
         }
 
         throw std::runtime_error("failed to open file: " + filename + triedPaths);

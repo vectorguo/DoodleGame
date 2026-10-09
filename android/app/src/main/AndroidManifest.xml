@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        声明依赖 Vulkan。version 0x400003 即 VK_MAKE_VERSION(1,0,0)。
+
+        这条不只是「说明」：没有它，应用会被装到不支持 Vulkan 的设备上，
+        然后在 vkCreateInstance 那里以一句看不懂的报错崩掉。
+        写上之后 Google Play 与 adb install 都会提前拦住
+    -->
+    <uses-feature
+        android:name="android.hardware.vulkan.version"
+        android:version="0x400003"
+        android:required="true" />
+
+    <!--
+        hasCode="false" 是关键：本工程没有一行 Java/Kotlin，入口是原生代码。
+        少了它，系统会去找一个不存在的 dex，启动即失败
+
+        allowBackup 之类的开关一律关掉 —— 本应用没有需要备份的状态
+    -->
+    <application
+        android:allowBackup="false"
+        android:hasCode="false"
+        android:label="Doodle"
+        android:supportsRtl="false">
+
+        <!--
+            android.app.NativeActivity 由系统提供，我们不是自己写的。
+            它启动后会去加载 android.app.lib_name 指名的那个 .so，
+            然后调用其中的 ANativeActivity_onCreate —— 也就是 native_app_glue 里那个。
+            名字 "DoodleGame" 对应 CMake 里的 target 名，即 libDoodleGame.so
+
+            configChanges 里列出的那些，表示系统不要为这类变化重建 Activity，
+            而是发一条 APP_CMD_CONFIG_CHANGED 让我们自己处理。
+            对原生应用这是必须的：重建 Activity 意味着 Vulkan 整套要拆了重来。
+
+            想验证 Suspend/Resume 那条路的话，把 orientation|screenSize 从这行删掉，
+            旋转屏幕就会走完整的「拆-建」流程
+        -->
+        <activity
+            android:name="android.app.NativeActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density|uiMode"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="DoodleGame" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

@@ -43,6 +43,14 @@ namespace Doodle
         }
 
         /**
+         * 逐字段比较
+         *
+         * 默认实现即可：成员都是可选索引，比的就是「选中了哪个族」。
+         * 用在表面重建后的复查上（见 DoodleVulkanDevice::VerifyQueueFamilySelection）
+         */
+        bool operator==(const QueueFamilySelection&) const = default;
+
+        /**
          * 去重后的队列族索引列表，供创建逻辑设备时逐个填写 QueueCreateInfo
          *
          * 多个角色经常落在同一个族上（Apple Silicon 只有一个族，四个角色全在 0），

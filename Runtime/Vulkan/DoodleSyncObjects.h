@@ -23,7 +23,7 @@ namespace Doodle
      * 只读引用设备层与交换链层，生命周期须短于 DoodleSwapChain
      *
      * 本层只持有句柄，不做等待、复位、提交这些动作：那些属于帧循环的流程，
-     * 见 DoodleApplication::DrawFrame
+     * 见 DoodleVulkanManager::DrawFrame
      */
     class DoodleSyncObjects
     {

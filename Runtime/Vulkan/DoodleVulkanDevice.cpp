@@ -4,10 +4,10 @@
 
 #include "DoodleVulkanDevice.h"
 
-#include <iostream>
 #include <stdexcept>
 #include <vector>
-#include <GLFW/glfw3.h>
+
+#include "../Platform/DoodleLog.h"
 
 namespace Doodle
 {
@@ -19,10 +19,10 @@ namespace Doodle
     };
 #endif
 
-    void DoodleVulkanDevice::Initialize(GLFWwindow* pWindow)
+    void DoodleVulkanDevice::Initialize(const DoodleWindow& window)
     {
-        CreateVkInstance();
-        CreateSurface(pWindow);
+        CreateVkInstance(window);
+        CreateSurface(window);
         SelectPhysicalDevice();
         CreateLogicalDevice();
     }
@@ -34,15 +34,8 @@ namespace Doodle
         DestroyVkInstance();
     }
 
-    void DoodleVulkanDevice::CreateVkInstance()
+    void DoodleVulkanDevice::CreateVkInstance(const DoodleWindow& window)
     {
-#ifndef NDEBUG
-        if (!IsValidationLayerSupported())
-        {
-            throw std::runtime_error("validation layers not available");
-        }
-#endif
-
         //AppInfo
         VkApplicationInfo appInfo{};
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -50,44 +43,69 @@ namespace Doodle
         appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.pEngineName = "DoodleEngine";
         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.apiVersion = VK_API_VERSION_1_1;
+        //请求 1.3，为后面的动态渲染铺路：vkCmdBeginRendering 是 1.3 的核心功能，
+        //而规范要求「新核心版本的设备级功能必须同时被设备版本和这里声明的版本支持」
+        //（fundamentals.adoc，Valid Usage for Newer Core Versions）——
+        //光设备支持不够，不在这里声明的话 loader 连函数指针都不给
+        //
+        //顺带解掉了压在 1.0 时的一个校验层报错：VK_KHR_portability_subset 依赖实例扩展
+        //VK_KHR_get_physical_device_properties2，这个依赖要 1.1 以上才被核心版本吃掉，
+        //1.0 的实例上会撞 VUID-vkCreateDevice-ppEnabledExtensionNames-01387（macOS 实测）
+        //
+        //代价是这个声明成了硬门槛：AOSP loader 的 SanitizeApiVersion() 只替 1.0 驱动兜底，
+        //1.1/1.2 的驱动拿到更高的请求不在保护范围内，vkCreateInstance 会直接返回
+        //VK_ERROR_INCOMPATIBLE_DRIVER。minSdk 仍留在 24，与这里不匹配是明知而为 ——
+        //眼下只跑测试机（Android 16 / Adreno）。发布时怎么收口见 android/app/build.gradle.kts
+        appInfo.apiVersion = VK_API_VERSION_1_3;
         appInfo.pNext = nullptr;
 
         //Extension
-        const auto requiredExtensions = GetRequiredExtensions();
+        const auto requiredExtensions = GetRequiredExtensions(window);
 
         //Instance CreateInfo
         VkInstanceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         createInfo.pApplicationInfo = &appInfo;
         createInfo.pNext = nullptr;
-        createInfo.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+        createInfo.flags = 0;
+#ifdef __APPLE__
+        //MoltenVK 把 Vulkan 翻译到 Metal 上，不是原生 Vulkan 实现。
+        //这个标志让 loader 把这类「可移植」设备也枚举出来，
+        //不加的话有 Vulkan 能力的 Mac 会在枚举阶段就消失
+        createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#endif
         createInfo.enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size());
         createInfo.ppEnabledExtensionNames = requiredExtensions.data();
-#ifdef NDEBUG
-        createInfo.enabledLayerCount = 0;
-#else
-        createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
-        createInfo.ppEnabledLayerNames = validationLayers.data();
+
+        //校验层：有就用，没有就跳过。
+        //
+        //原先的写法是 NDEBUG 下没有校验层就抛异常。桌面这么写没问题，
+        //Android 上会直接要命：那边的校验层要手动 push 到设备上才存在，
+        //默认没有 —— 于是 Debug 包启动即崩，而 std::cerr 在 Android 上
+        //不进 logcat，表现为纯黑屏加零线索
+        uint32_t enabledLayerCount = 0;
+        const char* const* ppEnabledLayerNames = nullptr;
+#ifndef NDEBUG
+        if (IsValidationLayerSupported())
+        {
+            enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+            ppEnabledLayerNames = validationLayers.data();
+        }
+        else
+        {
+            Log::Info("validation layers not available, running without them");
+        }
 #endif
+        createInfo.enabledLayerCount = enabledLayerCount;
+        createInfo.ppEnabledLayerNames = ppEnabledLayerNames;
 
         //Create Instance
         const auto result = vkCreateInstance(&createInfo, nullptr, &m_pInstance);
         if (result != VK_SUCCESS)
         {
+            Log::Error("vkCreateInstance failed");
             throw std::runtime_error("failed to create vulkan instance");
         }
-
-        //Check Extension
-        uint32_t extensionCount = 0;
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-        std::vector<VkExtensionProperties> extensions(extensionCount);
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
-        // std::cout << "available extensions:\n";
-        // for (const auto& extension : extensions)
-        // {
-        //     std::cout << '\t' << extension.extensionName << '\n';
-        // }
     }
 
     void DoodleVulkanDevice::DestroyVkInstance()
@@ -129,25 +147,30 @@ namespace Doodle
     }
 #endif
 
-    std::vector<const char*> DoodleVulkanDevice::GetRequiredExtensions()
+    std::vector<const char*> DoodleVulkanDevice::GetRequiredExtensions(const DoodleWindow& window)
     {
-        uint32_t glfwExtensionCount = 0;
-        const auto** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-        std::vector<const char*> requiredExtensions;
-        requiredExtensions.reserve(glfwExtensionCount + 1);
-        for(auto i = 0; i < glfwExtensionCount; ++i)
-        {
-            requiredExtensions.emplace_back(glfwExtensions[i]);
-        }
+        //与窗口系统相关的那几个（VK_KHR_surface 加平台自己的 surface 扩展）
+        //由窗口层给出 —— 那是唯一知道窗口是什么类型的地方
+        std::vector<const char*> requiredExtensions = window.GetSurfaceExtensions();
+
+#ifdef __APPLE__
+        //与上面 ENUMERATE_PORTABILITY 标志配套，两个必须同时给
         requiredExtensions.emplace_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+#endif
+
         return requiredExtensions;
     }
 
-    void DoodleVulkanDevice::CreateSurface(GLFWwindow* pWindow)
+    void DoodleVulkanDevice::CreateSurface(const DoodleWindow& window)
     {
-        const auto result = glfwCreateWindowSurface(m_pInstance, pWindow, nullptr, &m_pSurface);
+        //先清掉旧的：Android 上这个函数会在一轮生命周期里被调第二次，
+        //留着旧表面就是泄漏，而且可能和新的撞上
+        DestroySurface();
+
+        const auto result = window.CreateSurface(m_pInstance, &m_pSurface);
         if (result != VK_SUCCESS)
         {
+            Log::Error("surface creation failed");
             throw std::runtime_error("failed to create surface");
         }
     }
@@ -158,6 +181,19 @@ namespace Doodle
         {
             vkDestroySurfaceKHR(m_pInstance, m_pSurface, nullptr);
             m_pSurface = VK_NULL_HANDLE;
+        }
+    }
+
+    void DoodleVulkanDevice::VerifyQueueFamilySelection() const
+    {
+        const auto currentSelection = SelectQueueFamilies(m_pPhysicalDevice);
+        if (currentSelection != m_queueFamilySelection)
+        {
+            //真到这里就没救了：队列是创建逻辑设备那一刻绑定的，换不了。
+            //报出来总好过带着错的假设继续跑 —— 那样会在提交或呈现时
+            //以完全不相干的症状炸掉
+            Log::Error("queue family selection changed after surface recreation");
+            throw std::runtime_error("queue family selection changed after surface recreation");
         }
     }
 

@@ -13,9 +13,7 @@
 #include "DoodleSwapChain.h"
 #include "DoodleSyncObjects.h"
 #include "DoodleVulkanDevice.h"
-
-//前向声明。必须放在全局作用域
-struct GLFWwindow;
+#include "../Platform/DoodleWindow.h"
 
 namespace Doodle
 {
@@ -28,12 +26,34 @@ namespace Doodle
         /**
          * 初始化Vulkan
          */
-        void Initialize(GLFWwindow* pWindow);
+        void Initialize(DoodleWindow& window);
 
         /**
          * 销毁Vulkan
          */
         void Destroy();
+
+        /**
+         * 表面没了：拆掉表面，以及所有依附于它的层
+         *
+         * Android 上切后台、锁屏、旋转都会走这条路 —— ANativeWindow 消失，
+         * 基于它的 VkSurfaceKHR 随之失效，交换链、帧缓冲、按图像分配的
+         * 同步对象全部作废。桌面不会调到（窗口与程序同寿）
+         *
+         * 保留的是与表面无关的那几层：Instance、物理/逻辑设备、队列、
+         * 渲染通道、图形管线、命令池。重建它们代价太大且没有必要
+         *
+         * @note 期间不得调用 DrawFrame
+         */
+        void Suspend();
+
+        /**
+         * 表面回来了：按 Initialize 的顺序重建被 Suspend 拆掉的那几层
+         *
+         * @param window 提供新的表面
+         * @note 与 Suspend 必须成对。可反复调用（每次切前后台一轮）
+         */
+        void Resume(DoodleWindow& window);
 
         /**
          * 渲染并呈现一帧
@@ -191,14 +211,24 @@ namespace Doodle
          */
         void RecreateSwapChain();
 
+        /**
+         * 拆除交换链，以及所有依附于它的层
+         *
+         * 与 RecreateSwapChain 的后半段共用；Suspend 与 RecreateSwapChain
+         * 都从这里开始。表面本身不在此列 —— 它归设备层，
+         * 由调用方决定要不要一并拆（Suspend 要，重建交换链不要）
+         */
+        void DestroySurfaceDependentLayers();
+
     private:
         /**
-         * 窗口句柄，在 Initialize 时绑定
+         * 窗口，在 Initialize 时绑定
          *
-         * 只借不放：窗口的创建与销毁都归 DoodleApplication。
-         * 本层需要它，是因为重建交换链时要靠它取窗口的最新像素尺寸
+         * 只借不放：窗口的创建与销毁都归驱动层（桌面上是 DoodleApplication，
+         * Android 上是 android_main）。本层需要它，是因为重建交换链时要靠它
+         * 取窗口的最新像素尺寸，Suspend 之后还要靠它把表面重新建起来
          */
-        GLFWwindow* m_pWindow = nullptr;
+        DoodleWindow* m_pWindow = nullptr;
 
         /**
          * Vulkan设备层：Instance / Surface / 物理设备 / 逻辑设备 / 队列

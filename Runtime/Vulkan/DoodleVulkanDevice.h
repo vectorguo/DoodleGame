@@ -9,28 +9,61 @@
 
 #include "QueueFamilySelection.h"
 #include "SwapChainSupportDetails.h"
-
-//前向声明。必须放在全局作用域
-struct GLFWwindow;
+#include "../Platform/DoodleWindow.h"
 
 namespace Doodle
 {
     /**
      * Vulkan设备层：Instance、Surface、物理设备、逻辑设备与队列
-     * 生命周期与程序一致，窗口尺寸变化不影响本层
+     *
+     * Instance / 物理设备 / 逻辑设备 / 队列与程序同寿。
+     *
+     * Surface 不在此列 —— 它由窗口而来，窗口没了它就得跟着没。
+     * 桌面上窗口与程序同寿，所以这个区别看不出来；Android 上切后台、
+     * 锁屏、旋转都会让 ANativeWindow 消失又回来，那时必须调
+     * DestroySurface / CreateSurface 把这一层换掉，
+     * 而其余部分原样保留
      */
     class DoodleVulkanDevice
     {
     public:
         /**
          * 初始化Vulkan设备
+         *
+         * 表面也在这里创建 —— 选择物理设备时要靠它判断队列族是否支持
+         * present，所以必须排在选设备之前
          */
-        void Initialize(GLFWwindow* pWindow);
+        void Initialize(const DoodleWindow& window);
 
         /**
          * 销毁Vulkan设备
          */
         void Destroy();
+
+        /**
+         * 用当前窗口（重新）创建表面
+         *
+         * 初始化时调一次；Android 上窗口回来后还要再调。
+         * 调用方负责保证此刻没有在途的帧 —— 换表面会让既有的交换链、
+         * 帧缓冲、同步对象全部失效，那些由 DoodleVulkanManager 一起处理
+         */
+        void CreateSurface(const DoodleWindow& window);
+
+        /**
+         * 销毁表面
+         */
+        void DestroySurface();
+
+        /**
+         * 复查队列族选择在当前表面下是否仍然成立
+         *
+         * present 支持与否是(物理设备 × 队列族 × 表面)三者的函数，换了表面理论
+         * 上要重查。实际不会变 —— 同一个物理设备、同一类窗口 —— 但队列是绑在
+         * 逻辑设备上的，真变了也改不了，只能当场报出来，而不是带着错的假设继续跑
+         *
+         * 只在表面重建后调用。初始化路径上 SelectPhysicalDevice 里已经查过了
+         */
+        void VerifyQueueFamilySelection() const;
 
         /**
          * 获取Vulkan实例
@@ -98,7 +131,7 @@ namespace Doodle
         /**
          * 创建Vulkan Instance
          */
-        void CreateVkInstance();
+        void CreateVkInstance(const DoodleWindow& window);
 
         /**
          * 销毁Vulkan Instance
@@ -114,19 +147,10 @@ namespace Doodle
 
         /**
          * 获取所需的扩展
+         * @param window 提供与窗口系统相关的那几个，其余由本函数按平台追加
          * @return 所需扩展的名称列表
          */
-        [[nodiscard]] static std::vector<const char*> GetRequiredExtensions();
-
-        /**
-         * 创建Window Surface
-         */
-        void CreateSurface(GLFWwindow* pWindow);
-
-        /**
-         * 销毁Window Surface
-         */
-        void DestroySurface();
+        [[nodiscard]] static std::vector<const char*> GetRequiredExtensions(const DoodleWindow& window);
 
         /**
          * 选择物理设备
@@ -181,6 +205,8 @@ namespace Doodle
 
         /**
          * Window Surface
+         *
+         * 生命周期跟窗口走，不跟本对象走。见类注释
          */
         VkSurfaceKHR m_pSurface = VK_NULL_HANDLE;
 

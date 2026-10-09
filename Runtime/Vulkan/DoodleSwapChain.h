@@ -8,10 +8,8 @@
 #include <vulkan/vulkan_core.h>
 
 #include "DoodleVulkanDevice.h"
+#include "../Platform/DoodleWindow.h"
 #include "SwapChainSupportDetails.h"
-
-//前向声明。必须放在全局作用域
-struct GLFWwindow;
 
 namespace Doodle
 {
@@ -27,9 +25,9 @@ namespace Doodle
         /**
          * 初始化交换链
          * @param device 已初始化的Vulkan设备
-         * @param pWindow 窗口句柄
+         * @param window 窗口，用它取呈现尺寸
          */
-        void Initialize(const DoodleVulkanDevice& device, GLFWwindow* pWindow);
+        void Initialize(const DoodleVulkanDevice& device, const DoodleWindow& window);
 
         /**
          * 销毁交换链
@@ -79,9 +77,9 @@ namespace Doodle
     private:
         /**
          * 创建交换链
-         * @param pWindow 窗口句柄
+         * @param window 窗口，用它取呈现尺寸
          */
-        void CreateSwapChain(GLFWwindow* pWindow);
+        void CreateSwapChain(const DoodleWindow& window);
 
         /**
          * 销毁交换链，并把图像格式、尺寸等状态一并复位
@@ -103,12 +101,23 @@ namespace Doodle
         [[nodiscard]] static VkPresentModeKHR SelectSurfacePresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
 
         /**
+         * 选择CompositeAlpha
+         *
+         * 不能把 VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR 写死。桌面驱动基本都支持它，
+         * 而大量 Android 驱动只提供 INHERIT —— 写死的话交换链创建会直接失败
+         *
+         * @param surfaceCapabilities 可用的SurfaceCapability
+         * @return 选中的CompositeAlpha，都不可用时返回 INHERIT
+         */
+        [[nodiscard]] static VkCompositeAlphaFlagBitsKHR SelectCompositeAlpha(const VkSurfaceCapabilitiesKHR& surfaceCapabilities);
+
+        /**
          * 选择交换链图像的尺寸
          * @param surfaceCapabilities 可用的SurfaceCapability
-         * @param pWindow 窗口句柄
+         * @param window 窗口，currentExtent 无效时用它兜底
          * @return 交换链图像的尺寸
          */
-        [[nodiscard]] static VkExtent2D SelectSurfaceExtent(const VkSurfaceCapabilitiesKHR& surfaceCapabilities, GLFWwindow* pWindow);
+        [[nodiscard]] static VkExtent2D SelectSurfaceExtent(const VkSurfaceCapabilitiesKHR& surfaceCapabilities, const DoodleWindow& window);
 
         /**
          * 创建图像视图，每个交换链图像一个
