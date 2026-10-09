@@ -1,5 +1,5 @@
 //
-//  DoodleMacOSWindow.h
+//  DoodleMacWindow.h
 //  Doodle
 //
 //  Created by 郭智 on 2026/10/8.
@@ -38,7 +38,7 @@ namespace Doodle
      * 或要把窗口嵌进别人的 NSView 层级。在那之前，只差某一件原生的事时，
      * 可以先走 glfwGetCocoaWindow() / glfwGetCocoaView() 这个逃生口
      */
-    class DoodleMacOSWindow final : public DoodleWindow
+    class DoodleMacWindow final : public DoodleWindow
     {
     public:
         /**
@@ -59,16 +59,16 @@ namespace Doodle
          * @param title 窗口标题
          * @param resizeHandler 尺寸变化时调用。允许为空
          */
-        DoodleMacOSWindow(int32_t width, int32_t height, const char* title, ResizeHandler resizeHandler);
+        DoodleMacWindow(int32_t width, int32_t height, const char* title, ResizeHandler resizeHandler);
 
         /**
          * 销毁窗口，并终止 GLFW
          */
-        ~DoodleMacOSWindow() override;
+        ~DoodleMacWindow() override;
 
-        DoodleMacOSWindow(const DoodleMacOSWindow&) = delete;
-        DoodleMacOSWindow(DoodleMacOSWindow&&) = delete;
-        DoodleMacOSWindow& operator=(const DoodleMacOSWindow&) = delete;
+        DoodleMacWindow(const DoodleMacWindow&) = delete;
+        DoodleMacWindow(DoodleMacWindow&&) = delete;
+        DoodleMacWindow& operator=(const DoodleMacWindow&) = delete;
 
     public:
         // ---- DoodleWindow ----

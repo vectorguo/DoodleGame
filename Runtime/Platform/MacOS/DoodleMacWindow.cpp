@@ -1,11 +1,11 @@
 //
-//  DoodleMacOSWindow.cpp
+//  DoodleMacWindow.cpp
 //  Doodle
 //
 //  Created by 郭智 on 2026/10/8.
 //
 
-#include "DoodleMacOSWindow.h"
+#include "DoodleMacWindow.h"
 
 #include <stdexcept>
 #include <utility>
@@ -15,8 +15,8 @@
 
 namespace Doodle
 {
-    DoodleMacOSWindow::DoodleMacOSWindow(const int32_t width, const int32_t height, const char* title,
-                                       ResizeHandler resizeHandler)
+    DoodleMacWindow::DoodleMacWindow(const int32_t width, const int32_t height, const char* title,
+                                     ResizeHandler resizeHandler)
         : m_resizeHandler(std::move(resizeHandler))
     {
         glfwInit();
@@ -38,7 +38,7 @@ namespace Doodle
         glfwSetFramebufferSizeCallback(m_pGlfwWindow, FramebufferSizeCallback);
     }
 
-    DoodleMacOSWindow::~DoodleMacOSWindow()
+    DoodleMacWindow::~DoodleMacWindow()
     {
         if (m_pGlfwWindow != nullptr)
         {
@@ -48,29 +48,29 @@ namespace Doodle
         glfwTerminate();
     }
 
-    void DoodleMacOSWindow::FramebufferSizeCallback(GLFWwindow* pGlfwWindow, int width, int height)
+    void DoodleMacWindow::FramebufferSizeCallback(GLFWwindow* pGlfwWindow, int width, int height)
     {
         //尺寸参数不在这里用：真正的尺寸等重建交换链时现查。
         //这里只需要记下「变过了」，把处理留给帧循环 —— 拖动窗口边缘时系统会甩出
         //一连串 resize 事件，逐个处理会把交换链重建到卡死
-        const auto pWindow = static_cast<DoodleMacOSWindow*>(glfwGetWindowUserPointer(pGlfwWindow));
+        const auto pWindow = static_cast<DoodleMacWindow*>(glfwGetWindowUserPointer(pGlfwWindow));
         if (pWindow != nullptr && pWindow->m_resizeHandler)
         {
             pWindow->m_resizeHandler();
         }
     }
 
-    bool DoodleMacOSWindow::ShouldClose() const
+    bool DoodleMacWindow::ShouldClose() const
     {
         return glfwWindowShouldClose(m_pGlfwWindow) != 0;
     }
 
-    void DoodleMacOSWindow::PollEvents()
+    void DoodleMacWindow::PollEvents()
     {
         glfwPollEvents();
     }
 
-    void DoodleMacOSWindow::WaitForValidFramebufferSize()
+    void DoodleMacWindow::WaitForValidFramebufferSize()
     {
         //先查一次是为了应付「尺寸本来就正常」这个常见情况：否则会先白白阻塞在
         //glfwWaitEvents 上，等一个根本没来的事件，看起来就像随机卡了一下。
@@ -86,12 +86,12 @@ namespace Doodle
         }
     }
 
-    void DoodleMacOSWindow::GetFramebufferSize(int32_t& width, int32_t& height) const
+    void DoodleMacWindow::GetFramebufferSize(int32_t& width, int32_t& height) const
     {
         glfwGetFramebufferSize(m_pGlfwWindow, &width, &height);
     }
 
-    std::vector<const char*> DoodleMacOSWindow::GetSurfaceExtensions() const
+    std::vector<const char*> DoodleMacWindow::GetSurfaceExtensions() const
     {
         uint32_t glfwExtensionCount = 0;
         const auto** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -105,7 +105,7 @@ namespace Doodle
         return extensions;
     }
 
-    VkResult DoodleMacOSWindow::CreateSurface(const VkInstance instance, VkSurfaceKHR* pSurface) const
+    VkResult DoodleMacWindow::CreateSurface(const VkInstance instance, VkSurfaceKHR* pSurface) const
     {
         return glfwCreateWindowSurface(instance, m_pGlfwWindow, nullptr, pSurface);
     }

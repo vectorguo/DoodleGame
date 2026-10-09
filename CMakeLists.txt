@@ -88,9 +88,11 @@ set(DOODLE_SHARED_SOURCES
 
 # macOS 专属：入口、窗口实现
 set(DOODLE_MACOS_SOURCES
-    Runtime/Platform/MacOS/DoodleMacOSMain.cpp
-    Runtime/Platform/MacOS/DoodleMacOSWindow.cpp
-    Runtime/Platform/MacOS/DoodleMacOSWindow.h
+        Runtime/Platform/MacOS/DoodleMacMain.cpp
+        Runtime/Platform/MacOS/DoodleMacWindow.cpp
+        Runtime/Platform/MacOS/DoodleMacWindow.h
+        Runtime/Platform/MacOS/DoodleMacApplication.cpp
+        Runtime/Platform/MacOS/DoodleMacApplication.h
 )
 
 # Android 专属：入口、窗口实现
