@@ -28,7 +28,7 @@ namespace Doodle
      * 重新调 CreateSurface 就能拿到新表面
      *
      * 事件泵也在这里，而不是像桌面那样由驱动层直接调 GLFW。原因是 Android
-     * 的事件循环必须自己做阻塞/非阻塞的取舍（见 PollEvents 的注释），
+     * 的事件循环必须自己做阻塞/非阻塞的取舍（见 PumpEvents 的注释），
      * 而那个取舍依赖「窗口在不在」这个只有本层知道的状态
      */
     class DoodleAndroidWindow final : public DoodleWindow
@@ -74,17 +74,17 @@ namespace Doodle
     public:
         // ---- DoodleWindow ----
 
-        [[nodiscard]] bool ShouldClose() const override;
+        [[nodiscard]] bool IsCloseRequested() const override;
 
-        void PollEvents() override;
+        void PumpEvents() override;
 
-        void WaitForValidFramebufferSize() override;
+        void WaitUntilDrawable() override;
 
-        void GetFramebufferSize(int32_t& width, int32_t& height) const override;
+        [[nodiscard]] VkExtent2D GetSurfaceSize() const override;
 
         [[nodiscard]] std::vector<const char*> GetSurfaceExtensions() const override;
 
-        VkResult CreateSurface(VkInstance instance, VkSurfaceKHR* pSurface) const override;
+        [[nodiscard]] VkResult CreateSurface(VkInstance instance, VkSurfaceKHR* pSurface) const override;
 
     private:
         /**

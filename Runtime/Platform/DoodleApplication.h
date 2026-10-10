@@ -25,7 +25,7 @@ namespace Doodle
      * 只适用于「窗口与程序同寿」的桌面平台：循环每次都是「泵事件 → 画一帧」，
      * 不需要判断窗口还在不在，也没有 Suspend / Resume。
      * Android 不适用 —— 那边的窗口会消失又回来，事件泵还必须自己做阻塞 /
-     * 非阻塞的取舍（见 DoodleAndroidWindow::PollEvents），驱动逻辑在
+     * 非阻塞的取舍（见 DoodleAndroidWindow::PumpEvents），驱动逻辑在
      * Runtime/Platform/Android/DoodleAndroidMain.cpp 里另有一份。
      * 硬合成一个类只会让两边都长满分支
      */
@@ -73,11 +73,34 @@ namespace Doodle
         /**
          * 窗口尺寸变了，下一帧重建交换链
          *
-         * 由建窗口的那份实现接到窗口的尺寸回调上（macOS 见
-         * DoodleMacApplication::CreateWindow），本对象不自己监听窗口事件。
+         * 由平台的窗口实现直接调用（macOS 见 DoodleMacWindow::FramebufferSizeCallback），
+         * 本对象不自己监听窗口事件。
          * 只记标志、不在回调里当场重建，理由见 DoodleVulkanManager::NotifyWindowResized
          */
         void NotifyWindowResized();
+
+        /**
+         * 当前应用实例
+         *
+         * 存在的理由：GLFW 与胶水层的回调都是 C 函数指针，没有 this 可用。
+         * 有了这个出口，窗口实现不必再让构造函数收一个回调进来 ——
+         * 「变了之后告诉谁」由窗口自己在这里问，接不接受得了是驱动层的事
+         *
+         * 有效性区间由本类自己维护：Initialize 进入时登记，Destroy 返回前清空，
+         * 区间之外访问是未定义行为。
+         *
+         * 返回引用而不是指针：区间外那个空状态没有任何调用者够得着 ——
+         * 回调只在泵事件时触发，那一刻必然在区间内。把这个状态写进签名，
+         * 只会让每个调用点配一句永远为真的判断，看着像防御，
+         * 其实是在替一个不存在的状态操心，还顺手把「这里可能没有实例」
+         * 这个错误印象留给了下一个人
+         *
+         * @note 区间内不会变：本工程同一进程只有一个应用对象
+         */
+        [[nodiscard]] static DoodleApplication& GetInstance()
+        {
+            return *s_pInstance;
+        }
 
     protected:
         /**
@@ -119,5 +142,15 @@ namespace Doodle
          * Vulkan子系统
          */
         DoodleVulkanManager m_vulkanManager;
+
+    private:
+        /**
+         * 当前实例，由 Initialize 置位、Destroy 清空，成对维护
+         *
+         * 类型是基类：窗口实现只该看见「有个应用」，不该知道是哪一份。
+         * 不设成保护的 —— 子类没有碰它的理由，置位与清空的时机只有 Initialize
+         * 和 Destroy 两处
+         */
+        static DoodleApplication* s_pInstance;
     };
 }

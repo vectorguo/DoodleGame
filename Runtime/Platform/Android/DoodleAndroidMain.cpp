@@ -123,7 +123,7 @@ namespace
  * 所以本函数返回 = 那个线程结束 = 进程退出
  *
  * 与桌面 main 的差别集中在循环里：那边可以简单地「有窗口就一直画」，
- * 这边必须让出 CPU（见 DoodleAndroidWindow::PollEvents），
+ * 这边必须让出 CPU（见 DoodleAndroidWindow::PumpEvents），
  * 而且窗口会消失又回来，得靠 APP_CMD_INIT_WINDOW / TERM_WINDOW 驱动
  * Vulkan 子系统的拆建
  */
@@ -142,11 +142,11 @@ void android_main(struct android_app* pApp)
 
     try
     {
-        while (!window.ShouldClose() && !context.failed)
+        while (!window.IsCloseRequested() && !context.failed)
         {
-            window.PollEvents();
+            window.PumpEvents();
 
-            //窗口不在或不在前台时什么都不做。PollEvents 那边会阻塞等事件，
+            //窗口不在或不在前台时什么都不做。PumpEvents 那边会阻塞等事件，
             //所以这里不是忙等
             if (window.IsRenderable())
             {

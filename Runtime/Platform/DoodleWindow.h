@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include <cstdint>
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
@@ -28,49 +27,66 @@ namespace Doodle
      * 本对象自身是长期存在的（与驱动层同寿）。会来会去的是它底下的*表面*：
      * Android 实现内部记住当前的 ANativeWindow，窗口回来之后重新调
      * CreateSurface 就能拿到基于新窗口的 surface
+     *
+     * 命名上刻意避开 GLFW 的 framebuffer 一词（它指的是窗口的像素缓冲）。
+     * 本工程的 FrameBuffer 已经专指 VkFramebuffer，而窗口的像素尺寸与
+     * VkFramebuffer 毫无关系 —— 接口是共用面，用哪套实现的说法命名，
+     * 换一份实现立刻读不懂了。所以那边叫 FramebufferSize 的，到这里一律
+     * 按它实际指的东西叫 drawable 或 surface
      */
     class DoodleWindow
     {
     public:
+        DoodleWindow() = default;
         virtual ~DoodleWindow() = default;
 
-        // ---- 驱动层用：事件循环 ----
+        #pragma region 事件
 
         /**
-         * 主循环是否该退出
+         * 泵一次事件
          *
-         * 桌面：窗口被关掉
-         * Android：系统要求销毁 Activity
+         * 会阻塞 —— 这是名字用「泵」而不是「轮询」的原因：有没有活干决定它等不等。
+         * 桌面就是 glfwPollEvents，只是排空队列，不等；
+         * Android 上没有对应的单一调用：有可画的东西时非阻塞地把事件排干，
+         * 没有时阻塞等下一个事件（见实现里的取舍）
          */
-        [[nodiscard]] virtual bool ShouldClose() const = 0;
+        virtual void PumpEvents() = 0;
 
         /**
-         * 处理掉所有已排队的事件，不阻塞
+         * 等到窗口能画出东西为止
          *
-         * 桌面就是 glfwPollEvents。Android 上没有对应的单一调用，
-         * 事件泵由驱动层自己的 Looper 循环承担，这里只做收尾
-         */
-        virtual void PollEvents() = 0;
-
-        /**
-         * 等到 framebuffer 尺寸合法为止
-         *
-         * 桌面：窗口最小化时 Framebuffer 尺寸会变成 0×0，那样建不出交换链，
+         * 桌面：窗口最小化时像素尺寸是 0×0，那样建不出交换链，
          *       只能阻塞等窗口回来。连续 resize 时也靠它把事件流消化掉
          * Android：没有「最小化」这个状态。窗口没了就是 surface 没了，
          *       走的是驱动层的 Suspend 路径，不会走到这里来。所以实现是空的
          */
-        virtual void WaitForValidFramebufferSize() = 0;
-
-        // ---- Vulkan 层用 ----
+        virtual void WaitUntilDrawable() = 0;
 
         /**
-         * 当前 framebuffer 的像素尺寸
+         * 主循环是否该退出：查「有没有人要求关闭」
+         *
+         * 桌面：窗口被关掉
+         * Android：系统要求销毁 Activity（此刻窗口可能已经不在，
+         *       所以问的不是窗口，是本轮循环还要不要转下去）
+         */
+        [[nodiscard]] virtual bool IsCloseRequested() const = 0;
+
+        #pragma endregion
+
+        #pragma region Vulkan
+
+        /**
+         * 表面的像素尺寸
          *
          * 单位是像素，不是逻辑点 —— 高 DPI 屏上两者不相等，
          * 而交换链要的是像素
+         *
+         * 返回 VkExtent2D 而不是走两个 int32_t 出参：它下游唯一的去处就是
+         * VkSwapChainCreateInfoKHR::imageExtent，类型先对齐，符号转换就只剩
+         * 各平台实现内部那一次（GLFW 与 ANativeWindow 给的都是有符号）。出参
+         * 形状本是 GLFW 的 C API 长相，不该由一份实现泄漏到共用接口上
          */
-        virtual void GetFramebufferSize(int32_t& width, int32_t& height) const = 0;
+        [[nodiscard]] virtual VkExtent2D GetSurfaceSize() const = 0;
 
         /**
          * 创建表面所需的实例扩展名
@@ -86,6 +102,8 @@ namespace Doodle
          *
          * 失败时返回 Vulkan 的错误码，由调用方决定怎么报错
          */
-        virtual VkResult CreateSurface(VkInstance instance, VkSurfaceKHR* pSurface) const = 0;
+        [[nodiscard]] virtual VkResult CreateSurface(VkInstance instance, VkSurfaceKHR* pSurface) const = 0;
+
+        #pragma endregion
     };
 }

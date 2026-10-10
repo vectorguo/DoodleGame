@@ -29,12 +29,12 @@ namespace Doodle
         return m_pApp->window != nullptr && m_focused;
     }
 
-    bool DoodleAndroidWindow::ShouldClose() const
+    bool DoodleAndroidWindow::IsCloseRequested() const
     {
         return m_pApp->destroyRequested != 0;
     }
 
-    void DoodleAndroidWindow::PollEvents()
+    void DoodleAndroidWindow::PumpEvents()
     {
         int32_t events = 0;
         android_poll_source* pSource = nullptr;
@@ -65,22 +65,25 @@ namespace Doodle
         }
     }
 
-    void DoodleAndroidWindow::WaitForValidFramebufferSize()
+    void DoodleAndroidWindow::WaitUntilDrawable()
     {
         //空实现，而且应该是空的。
         //
-        //桌面那份实现要阻塞等待，是因为最小化时窗口仍在、只是 framebuffer
-        //尺寸变成 0×0，交换链建不出来。Android 没有这个中间态：窗口没了就是
+        //桌面那份实现要阻塞等待，是因为最小化时窗口仍在、只是像素尺寸变成
+        //0×0，交换链建不出来。Android 没有这个中间态：窗口没了就是
         //ANativeWindow 直接消失，走的是驱动层的 Suspend 路径，
         //根本不会带着一个 0×0 的窗口走到这里来
     }
 
-    void DoodleAndroidWindow::GetFramebufferSize(int32_t& width, int32_t& height) const
+    VkExtent2D DoodleAndroidWindow::GetSurfaceSize() const
     {
         //前置条件：此刻有窗口。调用方只会在已经有交换链的情况下问尺寸，
         //而交换链存在就意味着窗口在 —— 窗口没了的时候那一层已经被 Suspend 拆掉了
-        width = ANativeWindow_getWidth(m_pApp->window);
-        height = ANativeWindow_getHeight(m_pApp->window);
+        return
+        {
+            .width = static_cast<uint32_t>(ANativeWindow_getWidth(m_pApp->window)),
+            .height = static_cast<uint32_t>(ANativeWindow_getHeight(m_pApp->window))
+        };
     }
 
     std::vector<const char*> DoodleAndroidWindow::GetSurfaceExtensions() const

@@ -227,9 +227,9 @@ namespace Doodle
 
     void DoodleVulkanManager::RecreateSwapChain()
     {
-        //窗口尺寸为 0（桌面上的最小化）时建不出交换链，在这里阻塞到窗口回来。
+        //窗口像素尺寸为 0（桌面上的最小化）时建不出交换链，在这里阻塞到能画为止。
         //桌面实现里是 glfwWaitEvents 循环；Android 没有这个状态，实现是空的
-        m_pWindow->WaitForValidFramebufferSize();
+        m_pWindow->WaitUntilDrawable();
 
         //帧循环里的提交都是异步的，此刻可能还有绘制或呈现在途，
         //此时销毁它们引用的资源是未定义行为

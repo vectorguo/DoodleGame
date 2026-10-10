@@ -180,18 +180,10 @@ namespace Doodle
             return surfaceCapabilities.currentExtent;
         }
 
-        int32_t width = 0;
-        int32_t height = 0;
-        window.GetFramebufferSize(width, height);
-        VkExtent2D framebufferExtent =
-        {
-            .width = static_cast<uint32_t>(width),
-            .height = static_cast<uint32_t>(height)
-        };
-
-        framebufferExtent.width = std::clamp(framebufferExtent.width, surfaceCapabilities.minImageExtent.width, surfaceCapabilities.maxImageExtent.width);
-        framebufferExtent.height = std::clamp(framebufferExtent.height, surfaceCapabilities.minImageExtent.height, surfaceCapabilities.maxImageExtent.height);
-        return framebufferExtent;
+        VkExtent2D surfaceExtent = window.GetSurfaceSize();
+        surfaceExtent.width = std::clamp(surfaceExtent.width, surfaceCapabilities.minImageExtent.width, surfaceCapabilities.maxImageExtent.width);
+        surfaceExtent.height = std::clamp(surfaceExtent.height, surfaceCapabilities.minImageExtent.height, surfaceCapabilities.maxImageExtent.height);
+        return surfaceExtent;
     }
 
     void DoodleSwapChain::CreateImageViews()

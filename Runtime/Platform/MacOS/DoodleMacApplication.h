@@ -26,7 +26,7 @@ namespace Doodle
         ~DoodleMacApplication() override = default;
 
     protected:
-        /** 建出 GLFW 窗口，并把尺寸变化回调接到基类上 */
+        /** 建出 GLFW 窗口 */
         std::unique_ptr<DoodleWindow> CreateWindow() override;
     };
 } // Doodle
