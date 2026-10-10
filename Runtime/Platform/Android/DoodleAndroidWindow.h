@@ -8,7 +8,6 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 
 #include "../DoodleWindow.h"
 
@@ -19,6 +18,9 @@ struct android_app;
 
 namespace Doodle
 {
+    //前向声明即可：本类只持有它的引用，成员函数的调用在 .cpp 里
+    class DoodleAndroidApplication;
+
     /**
      * Android 窗口，用 NDK 的 native_app_glue 实现
      *
@@ -35,25 +37,20 @@ namespace Doodle
     {
     public:
         /**
-         * 应用命令回调类型，参数是 APP_CMD_* 之一
-         *
-         * 只转发本层不处理的那些。窗口的来去、尺寸变化、前后台切换这类
-         * 「窗口自己的状态」在本层消化掉，剩下的交给驱动层 ——
-         * 那边才知道 Vulkan 子系统该怎么响应
-         */
-        using AppCommandHandler = std::function<void(int32_t command)>;
-
-    public:
-        /**
          * 接管 pApp 的事件回调与 userData
          *
-         * 构造之后，所有 APP_CMD_* 会先进入本类，再按上面的规则转发。
+         * 构造之后，所有 APP_CMD_* 会先进入本类，再转交驱动层。
          * 也就是说 pApp->userData 归本类所有，驱动层不要再用它
          *
+         * 驱动层以引用收下、而不是像原来那样收一个 std::function：
+         * APP_CMD_* 是 Android 自己的词汇，不该为了让跨平台的 GetInstance
+         * 能调它而塞进 DoodleApplication；而本类的构造函数本来就有必填参数
+         * （pApp），多一个引用不花任何代价，依赖还留在签名上看得见
+         *
          * @param pApp native_app_glue 给的 android_app，生命周期由系统保证
-         * @param appCommandHandler 转发目标。允许为空
+         * @param application 转交目标。按引用收，不能为空
          */
-        DoodleAndroidWindow(android_app* pApp, AppCommandHandler appCommandHandler);
+        DoodleAndroidWindow(android_app* pApp, DoodleAndroidApplication& application);
 
         ~DoodleAndroidWindow() override = default;
 
@@ -96,7 +93,10 @@ namespace Doodle
         static void HandleAppCmd(android_app* pApp, int32_t command);
 
         /**
-         * 处理一条命令：先更新本层自己的状态，再转发给驱动层
+         * 处理一条命令：先更新本层自己的状态，再全部转交驱动层
+         *
+         * 「全部」是实情：前后台由本层消化（m_focused），但命令照样往下走，
+         * 由驱动层挑它关心的那几条 —— 本层不替它做取舍
          */
         void OnAppCmd(int32_t command);
 
@@ -104,8 +104,8 @@ namespace Doodle
         /** 胶水层的应用对象，只借不放，生命周期由系统保证 */
         android_app* m_pApp = nullptr;
 
-        /** 转发目标，可能为空 */
-        AppCommandHandler m_appCommandHandler;
+        /** 驱动层，只借不放：它构造并持有本对象，所以一定比本对象活得久 */
+        DoodleAndroidApplication& m_application;
 
         /**
          * 应用是否在前台

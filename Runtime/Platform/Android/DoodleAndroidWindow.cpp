@@ -7,17 +7,17 @@
 
 #include "DoodleAndroidWindow.h"
 
-#include <utility>
-
 #include <android_native_app_glue.h>
 
 #include <vulkan/vulkan.h>
 
+#include "DoodleAndroidApplication.h"
+
 namespace Doodle
 {
-    DoodleAndroidWindow::DoodleAndroidWindow(android_app* pApp, AppCommandHandler appCommandHandler)
+    DoodleAndroidWindow::DoodleAndroidWindow(android_app* pApp, DoodleAndroidApplication& application)
         : m_pApp(pApp)
-        , m_appCommandHandler(std::move(appCommandHandler))
+        , m_application(application)
     {
         //接管事件回调。userData 归本类所有，理由见头文件
         m_pApp->userData = this;
@@ -135,12 +135,9 @@ namespace Doodle
             break;
         }
 
-        //其余命令交给驱动层。窗口的来去（INIT_WINDOW / TERM_WINDOW）本层不做处理：
+        //其余命令全部交给驱动层。窗口的来去（INIT_WINDOW / TERM_WINDOW）本层不做处理：
         //那要连带拆建交换链、帧缓冲和同步对象，是 Vulkan 子系统的事，
         //本层只该管窗口自己的状态
-        if (m_appCommandHandler)
-        {
-            m_appCommandHandler(command);
-        }
+        m_application.OnAppCommand(command);
     }
 }

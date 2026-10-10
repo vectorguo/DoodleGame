@@ -50,9 +50,11 @@ endif()
 # 一个平台的窗口实现和它的入口都在自己那个文件夹里。
 # Platform/ 根目录下的是三摞共用的那部分（接口、驱动层、日志）
 #
-# DoodleApplication 编进了共享那摞而不是 macOS 那摞：它不依赖任何平台 API，
-# 只是「窗口与程序同寿」这条路上才有意义 —— Android 走自己的命令驱动循环，
-# 用不到它，多编出来的几个字节是死代码，换来的是文件位置如实反映它的依赖
+# DoodleApplication 编进了共享那摞而不是 macOS 那摞：它不依赖任何平台 API。
+# 两个平台都要用它 —— 它是「当前应用」这个概念本身（持有 Vulkan 子系统、
+# 接收窗口的尺寸通知、被 C 回调经 GetInstance 找到），只是三个生命周期函数
+# 带的那套默认实现以「窗口与程序同寿」为前提，所以 Android 另有一份覆盖它们的
+# DoodleAndroidApplication（在 Android 那摞里）
 # ============================================================================
 
 # 与平台无关的部分：Vulkan 各层 + 窗口抽象 + 日志
@@ -95,9 +97,11 @@ set(DOODLE_MACOS_SOURCES
         Runtime/Platform/MacOS/DoodleMacApplication.h
 )
 
-# Android 专属：入口、窗口实现
+# Android 专属：入口、驱动层实现、窗口实现
 set(DOODLE_ANDROID_SOURCES
     Runtime/Platform/Android/DoodleAndroidMain.cpp
+    Runtime/Platform/Android/DoodleAndroidApplication.cpp
+    Runtime/Platform/Android/DoodleAndroidApplication.h
     Runtime/Platform/Android/DoodleAndroidWindow.cpp
     Runtime/Platform/Android/DoodleAndroidWindow.h
 )

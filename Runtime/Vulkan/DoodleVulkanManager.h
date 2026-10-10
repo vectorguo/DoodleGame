@@ -224,8 +224,9 @@ namespace Doodle
         /**
          * 窗口，在 Initialize 时绑定
          *
-         * 只借不放：窗口的创建与销毁都归驱动层（桌面上是 DoodleApplication，
-         * Android 上是 android_main）。本层需要它，是因为重建交换链时要靠它
+         * 只借不放：窗口的创建与销毁都归驱动层（DoodleApplication 及其平台子类，
+         * macOS 见 DoodleMacApplication，Android 见 DoodleAndroidApplication）。
+         * 本层需要它，是因为重建交换链时要靠它
          * 取窗口的最新像素尺寸，Suspend 之后还要靠它把表面重新建起来
          */
         DoodleWindow* m_pWindow = nullptr;

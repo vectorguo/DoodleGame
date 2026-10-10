@@ -13,23 +13,34 @@ namespace Doodle
 {
     DoodleApplication* DoodleApplication::s_pInstance = nullptr;
 
+    DoodleApplication::DoodleApplication()
+    {
+        //登记在构造里：此刻窗口还不存在（它在 Initialize 里才建），
+        //所以「窗口在收事件、却问不到应用对象」这个状态压根没有机会出现。
+        //这与放在 Initialize 里的区别不只是早晚 —— 那条得靠「哪一层会泵事件」
+        //的推理才成立，这条不用推理
+        s_pInstance = this;
+    }
+
+    DoodleApplication::~DoodleApplication()
+    {
+        //先认一下是不是自己：万一同进程里先后有过两个应用对象，
+        //先析构的那个不该把后一个的登记一起抹掉
+        if (s_pInstance == this)
+        {
+            s_pInstance = nullptr;
+        }
+    }
+
     void DoodleApplication::Initialize()
     {
-        //登记得赶在建窗口之前：尺寸回调是在窗口的构造里挂上的，
-        //顺序反过来就会有一段「窗口已经在收事件、却还问不到驱动层」的空档。
-        //
-        //放在函数最开头、与 Destroy 末尾的清空配成一对括号，区间取最宽 ——
-        //不去依赖「初始化期间哪些调用会泵事件」这条会过期的推理：
-        //眼下 Initialize 里确实一处都没泵（全树只有 PumpEvents 与 WaitUntilDrawable
-        //会），但那是各层实现凑出来的巧合，不是本类写下的约定
-        s_pInstance = this;
-
         //窗口先于 Vulkan：表面建在窗口上
         m_pWindow = CreateWindow();
+
+        //子类把窗口交出来是它的分内事，理论上不可能为空。走不到的分支也要拦：
+        //不拦的话，Run 里第一次解引用就是一段和根因对不上的崩溃
         if (m_pWindow == nullptr)
         {
-            //子类把窗口交出来是它的分内事，理论上不可能为空。走不到的分支也要拦：
-            //不拦的话，Run 里第一次解引用就是一段和根因对不上的崩溃
             throw std::runtime_error("DoodleApplication: window is null");
         }
 
@@ -51,12 +62,6 @@ namespace Doodle
         //窗口先没的话，销毁它们就是拿着一个已经作废的句柄去用
         DestroyVulkan();
         m_pWindow.reset();
-
-        //清在最后，与 Initialize 开头的登记配成一对括号：Destroy 返回之后
-        //窗口已经没了，也不会再有人泵事件，此时实例确实不该再被问到。
-        //上面那两行若抛异常，指针会留在原地 —— 那种情况下进程已经不该继续，
-        //硬清掉反而会把「还有一层没拆」这个事实一并抹去
-        s_pInstance = nullptr;
     }
 
     void DoodleApplication::NotifyWindowResized()
