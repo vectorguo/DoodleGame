@@ -77,8 +77,7 @@ namespace Doodle
          * 注册在 glfwSetFramebufferSizeCallback 上（而不是 ...WindowSizeCallback）。
          * 这个函数名沿用 GLFW 的说法，是因为它紧贴 GLFW 回调机制、只在
          * .cpp 里注册一次；对外的接口名不跟着用它（那边是 GetSurfaceSize /
-         * WaitUntilDrawable），理由见 DoodleWindow.h 的命名说明 ——
-         * 本工程的 FrameBuffer 已经专指 VkFramebuffer，同名会混淆。
+         * WaitUntilDrawable），理由见 DoodleWindow.h 的命名说明。
          * 两者确实不同：这个回调按像素尺寸触发，也能捕获窗口没动、只是换了
          * 不同 DPI 显示器的情况
          *

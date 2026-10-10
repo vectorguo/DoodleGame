@@ -7,9 +7,7 @@
 #include <cstdint>
 
 #include "DoodleCommandBuffer.h"
-#include "DoodleFrameBuffer.h"
 #include "DoodleGraphicsPipeline.h"
-#include "DoodleRenderPass.h"
 #include "DoodleSwapChain.h"
 #include "DoodleSyncObjects.h"
 #include "DoodleVulkanDevice.h"
@@ -37,11 +35,11 @@ namespace Doodle
          * 表面没了：拆掉表面，以及所有依附于它的层
          *
          * Android 上切后台、锁屏、旋转都会走这条路 —— ANativeWindow 消失，
-         * 基于它的 VkSurfaceKHR 随之失效，交换链、帧缓冲、按图像分配的
-         * 同步对象全部作废。桌面不会调到（窗口与程序同寿）
+         * 基于它的 VkSurfaceKHR 随之失效，交换链与按图像分配的同步对象全部作废。
+         * 桌面不会调到（窗口与程序同寿）
          *
          * 保留的是与表面无关的那几层：Instance、物理/逻辑设备、队列、
-         * 渲染通道、图形管线、命令池。重建它们代价太大且没有必要
+         * 图形管线、命令池。重建它们代价太大且没有必要
          *
          * @note 期间不得调用 DrawFrame
          */
@@ -125,22 +123,6 @@ namespace Doodle
         }
 
         /**
-         * 获取渲染通道
-         */
-        [[nodiscard]] DoodleRenderPass& GetRenderPass()
-        {
-            return m_renderPass;
-        }
-
-        /**
-         * 获取渲染通道
-         */
-        [[nodiscard]] const DoodleRenderPass& GetRenderPass() const
-        {
-            return m_renderPass;
-        }
-
-        /**
          * 获取图形管线
          */
         [[nodiscard]] DoodleGraphicsPipeline& GetGraphicsPipeline()
@@ -154,22 +136,6 @@ namespace Doodle
         [[nodiscard]] const DoodleGraphicsPipeline& GetGraphicsPipeline() const
         {
             return m_graphicsPipeline;
-        }
-
-        /**
-         * 获取帧缓冲
-         */
-        [[nodiscard]] DoodleFrameBuffer& GetFrameBuffer()
-        {
-            return m_frameBuffer;
-        }
-
-        /**
-         * 获取帧缓冲
-         */
-        [[nodiscard]] const DoodleFrameBuffer& GetFrameBuffer() const
-        {
-            return m_frameBuffer;
         }
 
         /**
@@ -208,9 +174,10 @@ namespace Doodle
         /**
          * 重建交换链，以及所有随它一起失效的层
          *
-         * 顺序：交换链 → 帧缓冲 → 同步对象，与 Initialize 同序、与 Destroy 反序。
-         * 渲染通道与图形管线不重建 —— 只有交换链格式真的变了才需要，那是极罕见的情况，
-         * 代价却是把管线整个重编译一遍。理由详见实现
+         * 顺序：交换链 → 同步对象，与 Initialize 同序、与 Destroy 反序。
+         * 图形管线不重建 —— 它按值收下了颜色附件格式，不持有交换链的任何句柄。
+         * 只有交换链格式真的变了才需要重建，那是极罕见的情况（把窗口拖到另一块
+         * 不同色域的显示器上），代价却是把管线整个重编译一遍。理由详见实现
          *
          * 末尾统一清 m_windowResized：重建完成即代表积压的 resize 通知已兑现。
          * 不放在各调用点，是因为 acquire 提前返回那条路也要求这一刻就兑现它 ——
@@ -241,22 +208,12 @@ namespace Doodle
         DoodleSwapChain m_swapChain;
 
         /**
-         * 渲染通道层：本帧的渲染目标结构，格式取自交换链，须排在交换链之后
-         */
-        DoodleRenderPass m_renderPass;
-
-        /**
-         * 图形管线层：引用渲染通道，须排在渲染通道之后
+         * 图形管线层：只读引用设备层与交换链层（取颜色附件格式），须排在交换链之后
          */
         DoodleGraphicsPipeline m_graphicsPipeline;
 
         /**
-         * 帧缓冲层：引用交换链图像视图与渲染通道，须排在两者之后
-         */
-        DoodleFrameBuffer m_frameBuffer;
-
-        /**
-         * 命令缓冲层：录制时引用上述各层，须排在帧缓冲之后
+         * 命令缓冲层：录制时引用上述各层，须排在图形管线之后
          */
         DoodleCommandBuffer m_commandBuffer;
 

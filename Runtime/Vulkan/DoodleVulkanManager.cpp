@@ -18,10 +18,8 @@ namespace Doodle
 
         m_device.Initialize(window);
         m_swapChain.Initialize(m_device, window);
-        m_renderPass.Initialize(m_device, m_swapChain);
-        m_graphicsPipeline.Initialize(m_device, m_renderPass);
-        m_frameBuffer.Initialize(m_device, m_swapChain, m_renderPass);
-        m_commandBuffer.Initialize(m_device, m_swapChain, m_renderPass, m_graphicsPipeline, m_frameBuffer);
+        m_graphicsPipeline.Initialize(m_device, m_swapChain);
+        m_commandBuffer.Initialize(m_device, m_swapChain, m_graphicsPipeline);
         m_syncObjects.Initialize(m_device, m_swapChain);
     }
 
@@ -37,9 +35,7 @@ namespace Doodle
         //逆序销毁
         m_syncObjects.Destroy();
         m_commandBuffer.Destroy();
-        m_frameBuffer.Destroy();
         m_graphicsPipeline.Destroy();
-        m_renderPass.Destroy();
         m_swapChain.Destroy();
         m_device.Destroy();
     }
@@ -49,13 +45,11 @@ namespace Doodle
         //在途的帧可能还在引用即将拆掉的交换链图像，必须先停稳
         vkDeviceWaitIdle(m_device.GetLogicalDevice());
 
-        //逆着创建序拆：同步对象 → 帧缓冲 → 交换链。
+        //逆着创建序拆：同步对象 → 交换链。
         //
-        //真正非如此不可的只有「帧缓冲在交换链之前」—— 帧缓冲引用了交换链的图像视图。
         //同步对象其实不引用任何一层（它的 Destroy 只碰设备），排在最先是为了让全场
         //只有一条规矩：建的时候什么序，拆的时候就倒过来。读的人不必逐层去推谁依赖谁
         m_syncObjects.Destroy();
-        m_frameBuffer.Destroy();
         m_swapChain.Destroy();
 
         //表面本身最后拆。它归设备层管，但失效的时机由窗口决定，
@@ -121,8 +115,13 @@ namespace Doodle
         //② 从交换链取一张图像。imageIndex 每次调用都可能不同，
         //   它决定本帧画到哪个帧缓冲，不要写死
         uint32_t imageIndex = 0;
-        const auto acquireResult = vkAcquireNextImageKHR(logicalDevice, m_swapChain.GetSwapChain(), UINT64_MAX,
-                                                         imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+        const auto acquireResult = vkAcquireNextImageKHR(
+            logicalDevice,
+            m_swapChain.GetSwapChain(),
+            UINT64_MAX,
+            imageAvailableSemaphore,
+            VK_NULL_HANDLE,
+            &imageIndex);
 
         //交换链已经和窗口对不上了，这次没拿到可用图像。重建之后直接放弃本帧重来 ——
         //必须直接返回：imageIndex 是旧交换链的索引，重建后那个位置已经不是同一张图了
@@ -153,7 +152,7 @@ namespace Doodle
         //④ 录制本帧命令。命令缓冲层不缓存句柄，录制时现取，
         //   所以交换链重建之后重录拿到的自然是新句柄
         const auto commandBuffer = m_commandBuffer.GetCommandBuffer(frameIndex);
-        m_commandBuffer.RecordCommandBuffer(commandBuffer, imageIndex);
+        m_commandBuffer.Record(commandBuffer, imageIndex);
 
         //⑤ 提交到图形队列
         VkSubmitInfo submitInfo{};
@@ -161,8 +160,9 @@ namespace Doodle
 
         //等到图像真的可用再开始写颜色。这里选 COLOR_ATTACHMENT_OUTPUT 而不是 TOP_OF_PIPE，
         //是让顶点着色器之类不碰这张图的工作可以先跑起来。
-        //这个取值必须与 DoodleRenderPass 里那条子通道依赖的 srcStageMask 一致，
-        //两边对不上就会出现依赖链断裂
+        //这个取值必须与 RecordAcquireBarrier 里那条屏障的 srcStageMask 一致，
+        //两边对不上就会出现依赖链断裂。原来对齐的对方是渲染通道里的子通道依赖，
+        //动态渲染之后换成了命令缓冲里的屏障 —— 规矩没变，位置变了
         const VkSemaphore waitSemaphores[] = {imageAvailableSemaphore};
         const VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
         submitInfo.waitSemaphoreCount = 1;
@@ -231,19 +231,19 @@ namespace Doodle
 
         //按依赖倒序销毁
         m_syncObjects.Destroy();
-        m_frameBuffer.Destroy();
         m_swapChain.Destroy();
 
         //按依赖正序创建，顺序与 Initialize 里这几层的一致。
         //
-        //渲染通道与图形管线不在这里重建。它们确实依赖交换链的格式，但那个格式要变，
-        //得把窗口拖到另一块不同色域的显示器上，是极罕见的情况；而重建渲染通道意味着
-        //整条图形管线也要跟着重编译，代价几十毫秒。为一次窗口缩放付这个钱不值得。
+        //图形管线不在这里重建。它把颜色附件格式按值编译进了管线，交换链格式真变了
+        //它就不再匹配 —— 但那个格式要变，得把窗口拖到另一块不同色域的显示器上，
+        //是极罕见的情况；而重建代价是把管线整个重编译一遍（几十毫秒）。
+        //为一次窗口缩放付这个钱不值得。真到要处理的那天，判据是这里比对格式变没变，
+        //变了就重建管线；现在不写，是不给它留一条没人走的路径
         //
         //命令缓冲也不重建：它不缓存任何上游句柄，每帧录制时现取，
         //重建后重录拿到的自然是新的
         m_swapChain.Initialize(m_device, *m_pWindow);
-        m_frameBuffer.Initialize(m_device, m_swapChain, m_renderPass);
         m_syncObjects.Initialize(m_device, m_swapChain);
 
         //到这里交换链已经照当前窗口尺寸建好了，积压的 resize 通知就算兑现。

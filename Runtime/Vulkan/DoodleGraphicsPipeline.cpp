@@ -11,10 +11,10 @@
 
 namespace Doodle
 {
-    void DoodleGraphicsPipeline::Initialize(const DoodleVulkanDevice& device, const DoodleRenderPass& renderPass)
+    void DoodleGraphicsPipeline::Initialize(const DoodleVulkanDevice& device, const DoodleSwapChain& swapChain)
     {
         m_pDevice = &device;
-        m_pRenderPass = &renderPass;
+        m_pSwapChain = &swapChain;
 
         //管线布局是管线的前置条件，先创建
         CreatePipelineLayout();
@@ -147,10 +147,28 @@ namespace Doodle
         colorBlending.blendConstants[2] = 0.0f;
         colorBlending.blendConstants[3] = 0.0f;
 
+        //动态渲染：管线不再绑定渲染通道对象，改成在这里声明「我要往什么格式的图上画」。
+        //
+        //原来这条信息装在 VkRenderPass 里，由 pipelineInfo.renderPass 指过去，
+        //兼容性规则在创建期就替你校验了附件格式对不对。现在没有那个对象可比，
+        //约束退化成一句：这里声明的格式与数量，必须与录制时 vkCmdBeginRendering
+        //给的附件视图一致。对不上校验层会在绘制时报出来，而不是在创建这里
+        //
+        //pColorAttachmentFormats 指向的数组只在本次创建调用期间被读取，
+        //从交换链读出来的这个局部量活到函数结束，够用 —— 不必为它留成员
+        VkPipelineRenderingCreateInfo renderingCreateInfo{};
+        renderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+        const auto colorFormat = m_pSwapChain->GetImageFormat();
+        renderingCreateInfo.colorAttachmentCount = 1;
+        renderingCreateInfo.pColorAttachmentFormats = &colorFormat;
+        //深度与模板附件本阶段还没有，留零即「不声明」。
+        //等「深度缓冲」那一章，这里补 depthAttachmentFormat 即可，写法与颜色对称
+
         //上面这些状态结构体都是栈上的局部变量，pipelineInfo 只记录它们的地址。
         //所以创建调用必须留在本函数作用域内 —— 拆出去就是悬垂指针
         VkGraphicsPipelineCreateInfo pipelineInfo{};
         pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipelineInfo.pNext = &renderingCreateInfo;
         pipelineInfo.stageCount = 2;
         pipelineInfo.pStages = shaderStages;
         pipelineInfo.pVertexInputState = &vertexInputInfo;
@@ -162,7 +180,9 @@ namespace Doodle
         pipelineInfo.pColorBlendState = &colorBlending;
         pipelineInfo.pDynamicState = &dynamicState;
         pipelineInfo.layout = m_pPipelineLayout;
-        pipelineInfo.renderPass = m_pRenderPass->GetRenderPass();
+        //动态渲染的标志就是这两个字段一起留空：没有渲染通道对象可指，
+        //子通道这个概念也随之消失。附件信息改由上一条 pNext 链承载
+        pipelineInfo.renderPass = VK_NULL_HANDLE;
         pipelineInfo.subpass = 0;
         pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
         pipelineInfo.basePipelineIndex = -1;

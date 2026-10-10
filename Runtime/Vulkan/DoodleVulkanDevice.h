@@ -173,6 +173,17 @@ namespace Doodle
         [[nodiscard]] static bool IsDeviceExtensionSupported(VkPhysicalDevice pDevice, const char* pExtensionName);
 
         /**
+         * 检查物理设备是否支持动态渲染
+         *
+         * 1.3 起 dynamicRendering 是强制特性，但这里不看版本号、只看特性位：
+         * 设备报出来的 apiVersion 会被 loader 夹到实例版本，不是驱动的上限
+         *
+         * @param pDevice 指定物理设备Handle
+         * @return 是否支持
+         */
+        [[nodiscard]] static bool IsDynamicRenderingSupported(VkPhysicalDevice pDevice);
+
+        /**
          * 为各队列角色选择所需的QueueFamily索引
          * @param pDevice 指定物理设备Handle
          * @return QueueFamilySelection

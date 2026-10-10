@@ -28,11 +28,9 @@ namespace Doodle
      * Android 实现内部记住当前的 ANativeWindow，窗口回来之后重新调
      * CreateSurface 就能拿到基于新窗口的 surface
      *
-     * 命名上刻意避开 GLFW 的 framebuffer 一词（它指的是窗口的像素缓冲）。
-     * 本工程的 FrameBuffer 已经专指 VkFramebuffer，而窗口的像素尺寸与
-     * VkFramebuffer 毫无关系 —— 接口是共用面，用哪套实现的说法命名，
-     * 换一份实现立刻读不懂了。所以那边叫 FramebufferSize 的，到这里一律
-     * 按它实际指的东西叫 drawable 或 surface
+     * 命名上刻意避开 GLFW 的 framebuffer 一词（它指的是窗口的像素缓冲）：
+     * 接口是共用面，用某一套实现的说法命名，换一份实现立刻读不懂了。
+     * 所以那边叫 FramebufferSize 的，到这里一律按它实际指的东西叫 drawable 或 surface
      */
     class DoodleWindow
     {

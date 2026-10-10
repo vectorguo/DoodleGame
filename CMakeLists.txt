@@ -63,12 +63,8 @@ set(DOODLE_SHARED_SOURCES
     Runtime/Vulkan/DoodleVulkanDevice.h
     Runtime/Vulkan/DoodleSwapChain.cpp
     Runtime/Vulkan/DoodleSwapChain.h
-    Runtime/Vulkan/DoodleRenderPass.cpp
-    Runtime/Vulkan/DoodleRenderPass.h
     Runtime/Vulkan/DoodleGraphicsPipeline.cpp
     Runtime/Vulkan/DoodleGraphicsPipeline.h
-    Runtime/Vulkan/DoodleFrameBuffer.cpp
-    Runtime/Vulkan/DoodleFrameBuffer.h
     Runtime/Vulkan/DoodleCommandBuffer.cpp
     Runtime/Vulkan/DoodleCommandBuffer.h
     Runtime/Vulkan/DoodleSyncObjects.cpp
