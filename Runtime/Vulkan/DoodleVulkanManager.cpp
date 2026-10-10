@@ -49,7 +49,14 @@ namespace Doodle
         //在途的帧可能还在引用即将拆掉的交换链图像，必须先停稳
         vkDeviceWaitIdle(m_device.GetLogicalDevice());
 
-        DestroySurfaceDependentLayers();
+        //逆着创建序拆：同步对象 → 帧缓冲 → 交换链。
+        //
+        //真正非如此不可的只有「帧缓冲在交换链之前」—— 帧缓冲引用了交换链的图像视图。
+        //同步对象其实不引用任何一层（它的 Destroy 只碰设备），排在最先是为了让全场
+        //只有一条规矩：建的时候什么序，拆的时候就倒过来。读的人不必逐层去推谁依赖谁
+        m_syncObjects.Destroy();
+        m_frameBuffer.Destroy();
+        m_swapChain.Destroy();
 
         //表面本身最后拆。它归设备层管，但失效的时机由窗口决定，
         //所以由本层在收到通知时转达
@@ -60,23 +67,18 @@ namespace Doodle
     {
         m_pWindow = &window;
 
-        //顺序与 Initialize 里那几层的前半段完全一致，只是实例与设备已经在了
+        //先把表面建起来 —— 这是恢复与「交换链过时」唯一不同的地方。
+        //顺序与 Initialize 的前半段一致，只是实例与设备已经在了
         m_device.CreateSurface(window);
 
         //表面换了，present 队列族的支持情况要重查一遍。
         //同一台设备上不会变，但万变了后面所有提交都是错的
         m_device.VerifyQueueFamilySelection();
 
-        m_swapChain.Initialize(m_device, window);
-        m_frameBuffer.Initialize(m_device, m_swapChain, m_renderPass);
-        m_syncObjects.Initialize(m_device, m_swapChain);
-
-        //挂起期间攒下的 resize 通知已经兑现了 —— 刚刚这一轮就是按当前窗口尺寸重建的。
-        //不清掉的话，恢复后第一帧会在呈现之后再重建一次交换链，白做一遍
-        m_windowResized = false;
-
-        //m_currentFrame 不复位，理由同 RecreateSwapChain：同步对象整层换新，
-        //三个栅栏都是「已发出信号」状态，恢复后第一帧的①会立刻通过
+        //交换链及其下游的重建，与「交换链过时」是同一件事，交给同一个例程办。
+        //Suspend 刚拆过，那几层此刻是空的，里面那次拆解与设备等待都落在空处 ——
+        //所以这里不必为「已经拆干净了」另开一条路
+        RecreateSwapChain();
     }
 
     void DoodleVulkanManager::DrawFrame()
@@ -207,22 +209,14 @@ namespace Doodle
         //走到这里时两个信号量都已经被正常等待过，状态是干净的
         if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR || m_windowResized)
         {
-            m_windowResized = false;
+            //m_windowResized 由 RecreateSwapChain 末尾统一清零 —— 重建完成了，
+            //积压的 resize 通知就算兑现
             RecreateSwapChain();
         }
         else if (presentResult != VK_SUCCESS)
         {
             throw std::runtime_error("failed to present swap chain image!");
         }
-    }
-
-    void DoodleVulkanManager::DestroySurfaceDependentLayers()
-    {
-        //按依赖倒序销毁。同步对象排在最前：它的 renderFinished 数量取决于图像数量，
-        //必须赶在交换链消失之前先处理掉
-        m_syncObjects.Destroy();
-        m_frameBuffer.Destroy();
-        m_swapChain.Destroy();
     }
 
     void DoodleVulkanManager::RecreateSwapChain()
@@ -236,7 +230,9 @@ namespace Doodle
         vkDeviceWaitIdle(m_device.GetLogicalDevice());
 
         //按依赖倒序销毁
-        DestroySurfaceDependentLayers();
+        m_syncObjects.Destroy();
+        m_frameBuffer.Destroy();
+        m_swapChain.Destroy();
 
         //按依赖正序创建，顺序与 Initialize 里这几层的一致。
         //
@@ -249,6 +245,13 @@ namespace Doodle
         m_swapChain.Initialize(m_device, *m_pWindow);
         m_frameBuffer.Initialize(m_device, m_swapChain, m_renderPass);
         m_syncObjects.Initialize(m_device, m_swapChain);
+
+        //到这里交换链已经照当前窗口尺寸建好了，积压的 resize 通知就算兑现。
+        //清零排在末尾而不是开头：上面那句 WaitUntilDrawable 会泵事件，泵的过程中
+        //可能再收到一次 resize 回调把它重新置位；而它之后取的尺寸是泵完之后的，
+        //所以在这一刻清零，清掉的信息确实已被本轮重建覆盖。
+        //不清的话，下一次呈现之后会再重建一次交换链，白做一遍
+        m_windowResized = false;
 
         //m_currentFrame 不用复位：同步对象整层换新，三个栅栏都是「已发出信号」状态，
         //重建后第一帧的①会立刻通过，和程序刚启动时是同一个情形

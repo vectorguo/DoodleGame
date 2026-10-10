@@ -48,7 +48,10 @@ namespace Doodle
         void Suspend();
 
         /**
-         * 表面回来了：按 Initialize 的顺序重建被 Suspend 拆掉的那几层
+         * 表面回来了：建出新表面，再把被 Suspend 拆掉的那几层重建起来
+         *
+         * 重建那一半交给 RecreateSwapChain —— 与「交换链过时」是同一条路，
+         * 两边只有表面本身不同：这边要新建，那边原样沿用
          *
          * @param window 提供新的表面
          * @note 与 Suspend 必须成对。可反复调用（每次切前后台一轮）
@@ -208,17 +211,13 @@ namespace Doodle
          * 顺序：交换链 → 帧缓冲 → 同步对象，与 Initialize 同序、与 Destroy 反序。
          * 渲染通道与图形管线不重建 —— 只有交换链格式真的变了才需要，那是极罕见的情况，
          * 代价却是把管线整个重编译一遍。理由详见实现
+         *
+         * 末尾统一清 m_windowResized：重建完成即代表积压的 resize 通知已兑现。
+         * 不放在各调用点，是因为 acquire 提前返回那条路也要求这一刻就兑现它 ——
+         * 漏一处就会为同一个尺寸白重建一遍；而会泵事件的 WaitUntilDrawable
+         * 正在本函数开头，清零只能排在它后面
          */
         void RecreateSwapChain();
-
-        /**
-         * 拆除交换链，以及所有依附于它的层
-         *
-         * 与 RecreateSwapChain 的后半段共用；Suspend 与 RecreateSwapChain
-         * 都从这里开始。表面本身不在此列 —— 它归设备层，
-         * 由调用方决定要不要一并拆（Suspend 要，重建交换链不要）
-         */
-        void DestroySurfaceDependentLayers();
 
     private:
         /**
