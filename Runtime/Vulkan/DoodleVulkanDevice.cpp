@@ -231,11 +231,13 @@ namespace Doodle
 
     bool DoodleVulkanDevice::IsDeviceSuitable(VkPhysicalDevice pDevice) const
     {
-        //设备级特性：动态渲染是必需能力，整条渲染路径都建在它上面，
-        //没有它连一帧都画不出来。排在扩展与表面能力之前问，是因为它最便宜，
-        //且失败得最彻底 —— 顺便让不支持的设备在这一步被排除，
+        //设备级特性：动态渲染与 synchronization2 都是必需能力 ——
+        //整条渲染路径建在前者上，而提交与屏障的写法（vkQueueSubmit2 /
+        //vkCmdPipelineBarrier2）建在后者上，缺一个连一帧都画不出来。
+        //排在扩展与表面能力之前问，是因为它最便宜，且失败得最彻底 ——
+        //顺便让不支持的设备在这一步被排除，
         //而不是等 vkCreateDevice 以一句看不出因果的失败收场
-        if (IsDynamicRenderingSupported(pDevice))
+        if (IsVulkan13FeaturesSupported(pDevice))
         {
             const QueueFamilySelection queueFamilySelection = SelectQueueFamilies(pDevice);
             if (queueFamilySelection.HasAllRequiredFamilies())
@@ -276,12 +278,14 @@ namespace Doodle
         return false;
     }
 
-    bool DoodleVulkanDevice::IsDynamicRenderingSupported(VkPhysicalDevice pDevice)
+    bool DoodleVulkanDevice::IsVulkan13FeaturesSupported(VkPhysicalDevice pDevice)
     {
         //问特性位本身，不要从设备报的 apiVersion 推。那个版本会被 loader 夹到实例版本
         //（本机实测：同一台 M1 Max，实例 1.1 时设备报 1.1.357，实例 1.3 时报 1.3.357），
         //它只说明「在当前实例声明下能用什么」，不是驱动的上限 ——
         //拿它当特性依据，等于把判断建立在一个被改写过的数上
+        //
+        //两个位一次问完：查询返回的是整块 1.3 特性表，问几个位都只花这一次调用
         VkPhysicalDeviceVulkan13Features vulkan13Features{};
         vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
 
@@ -290,7 +294,10 @@ namespace Doodle
         features.pNext = &vulkan13Features;
 
         vkGetPhysicalDeviceFeatures2(pDevice, &features);
-        return vulkan13Features.dynamicRendering == VK_TRUE;
+
+        //要问的位与 CreateLogicalDevice 里要开的位一一对应 ——
+        //将来那边多开一位，这里得跟着加一行，否则漏网设备会在创建设备时才炸
+        return vulkan13Features.dynamicRendering == VK_TRUE && vulkan13Features.synchronization2 == VK_TRUE;
     }
 
     QueueFamilySelection DoodleVulkanDevice::SelectQueueFamilies(VkPhysicalDevice pDevice) const
@@ -348,20 +355,21 @@ namespace Doodle
         //这里只留着占位，实际要开的位在下面那条 pNext 链上
         VkPhysicalDeviceFeatures deviceFeatures{};
 
-        //Vulkan 1.3 核心特性：动态渲染
+        //Vulkan 1.3 核心特性：动态渲染 + synchronization2
         //
-        //1.3 起 dynamicRendering 是强制特性，所以这里只需声明要用，不必再探测 ——
+        //两个都是 1.3 的强制特性，所以这里只需声明要用，不必再探测 ——
         //真支持不到 1.3 的设备已经在 IsDeviceSuitable 里被排除了。
-        //也**不要**去启用 VK_KHR_dynamic_rendering 扩展名：那是设备只报到 1.2 时的退路，
-        //1.3 设备上用的是核心版本，功能名不带 KHR 后缀（本机实测两条路都能建成设备，
-        //但混着用等于同时声明两套语言）
+        //也**不要**去启用 VK_KHR_dynamic_rendering / VK_KHR_synchronization2 这两个扩展名：
+        //那是设备只报到 1.2 时的退路，1.3 设备上用的是核心版本，功能名不带 KHR 后缀
+        //（本机实测两条路都能建成设备，但混着用等于同时声明两套语言）
         //
-        //只置这一个位，其余留零即关。1.3 里还有别的特性是 MoltenVK 不支持的
+        //只置这两位，其余留零即关。1.3 里还有别的特性是 MoltenVK 不支持的
         //（驱动里挂着「bufferDeviceAddress ... is not supported on this platform」的告警），
         //整块 enable 会连带把它们一起要过来，设备创建当场失败
         VkPhysicalDeviceVulkan13Features vulkan13Features{};
         vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
         vulkan13Features.dynamicRendering = VK_TRUE;
+        vulkan13Features.synchronization2 = VK_TRUE;
 
         //设备创建信息
         VkDeviceCreateInfo createInfo{};

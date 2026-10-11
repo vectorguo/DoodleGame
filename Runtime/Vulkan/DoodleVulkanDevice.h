@@ -173,15 +173,18 @@ namespace Doodle
         [[nodiscard]] static bool IsDeviceExtensionSupported(VkPhysicalDevice pDevice, const char* pExtensionName);
 
         /**
-         * 检查物理设备是否支持动态渲染
+         * 检查物理设备是否支持我们用到的 Vulkan 1.3 特性
          *
-         * 1.3 起 dynamicRendering 是强制特性，但这里不看版本号、只看特性位：
-         * 设备报出来的 apiVersion 会被 loader 夹到实例版本，不是驱动的上限
+         * 问的就是 CreateLogicalDevice 里要开的那几位（当前：动态渲染 +
+         * synchronization2）—— 两处必须一致：这边漏一位，那边就会以「设备创建失败」
+         * 收场，而不是在选设备阶段被排除
+         *
+         * 不看设备的 apiVersion 推：那个数会被 loader 夹到实例版本，不是驱动的上限
          *
          * @param pDevice 指定物理设备Handle
          * @return 是否支持
          */
-        [[nodiscard]] static bool IsDynamicRenderingSupported(VkPhysicalDevice pDevice);
+        [[nodiscard]] static bool IsVulkan13FeaturesSupported(VkPhysicalDevice pDevice);
 
         /**
          * 为各队列角色选择所需的QueueFamily索引

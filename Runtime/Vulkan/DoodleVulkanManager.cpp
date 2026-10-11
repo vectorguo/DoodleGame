@@ -155,46 +155,61 @@ namespace Doodle
         m_commandBuffer.Record(commandBuffer, imageIndex);
 
         //⑤ 提交到图形队列
-        VkSubmitInfo submitInfo{};
-        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        //
+        //sync2 之后这里没有平行数组了：每个信号量各自成一个结构体，要等的阶段写在
+        //信号量自己身上（原来是和信号量平行、靠下标对齐的 pWaitDstStageMask），
+        //命令缓冲也收进 VkCommandBufferSubmitInfo ——
+        //「两个数组下标必须一一对应」这件事从「容易写错」变成「写不出来」
+        VkCommandBufferSubmitInfo commandBufferInfo{};
+        commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+        commandBufferInfo.commandBuffer = commandBuffer;
 
+        VkSemaphoreSubmitInfo waitSemaphoreInfo{};
+        waitSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        waitSemaphoreInfo.semaphore = imageAvailableSemaphore;
         //等到图像真的可用再开始写颜色。这里选 COLOR_ATTACHMENT_OUTPUT 而不是 TOP_OF_PIPE，
         //是让顶点着色器之类不碰这张图的工作可以先跑起来。
-        //这个取值必须与 RecordAcquireBarrier 里那条屏障的 srcStageMask 一致，
+        //这个取值必须与 RecordImageTransitionToColorAttachment 里那条屏障的 srcStageMask 一致，
         //两边对不上就会出现依赖链断裂。原来对齐的对方是渲染通道里的子通道依赖，
         //动态渲染之后换成了命令缓冲里的屏障 —— 规矩没变，位置变了
-        const VkSemaphore waitSemaphores[] = {imageAvailableSemaphore};
-        const VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-        submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = waitSemaphores;
-        submitInfo.pWaitDstStageMask = waitStages;
-
-        const VkCommandBuffer commandBuffers[] = {commandBuffer};
-        submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = commandBuffers;
+        waitSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
 
         //绘制完成时发出信号，供⑥的呈现等待。
         //这里按图像索引取，而不是用某个固定信号量：能 acquire 到第 imageIndex 张图，
         //说明呈现引擎已经用完它，也就必然完成了对「属于它的那个信号量」的等待，
         //此刻它必定是 unsignaled，signal 它才合法。
         //全场共用一个就会出现「上一帧的呈现还没消费掉就又被 signal」的竞争
-        const VkSemaphore signalSemaphores[] = {m_syncObjects.GetRenderFinishedSemaphore(imageIndex)};
-        submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = signalSemaphores;
+        const auto renderFinishedSemaphore = m_syncObjects.GetRenderFinishedSemaphore(imageIndex);
+        VkSemaphoreSubmitInfo signalSemaphoreInfo{};
+        signalSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        signalSemaphoreInfo.semaphore = renderFinishedSemaphore;
+        //signal 这一格的 stageMask 说的是「等到哪些阶段结束才发信号」，不是「谁在等」。
+        //取 ALL_COMMANDS：出口那条布局转换也被排在「本批工作结束之前」，信号量必须等它
+        signalSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+
+        VkSubmitInfo2 submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+        submitInfo.waitSemaphoreInfoCount = 1;
+        submitInfo.pWaitSemaphoreInfos = &waitSemaphoreInfo;
+        submitInfo.commandBufferInfoCount = 1;
+        submitInfo.pCommandBufferInfos = &commandBufferInfo;
+        submitInfo.signalSemaphoreInfoCount = 1;
+        submitInfo.pSignalSemaphoreInfos = &signalSemaphoreInfo;
 
         //最后一个参数把栅栏挂到这次提交上：GPU 画完时它会被置为已发出信号，
         //供下一帧的①等待
-        if (vkQueueSubmit(m_device.GetGraphicsQueue(), 1, &submitInfo, inFlightFence) != VK_SUCCESS)
+        if (vkQueueSubmit2(m_device.GetGraphicsQueue(), 1, &submitInfo, inFlightFence) != VK_SUCCESS)
         {
             throw std::runtime_error("failed to submit draw command buffer!");
         }
 
-        //⑥ 把这张图像交回交换链呈现。等的是⑤里刚发出信号的那批信号量，
-        //   也就是「绘制已完成」，保证屏幕上不会出现半成品
+        //⑥ 把这张图像交回交换链呈现。等的是⑤里刚发出信号的那个信号量，
+        //   也就是「绘制已完成」，保证屏幕上不会出现半成品。
+        //呈现这边没有 sync2 版本：VkPresentInfoKHR 收的还是裸句柄，没有阶段要填
         VkPresentInfoKHR presentInfo{};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
         presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = signalSemaphores;
+        presentInfo.pWaitSemaphores = &renderFinishedSemaphore;
 
         const VkSwapchainKHR swapChains[] = {m_swapChain.GetSwapChain()};
         presentInfo.swapchainCount = 1;

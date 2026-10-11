@@ -96,11 +96,9 @@ namespace Doodle
             throw std::runtime_error("failed to begin recording command buffer!");
         }
 
-        //① 取图之后、开画之前：把这张图转到「能当颜色附件用」的布局。
-        //这一步原来归渲染通道入口（附件描述里的 initialLayout + 那条子通道依赖管时机），
-        //动态渲染不做任何自动转换，两件事都落在这个函数里那条屏障上 ——
-        //六格取值与理由写在它自己的实现里
-        RecordAcquireBarrier(pCommandBuffer, imageIndex);
+        //① 取图之后、开画之前：转成能当颜色附件用的布局。
+        //原来是渲染通道入口自动做的（连同转换时机），动态渲染之后两件事都归这个函数
+        RecordImageTransitionToColorAttachment(pCommandBuffer, imageIndex);
 
         //② 开始渲染。原来要指一个 VkRenderPass 加一个 VkFramebuffer，现在改成把
         //这批结构直接当参数写出来：视图、布局、load/store、清屏值。
@@ -156,8 +154,8 @@ namespace Doodle
         vkCmdEndRendering(pCommandBuffer);
 
         //③ 画完、交回呈现引擎之前：转回呈现布局 —— 原来是渲染通道 finalLayout 的活。
-        //为什么这一条的六格与入口那条不对称，写在它自己的实现里
-        RecordPresentBarrier(pCommandBuffer, imageIndex);
+        //为什么这一条的六格与入口那条不对称，写在实现里
+        RecordImageTransitionToPresent(pCommandBuffer, imageIndex);
 
         //vkCmd* 全部返回 void，这里是整个录制过程唯一的错误检查点
         if (vkEndCommandBuffer(pCommandBuffer) != VK_SUCCESS)
@@ -166,7 +164,8 @@ namespace Doodle
         }
     }
 
-    void DoodleCommandBuffer::RecordAcquireBarrier(const VkCommandBuffer pCommandBuffer, const uint32_t imageIndex)
+    void DoodleCommandBuffer::RecordImageTransitionToColorAttachment(const VkCommandBuffer pCommandBuffer,
+                                                                     const uint32_t imageIndex)
     {
         //取图之后、开画之前。
         //
@@ -174,8 +173,11 @@ namespace Doodle
         //转换由驱动在通道入口自动做，那条 VkSubpassDependency 只是把转换时机从 TOP_OF_PIPE
         //推迟到颜色附件输出阶段。动态渲染不做任何自动转换，于是「转换」与「时机」两件事都
         //落到这条屏障上 —— 六格取值就是把那条依赖原样翻译过来。
-        VkImageMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        //sync2 之后，两个 stage 与两个 access 都住进结构体本身：旧式里它们一半在结构体、
+        //一半挂在 vkCmdPipelineBarrier 的调用上，「src 的四个在哪儿、dst 的四个在哪儿」
+        //不再需要回答
+        VkImageMemoryBarrier2 barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
 
         //oldLayout 取 UNDEFINED 而不是 PRESENT_SRC_KHR：后者等于声明「上一帧结尾把它转成了
         //呈现布局」，于是录制开始依赖既往状态，首帧与重建后各要一套说法。UNDEFINED 是
@@ -199,30 +201,35 @@ namespace Doodle
             .layerCount = 1
         };
 
-        //srcAccessMask 为 0：上一次碰这张图的是呈现引擎的读，它不在这个内存模型里，
+        //srcAccessMask 取 NONE：上一次碰这张图的是呈现引擎的读，它不在这个内存模型里，
         //access mask 表达不了它 —— 我们要的是执行顺序，不是「谁写过它」的可见性。
         //dstAccessMask 则是被保护的具体操作：接下来对颜色附件的写
-        barrier.srcAccessMask = 0;
-        barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.srcAccessMask = VK_ACCESS_2_NONE;
+        barrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
 
-        //两个 stage 都取 COLOR_ATTACHMENT_OUTPUT：src 侧必须与 DrawFrame 里
-        //pWaitDstStageMask 的取值一致，转换才会排在 acquire 信号量被等待之后 ——
-        //否则呈现引擎可能还在读这张图，这时动它的布局就是数据竞争；dst 侧是接下来
-        //要写它的阶段。
-        //
-        //旧式屏障用 vkCmdPipelineBarrier，不是 vkCmdPipelineBarrier2：本项目的提交路径
-        //还是 VkSubmitInfo 那一代，屏障跟着它走同一套语言，免得两种同步方言并存
-        vkCmdPipelineBarrier(pCommandBuffer,
-                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                             0, 0, nullptr, 0, nullptr, 1, &barrier);
+        //两个 stage 都取 COLOR_ATTACHMENT_OUTPUT：src 侧必须与 DrawFrame 里等待信号量的
+        //stageMask 一致，转换才会排在 acquire 信号量被等待之后 —— 否则呈现引擎可能还在读
+        //这张图，这时动它的布局就是数据竞争；dst 侧是接下来要写它的阶段
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+        //sync2 的入口：一批屏障收进一个 VkDependencyInfo。
+        //memory 与 buffer 两栏留空 —— 本次只提交图像屏障（旧式里那是 vkCmdPipelineBarrier
+        //那一长串参数，现在各自成栏，不用填的自然不用出现）
+        VkDependencyInfo dependencyInfo{};
+        dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependencyInfo.imageMemoryBarrierCount = 1;
+        dependencyInfo.pImageMemoryBarriers = &barrier;
+
+        vkCmdPipelineBarrier2(pCommandBuffer, &dependencyInfo);
     }
 
-    void DoodleCommandBuffer::RecordPresentBarrier(const VkCommandBuffer pCommandBuffer, const uint32_t imageIndex)
+    void DoodleCommandBuffer::RecordImageTransitionToPresent(const VkCommandBuffer pCommandBuffer,
+                                                             const uint32_t imageIndex)
     {
         //画完、交回呈现引擎之前。这一步原来是渲染通道 finalLayout 的活。
-        VkImageMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        VkImageMemoryBarrier2 barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
         barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
@@ -240,21 +247,26 @@ namespace Doodle
         };
 
         //srcAccessMask 用 COLOR_ATTACHMENT_WRITE 把刚画的颜色推到可见：转布局本身要动
-        //这份数据，写成 0 的话呈现可能读到半成品（撕裂、花屏、偶发的半帧）。
-        //这一格与入口那条的 0 不对称是刻意的 —— 出口这次源 scope 里真的有写。
-        //dstAccessMask 为 0：接手的是呈现引擎，它不吃内存可见性这套，只认执行序
-        barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        barrier.dstAccessMask = 0;
+        //这份数据，写成 NONE 的话呈现可能读到半成品（撕裂、花屏、偶发的半帧）。
+        //这一格与入口那条的 NONE 不对称是刻意的 —— 出口这次源 scope 里真的有写。
+        //dstAccessMask 取 NONE：接手的是呈现引擎，它不吃内存可见性这套，只认执行序
+        barrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_2_NONE;
 
-        //dstStage 一路到 BOTTOM_OF_PIPE：后面没有别的阶段要等，转换只需在提交结束之前
-        //完成，而 renderFinished 信号量正是在批次末尾 signal 的 —— 跨引擎那一段由它兜底。
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        //dstStageMask 取 NONE：后面没有别的阶段要等 —— 转换只需在提交结束之前完成，
+        //而 renderFinished 信号量正是在批次末尾 signal 的，跨引擎那一段由它兜底。
         //
-        //BOTTOM_OF_PIPE 是旧式里表达「后面没有阶段要等」的替身写法（旧式没有「空阶段」
-        //这个值）。迁到 sync2 时这一格要换成 VK_PIPELINE_STAGE_2_NONE —— 四个字段的含义
-        //本身一一对应，但这一格不是全局替换能带到的
-        vkCmdPipelineBarrier(pCommandBuffer,
-                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-                             0, 0, nullptr, 0, nullptr, 1, &barrier);
+        //旧式里这一格写的是 BOTTOM_OF_PIPE，那是「旧式没有空阶段这个值」时的替身写法；
+        //sync2 补上了 NONE，「后面没有任何阶段」终于有了正当写法。
+        //这也是整个迁移里唯一一处不是换名字的格
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_NONE;
+
+        VkDependencyInfo dependencyInfo{};
+        dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependencyInfo.imageMemoryBarrierCount = 1;
+        dependencyInfo.pImageMemoryBarriers = &barrier;
+
+        vkCmdPipelineBarrier2(pCommandBuffer, &dependencyInfo);
     }
 }

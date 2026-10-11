@@ -72,19 +72,21 @@ namespace Doodle
 
     private:
         /**
-         * 录入口屏障：取图之后、开画之前，把交换链图像转成能当颜色附件用的布局
+         * 录一次布局转换：取图之后、开画之前，把交换链图像转成能当颜色附件用的布局
+         *
+         * 名字说的是效果（这张图变成了什么），不是机制（录进去的是屏障）——
+         * 读 Record 的人扫到这一行就该知道图像到哪儿了
          *
          * 动态渲染不做自动布局转换，这件事原来是驱动在渲染通道入口替我们做的。
-         *
          * 六格取值（两个布局、两个 access、两个 stage）是这一层对这个渲染目标的
-         * 策略，不是可调输入，所以不走参数 ——「为什么取这几个值」写在实现里
+         * 策略，不是可调输入，所以不走参数
          */
-        void RecordAcquireBarrier(VkCommandBuffer pCommandBuffer, uint32_t imageIndex);
+        void RecordImageTransitionToColorAttachment(VkCommandBuffer pCommandBuffer, uint32_t imageIndex);
 
         /**
-         * 录出口屏障：画完之后、交回呈现引擎之前，转回呈现布局
+         * 录一次布局转换：画完之后、交回呈现引擎之前，转回呈现布局
          */
-        void RecordPresentBarrier(VkCommandBuffer pCommandBuffer, uint32_t imageIndex);
+        void RecordImageTransitionToPresent(VkCommandBuffer pCommandBuffer, uint32_t imageIndex);
 
         /**
          * 创建命令池
