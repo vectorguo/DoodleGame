@@ -100,7 +100,7 @@ namespace Doodle
         createInfo.ppEnabledLayerNames = ppEnabledLayerNames;
 
         //Create Instance
-        const auto result = vkCreateInstance(&createInfo, nullptr, &m_pInstance);
+        const auto result = vkCreateInstance(&createInfo, nullptr, &m_instance);
         if (result != VK_SUCCESS)
         {
             Log::Error("vkCreateInstance failed");
@@ -110,10 +110,10 @@ namespace Doodle
 
     void DoodleVulkanDevice::DestroyVkInstance()
     {
-        if (m_pInstance != VK_NULL_HANDLE)
+        if (m_instance != VK_NULL_HANDLE)
         {
-            vkDestroyInstance(m_pInstance, nullptr);
-            m_pInstance = VK_NULL_HANDLE;
+            vkDestroyInstance(m_instance, nullptr);
+            m_instance = VK_NULL_HANDLE;
         }
     }
 
@@ -167,7 +167,7 @@ namespace Doodle
         //留着旧表面就是泄漏，而且可能和新的撞上
         DestroySurface();
 
-        const auto result = window.CreateSurface(m_pInstance, &m_pSurface);
+        const auto result = window.CreateSurface(m_instance, &m_surface);
         if (result != VK_SUCCESS)
         {
             Log::Error("surface creation failed");
@@ -177,16 +177,16 @@ namespace Doodle
 
     void DoodleVulkanDevice::DestroySurface()
     {
-        if (m_pSurface != VK_NULL_HANDLE)
+        if (m_surface != VK_NULL_HANDLE)
         {
-            vkDestroySurfaceKHR(m_pInstance, m_pSurface, nullptr);
-            m_pSurface = VK_NULL_HANDLE;
+            vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
+            m_surface = VK_NULL_HANDLE;
         }
     }
 
     void DoodleVulkanDevice::VerifyQueueFamilySelection() const
     {
-        const auto currentSelection = SelectQueueFamilies(m_pPhysicalDevice);
+        const auto currentSelection = SelectQueueFamilies(m_physicalDevice);
         if (currentSelection != m_queueFamilySelection)
         {
             //真到这里就没救了：队列是创建逻辑设备那一刻绑定的，换不了。
@@ -201,7 +201,7 @@ namespace Doodle
     {
         //获取所有的物理设备数量
         uint32_t deviceCount = 0;
-        vkEnumeratePhysicalDevices(m_pInstance, &deviceCount, nullptr);
+        vkEnumeratePhysicalDevices(m_instance, &deviceCount, nullptr);
         if (deviceCount == 0)
         {
             throw std::runtime_error("failed to find GPUs with Vulkan support");
@@ -209,21 +209,21 @@ namespace Doodle
 
         //获取所有的物理设备
         std::vector<VkPhysicalDevice> pDevices(deviceCount);
-        vkEnumeratePhysicalDevices(m_pInstance, &deviceCount, pDevices.data());
+        vkEnumeratePhysicalDevices(m_instance, &deviceCount, pDevices.data());
 
         //检查是否有可用的物理设备
         for (const auto& pDevice : pDevices)
         {
             if (IsDeviceSuitable(pDevice))
             {
-                m_pPhysicalDevice = pDevice;
-                m_queueFamilySelection = SelectQueueFamilies(m_pPhysicalDevice);
+                m_physicalDevice = pDevice;
+                m_queueFamilySelection = SelectQueueFamilies(m_physicalDevice);
                 break;
             }
         }
 
         //检查是否获取到可用的物理设备
-        if (m_pPhysicalDevice == VK_NULL_HANDLE)
+        if (m_physicalDevice == VK_NULL_HANDLE)
         {
             throw std::runtime_error("failed to find suitable GPU");
         }
@@ -320,7 +320,7 @@ namespace Doodle
             }
 
             VkBool32 presentSupport = false;
-            vkGetPhysicalDeviceSurfaceSupportKHR(pDevice, i, m_pSurface, &presentSupport);
+            vkGetPhysicalDeviceSurfaceSupportKHR(pDevice, i, m_surface, &presentSupport);
             if (presentSupport)
             {
                 selection.presentFamilyIndex = i;
@@ -387,7 +387,7 @@ namespace Doodle
         //处理扩展
         std::vector<const char*> deviceExtensions;
         deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-        if (IsDeviceExtensionSupported(m_pPhysicalDevice, "VK_KHR_portability_subset"))
+        if (IsDeviceExtensionSupported(m_physicalDevice, "VK_KHR_portability_subset"))
         {
             deviceExtensions.emplace_back("VK_KHR_portability_subset");
         }
@@ -395,10 +395,10 @@ namespace Doodle
         createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
         //创建逻辑设备
-        if (vkCreateDevice(m_pPhysicalDevice, &createInfo, nullptr, &m_pLogicalDevice) == VK_SUCCESS)
+        if (vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_logicalDevice) == VK_SUCCESS)
         {
-            vkGetDeviceQueue(m_pLogicalDevice, m_queueFamilySelection.graphicsFamilyIndex.value(), 0, &m_pGraphicsQueue);
-            vkGetDeviceQueue(m_pLogicalDevice, m_queueFamilySelection.presentFamilyIndex.value(),  0, &m_pPresentQueue);
+            vkGetDeviceQueue(m_logicalDevice, m_queueFamilySelection.graphicsFamilyIndex.value(), 0, &m_pGraphicsQueue);
+            vkGetDeviceQueue(m_logicalDevice, m_queueFamilySelection.presentFamilyIndex.value(),  0, &m_presentQueue);
         }
         else
         {
@@ -408,16 +408,16 @@ namespace Doodle
 
     void DoodleVulkanDevice::DestroyLogicalDevice()
     {
-        if (m_pLogicalDevice != VK_NULL_HANDLE)
+        if (m_logicalDevice != VK_NULL_HANDLE)
         {
-            vkDestroyDevice(m_pLogicalDevice, nullptr);
-            m_pLogicalDevice = VK_NULL_HANDLE;
+            vkDestroyDevice(m_logicalDevice, nullptr);
+            m_logicalDevice = VK_NULL_HANDLE;
         }
     }
 
     SwapChainSupportDetails DoodleVulkanDevice::QuerySwapChainSupport() const
     {
-        return QuerySwapChainSupport(m_pPhysicalDevice);
+        return QuerySwapChainSupport(m_physicalDevice);
     }
 
     SwapChainSupportDetails DoodleVulkanDevice::QuerySwapChainSupport(VkPhysicalDevice pDevice) const
@@ -425,24 +425,24 @@ namespace Doodle
         SwapChainSupportDetails details;
 
         //查询基本表面能力
-        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(pDevice, m_pSurface, &details.surfaceCapabilities);
+        vkGetPhysicalDeviceSurfaceCapabilitiesKHR(pDevice, m_surface, &details.surfaceCapabilities);
 
         //查询表面格式
         uint32_t surfaceFormatCount = 0;
-        vkGetPhysicalDeviceSurfaceFormatsKHR(pDevice, m_pSurface, &surfaceFormatCount, nullptr);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(pDevice, m_surface, &surfaceFormatCount, nullptr);
         if (surfaceFormatCount > 0)
         {
             details.surfaceFormats.resize(surfaceFormatCount);
-            vkGetPhysicalDeviceSurfaceFormatsKHR(pDevice, m_pSurface, &surfaceFormatCount, details.surfaceFormats.data());
+            vkGetPhysicalDeviceSurfaceFormatsKHR(pDevice, m_surface, &surfaceFormatCount, details.surfaceFormats.data());
         }
 
         //查询呈现模式
         uint32_t presentModeCount = 0;
-        vkGetPhysicalDeviceSurfacePresentModesKHR(pDevice, m_pSurface, &presentModeCount, nullptr);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(pDevice, m_surface, &presentModeCount, nullptr);
         if (presentModeCount > 0)
         {
             details.surfacePresentModes.resize(presentModeCount);
-            vkGetPhysicalDeviceSurfacePresentModesKHR(pDevice, m_pSurface, &presentModeCount, details.surfacePresentModes.data());
+            vkGetPhysicalDeviceSurfacePresentModesKHR(pDevice, m_surface, &presentModeCount, details.surfacePresentModes.data());
         }
 
         return details;

@@ -10,11 +10,15 @@
 
 # GLSL 源码入库，编译产物不入库。
 #
-# 编译与内嵌副本的生成现在都是构建的一步（见 CMakeLists.txt 里的
-# add_custom_command），产物落在各个构建目录里，不会污染源码树。
-# 下面两条只覆盖一种情况：手动跑 Shaders/compile.sh 且不给输出目录时，
-# 产物会落在 Shaders/ 自己那里
+# 编译与内嵌副本的生成都是构建的一步（见 CMakeLists.txt 里的 add_custom_command）。
+#
+# 桌面构建会把 *.spv 摆到 Shaders/ 下 —— 这是**常规路径**，不是兜底：
+# 程序按「工作目录相对路径」找着色器，CLion 里跑工程时工作目录就是工程根目录，
+# 命中的正是这一份。摆在别处的话它就只能是手动放的陈旧副本。
 /Shaders/*.spv
+
+# 这一条才是兜底：手动跑 Shaders/compile.sh 且不给输出目录时，
+# 内嵌副本会落在 Shaders/ 自己那里。构建从不往这儿写
 /Shaders/DoodleEmbeddedShaders.h
 
 # Android 侧的构建产物与机器相关配置。

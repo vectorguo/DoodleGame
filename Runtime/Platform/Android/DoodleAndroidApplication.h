@@ -91,7 +91,7 @@ namespace Doodle
          * 窗口状态（是否前台）已经由那边消化掉了，到这里的是需要动
          * Vulkan 子系统的那些
          */
-        void OnAppCommand(int32_t command);
+        void OnAppCommand(const int32_t command);
 
         /**
          * 出过错，且不可能自行恢复

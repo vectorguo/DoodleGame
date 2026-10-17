@@ -39,7 +39,7 @@ namespace Doodle
          */
         [[nodiscard]] VkSwapchainKHR GetSwapChain() const
         {
-            return m_pSwapChain;
+            return m_swapChain;
         }
 
         /**
@@ -141,7 +141,7 @@ namespace Doodle
         /**
          * 交换链
          */
-        VkSwapchainKHR m_pSwapChain = VK_NULL_HANDLE;
+        VkSwapchainKHR m_swapChain = VK_NULL_HANDLE;
 
         /**
          * 交换链图像格式

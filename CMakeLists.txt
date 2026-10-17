@@ -69,11 +69,14 @@ set(DOODLE_SHARED_SOURCES
     Runtime/Vulkan/DoodleCommandBuffer.h
     Runtime/Vulkan/DoodleSyncObjects.cpp
     Runtime/Vulkan/DoodleSyncObjects.h
+    Runtime/Vulkan/DoodleGraphicsBuffer.cpp
+    Runtime/Vulkan/DoodleGraphicsBuffer.h
     Runtime/Vulkan/DoodleVulkanManager.cpp
     Runtime/Vulkan/DoodleVulkanManager.h
     Runtime/Vulkan/DoodleShaderModule.cpp
     Runtime/Vulkan/DoodleShaderModule.h
     Runtime/Vulkan/DoodleVulkanConfig.h
+    Runtime/Vulkan/DoodleVertex.h
     Runtime/Vulkan/QueueFamilySelection.h
     Runtime/Vulkan/SwapChainSupportDetails.h
     Runtime/Platform/DoodleWindow.h
@@ -162,7 +165,12 @@ if(ANDROID)
 
     # 别把工程根目录（CMAKE_CURRENT_SOURCE_DIR 本身）加进来。
     # 理由在下面桌面分支那段注释里写全了，两边是同一个坑
+    #
+    # third_party 里是仓库自带的第三方库（目前只有 glm/）。Android 侧没有 brew、
+    # 也没有包管理器，系统路径上不会有它们 —— 收进仓库才有得用，
+    # 这也是两个平台能共用同一版本的原因
     target_include_directories(DoodleGame PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
         ${CMAKE_CURRENT_SOURCE_DIR}/Runtime
         ${_doodle_shader_output_dir}
         ${_doodle_native_app_glue_dir}
@@ -199,7 +207,16 @@ endif()
 
 # 第三方头文件 / 库的搜索目录。
 # Vulkan SDK 在 /usr/local，Homebrew 的 GLFW / GLM 在 /opt/homebrew。
+#
+# 加的是 third_party 本身、不是 third_party/glm —— 一个库一个目录，
+# 路径加父目录，这样 #include <glm/glm.hpp> 解析到 third_party/glm/glm.hpp。
+# 将来再引别的（volk 之类）照同一规矩放，不必再加路径
+#
+# 仓库自带的那份排在最前。这台机器上 brew 也装了一份同名同版本的 GLM，
+# 顺序反了会静默用到系统那份 —— 你以为在用仓库里锁定的版本，实际不是，
+# 换台机器行为就可能不同（见 third_party/glm/README.md）
 set(DOODLE_HEADER_SEARCH_PATHS
+    ${CMAKE_SOURCE_DIR}/third_party
     /usr/local/include
     /opt/homebrew/include
     ${CMAKE_SOURCE_DIR}/Runtime
@@ -339,14 +356,63 @@ if(APPLE)
         )
     endforeach()
 
+    # 把刚编好的 SPIR-V 摆到**运行时真正会去读**的目录。
+    #
+    # 着色器字节码有三个可能的来源，查找顺序见 DoodleShaderModule::ReadFile：
+    #   ① 进程当前工作目录下的路径 —— CLion 里跑工程时工作目录就是工程根目录，
+    #      于是命中的是 Shaders/ 下的那一份
+    #   ② <可执行文件目录>/../Resources/Shaders/ —— Finder 双击时走这条
+    #   ③ 编进二进制的内嵌副本 —— Android 只能走这条
+    #
+    # 上面那个 add_custom_command 把 .spv 生成在**构建目录**里（内嵌副本也从那儿来）。
+    # 构建不往 ① ② 写的话，那两个位置就只能靠人手动放 —— 而一改着色器源码，
+    # 手动放的那份就悄悄过期，没有任何报错，程序照着旧的画。这里显式摆过去，
+    # 让 ① 永远是最新的；下面那条 copy_directory 再把它带进包的 ②。
+    #
+    # 只在桌面上做，两个理由：
+    #   - Android 运行时够不着文件系统（APK 里的东西不是普通文件），它走 ③
+    #   - 两个平台用的 glslc 不是同一份（这边 PATH 上的，Android 那边 NDK 自带的），
+    #     编出来的字节并不相同。让 Android 也写这里会互相覆盖，
+    #     最后编了哪个平台，Shaders/ 里就是哪个平台的字节码
+    #
+    # 产物落在源码树里是刻意的 —— 它是「运行时数据」而不是构建中间物，
+    # 运行时就认这个路径。.gitignore 里已经排除了 *.spv
+    add_custom_command(
+        OUTPUT
+            "${CMAKE_SOURCE_DIR}/Shaders/vert.spv"
+            "${CMAKE_SOURCE_DIR}/Shaders/frag.spv"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_doodle_shader_output_dir}/vert.spv"
+            "${CMAKE_SOURCE_DIR}/Shaders/vert.spv"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_doodle_shader_output_dir}/frag.spv"
+            "${CMAKE_SOURCE_DIR}/Shaders/frag.spv"
+        DEPENDS "${_doodle_embedded_shaders}"
+        COMMENT "Stage shader SPIR-V into Shaders/ for the desktop runtime"
+        VERBATIM
+    )
+
+    add_custom_target(doodle_stage_shaders ALL
+        DEPENDS
+            "${CMAKE_SOURCE_DIR}/Shaders/vert.spv"
+            "${CMAKE_SOURCE_DIR}/Shaders/frag.spv"
+    )
+
+    # 摆位必须排在包内拷贝之前，否则拷进包里的还是上一轮的旧文件
+    add_dependencies(DoodleGame doodle_stage_shaders)
+
     # 把 Shaders/ 拷进 .app 的 Contents/Resources/，让包自带着色器字节码。
-    # 运行时的查找顺序见 DoodleShaderModule::ReadFile：
-    #   先按「进程当前工作目录」找（开发时命中源码目录里的最新产物），
-    #   找不到再用 <可执行文件目录>/../Resources/Shaders/（Finder 双击时走这条）。
+    # 运行时查找顺序见上（① 工作目录 → ② 包内 → ③ 内嵌）。
     # 之所以放在包内 Resources 而不是可执行文件旁边，是遵循 macOS 的包约定。
     # copy_directory 会把 .vert/.frag 源码一并拷进去，体积可忽略；
-    # 若以后不想随包分发源码，改成只拷 *.spv 即可。
+    # 若以后不想随包分发源码，改成只拷 *.spv 即可
+    #
+    # 先整个删掉再拷：copy_directory 只增不删，目标端多出来的文件会一直留着。
+    # 这正是踩过的那个坑 —— 源码侧删掉的旧 .spv，在包里活了下来，
+    # 而运行时先找到包里那份，于是「删了却还在生效」
     add_custom_command(TARGET DoodleGame POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -rf
+            "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Shaders"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/Shaders"
             "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Shaders"

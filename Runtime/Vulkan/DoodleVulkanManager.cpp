@@ -20,6 +20,13 @@ namespace Doodle
         m_swapChain.Initialize(m_device, window);
         m_graphicsPipeline.Initialize(m_device, m_swapChain);
         m_commandBuffer.Initialize(m_device, m_swapChain, m_graphicsPipeline);
+        //两份顶点数据要赶在命令缓冲第一次录制之前送上 GPU：DrawFrame 里的 Record
+        //会把它们绑上去，那时句柄还是空的话校验层当场报错。
+        //
+        //排在这里还有一条更硬的理由：上传要提交一次拷贝，而提交用的那个传输命令池
+        //是上面那一行建出来的。顺序反了就是拿着空池去录命令
+        CreateVertexBuffer();
+        CreateIndexBuffer();
         m_syncObjects.Initialize(m_device, m_swapChain);
     }
 
@@ -34,6 +41,8 @@ namespace Doodle
 
         //逆序销毁
         m_syncObjects.Destroy();
+        DestroyIndexBuffer();
+        DestroyVertexBuffer();
         m_commandBuffer.Destroy();
         m_graphicsPipeline.Destroy();
         m_swapChain.Destroy();
@@ -149,10 +158,20 @@ namespace Doodle
         //   承诺落空，栅栏停在未发出信号状态，下一轮等它就永远等不到
         vkResetFences(logicalDevice, 1, &inFlightFence);
 
-        //④ 录制本帧命令。命令缓冲层不缓存句柄，录制时现取，
-        //   所以交换链重建之后重录拿到的自然是新句柄
-        const auto commandBuffer = m_commandBuffer.GetCommandBuffer(frameIndex);
-        m_commandBuffer.Record(commandBuffer, imageIndex);
+        //④ 录制本帧命令。命令缓冲层不缓存任何上游句柄，录制时现取，
+        //   所以交换链重建之后重录拿到的自然是新句柄。
+        //   它自己那条命令缓冲由它按 frameIndex 取 —— 本层交出帧索引即可，
+        //   不必先取好句柄再传进去，也就没有「传错槽位」这种可能。
+        //   顶点与索引缓冲反着来：它们不随交换链重建，所以由本层持有、每帧当参数递进去。
+        //   命令缓冲层使用它们，但拥有它们的是这里 —— 谁使用和谁拥有是两件事。
+        //   索引数传 m_indices 的条数（6），不是 m_vertices 的条数（4）——
+        //   vkCmdDrawIndexed 要的是「按几个索引去取顶点」
+        //
+        //   返回值就是刚录好的那一条，⑤ 提交要用。提交归门面，
+        //   但「本帧录在哪一条」归命令缓冲层 —— 让它顺手交回来，两边就不可能指向不同的槽位
+        const auto commandBuffer = m_commandBuffer.Record(frameIndex, imageIndex,
+                                                          m_vertexBuffer.GetBuffer(), m_indexBuffer.GetBuffer(),
+                                                          static_cast<uint32_t>(m_indices.size()));
 
         //⑤ 提交到图形队列
         //
@@ -270,5 +289,66 @@ namespace Doodle
 
         //m_currentFrame 不用复位：同步对象整层换新，三个栅栏都是「已发出信号」状态，
         //重建后第一帧的①会立刻通过，和程序刚启动时是同一个情形
+    }
+
+    void DoodleVulkanManager::CreateDeviceLocalBuffer(DoodleGraphicsBuffer& buffer,
+                                                      VkBufferUsageFlags usage,
+                                                      const void* pData,
+                                                      VkDeviceSize size)
+    {
+        //正式缓冲：内存取设备本地，并将用途补上 TRANSFER_DST —— 它要当下面那次拷贝的目标。
+        //少了这一位，vkCmdCopyBuffer2 会撞校验层（VUID-vkCmdCopyBuffer2-dstBuffer-00133）
+        buffer.Initialize(
+            m_device,
+            size,
+            usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        //中转：反过来，要能当源（TRANSFER_SRC），且内存得 CPU 碰得到。
+        //
+        //局部量，不是成员 —— 它建出来、用完、立刻销毁，寿命只覆盖本函数中间几行。
+        //做成成员反而会凭空引入「它此刻是否有效」这个状态问题，而这个状态问题
+        //本来不存在。它同时也是一份不变量：只要它还活着，数据就还没搬完
+        DoodleGraphicsBuffer stagingBuffer;
+        stagingBuffer.Initialize(
+            m_device,
+            size,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+        //先把数据 memcpy 进中转，再录拷贝命令 —— 这个顺序是规范给的免费保证：
+        //写在前、提交在后，拷贝命令读到的必然是写完的数据，中间不需要任何屏障。
+        //详见 DoodleGraphicsBuffer::Upload 末尾
+        stagingBuffer.Upload(pData, size);
+
+        //到这里 CPU 的事做完了，剩下这次搬运由 GPU 自己完成。
+        //入口与实现都在 DoodleGraphicsBuffer 上，命令池从命令缓冲层的单例借
+        stagingBuffer.CopyTo(buffer, size);
+
+        //销毁中转。这一步必须排在 CopyTo 之后 —— 它返回时拷贝才真正做完，
+        //提前销毁就是销毁一份还在被命令引用的缓冲
+        stagingBuffer.Destroy();
+    }
+
+    void DoodleVulkanManager::CreateVertexBuffer()
+    {
+        CreateDeviceLocalBuffer(m_vertexBuffer, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                m_vertices.data(), sizeof(Vertex) * m_vertices.size());
+    }
+
+    void DoodleVulkanManager::DestroyVertexBuffer()
+    {
+        m_vertexBuffer.Destroy();
+    }
+
+    void DoodleVulkanManager::CreateIndexBuffer()
+    {
+        CreateDeviceLocalBuffer(m_indexBuffer, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                m_indices.data(), sizeof(uint16_t) * m_indices.size());
+    }
+
+    void DoodleVulkanManager::DestroyIndexBuffer()
+    {
+        m_indexBuffer.Destroy();
     }
 }

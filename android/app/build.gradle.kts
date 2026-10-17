@@ -21,15 +21,20 @@ android {
     defaultConfig {
         applicationId = "com.doodle.doodlegame"
 
-        // 24 是 Vulkan 的下限：VK_KHR_android_surface 从 API 24（Android 7.0）起才有。
+        // 33 = Android 13。这个数字由**链接期**决定，不是「支持哪个 Vulkan 版本」那条线：
+        // 系统 libvulkan.so 导出哪些函数，按 Android 版本逐级放开，而 NDK 链接时挑哪一份
+        // stub 由 minSdk 定。实测各 API 级别的 vk 导出数：24 → 148、29 → 182、32 → 195、
+        // 33 → 232 —— Vulkan 1.3 的入口点（vkCmdBeginRendering / vkCmdEndRendering /
+        // vkQueueSubmit2 / vkCmdPipelineBarrier2）正是从 33 才开始出现。低于 33 会在链接期
+        // 直接报 undefined symbol，APK 根本编不出来。选 33 而不是更高的值，是因为它就是
+        // 满足需求的最低版本，再高只是白白缩小设备覆盖面
         //
-        // 但它与代码已经脱钩：DoodleVulkanDevice 现在请求 Vulkan 1.3（为动态渲染铺路），
-        // 那是个硬门槛 —— 1.1/1.2 驱动的设备会在 vkCreateInstance 就直接失败。先留在 24，
-        // 是因为眼下只在测试机（Android 16 / Adreno）上跑。发布前要收口，但别指望抬
-        // minSdk 能一劳永逸：CDD 只强制手机支持 1.1（Android 15 起），1.3 到 Android 16
-        // 仍是「强烈推荐」，没有任何 minSdk 能保证它。届时要么加运行期探测
-        // （看 VkPhysicalDeviceProperties::apiVersion），要么接受非 1.3 设备装不上
-        minSdk = 24
+        // 另一条线（运行期）与这个数字无关：DoodleVulkanDevice 请求 apiVersion 1.3，
+        // 设备驱动不支持就会在 vkCreateInstance 失败。CDD 只强制手机支持 1.1（Android 15 起），
+        // 1.3 到 Android 16 仍是「强烈推荐」—— 没有任何 minSdk 能保证它。现在收口到 33
+        // 是因为只在测试机上跑；真要发布还得加运行期探测（vkEnumerateInstanceVersion，
+        // 或读 VkPhysicalDeviceProperties::apiVersion），或者接受非 1.3 设备装不上
+        minSdk = 33
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"

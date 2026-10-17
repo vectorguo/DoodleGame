@@ -45,7 +45,7 @@ namespace Doodle
          * @param height 初始像素高度
          * @param title 窗口标题
          */
-        DoodleMacWindow(int32_t width, int32_t height, const char* title);
+        DoodleMacWindow(const int32_t width, const int32_t height, const char* title); // NOLINT(*-avoid-const-params-in-decls)
         ~DoodleMacWindow() override;
 
         DoodleMacWindow(const DoodleMacWindow&) = delete;

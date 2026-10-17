@@ -9,6 +9,29 @@
 
 namespace Doodle
 {
+    DoodleCommandBuffer* DoodleCommandBuffer::s_pInstance = nullptr;
+
+    DoodleCommandBuffer::DoodleCommandBuffer()
+    {
+        //与 DoodleApplication 同一个套路：谁被构造出来谁就是「当前那一份」。
+        //本工程由 DoodleVulkanManager 按值持有一份，所以这里只会登记一次
+        s_pInstance = this;
+    }
+
+    DoodleCommandBuffer::~DoodleCommandBuffer()
+    {
+        //只注销自己 —— 万一将来真的出现第二份，别把别人的登记顺手抹掉
+        if (s_pInstance == this)
+        {
+            s_pInstance = nullptr;
+        }
+    }
+
+    DoodleCommandBuffer* DoodleCommandBuffer::GetInstance()
+    {
+        return s_pInstance;
+    }
+
     void DoodleCommandBuffer::Initialize(const DoodleVulkanDevice& device,
                                          const DoodleSwapChain& swapChain,
                                          const DoodleGraphicsPipeline& graphicsPipeline)
@@ -20,10 +43,15 @@ namespace Doodle
         //命令缓冲从池中分配，池必须先建出来
         CreateCommandPool();
         CreateCommandBuffers();
+
+        //两个池都锚在程序生命周期上，在这里一次建好。
+        //传输池必须赶在门面第一次上传之前 —— 那条顺序写在门面的 Initialize 里
+        CreateTransferCommandPool();
     }
 
     void DoodleCommandBuffer::Destroy()
     {
+        DestroyTransferCommandPool();
         DestroyCommandPool();
     }
 
@@ -41,7 +69,7 @@ namespace Doodle
         createInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         createInfo.queueFamilyIndex = familyIndex;
 
-        const auto result = vkCreateCommandPool(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_pCommandPool);
+        const auto result = vkCreateCommandPool(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_commandPool);
         if (result != VK_SUCCESS)
         {
             throw std::runtime_error("failed to create command pool!");
@@ -51,8 +79,8 @@ namespace Doodle
     void DoodleCommandBuffer::DestroyCommandPool()
     {
         //池引用了逻辑设备，必须先于设备层销毁
-        vkDestroyCommandPool(m_pDevice->GetLogicalDevice(), m_pCommandPool, nullptr);
-        m_pCommandPool = VK_NULL_HANDLE;
+        vkDestroyCommandPool(m_pDevice->GetLogicalDevice(), m_commandPool, nullptr);
+        m_commandPool = VK_NULL_HANDLE;
 
         //缓冲随池一起释放了，这里只是把句柄数组清空，不要再去逐个销毁
         m_commandBuffers.clear();
@@ -66,7 +94,7 @@ namespace Doodle
 
         VkCommandBufferAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.commandPool = m_pCommandPool;
+        allocInfo.commandPool = m_commandPool;
         //主级缓冲才能提交到队列，次级只能被主级调用
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocInfo.commandBufferCount = static_cast<uint32_t>(m_commandBuffers.size());
@@ -79,7 +107,44 @@ namespace Doodle
         }
     }
 
-    void DoodleCommandBuffer::Record(VkCommandBuffer pCommandBuffer, const uint32_t imageIndex)
+    void DoodleCommandBuffer::CreateTransferCommandPool()
+    {
+        //队列族与绘制池取同一个：拷贝也提交到图形队列。
+        //传输队列（VK_QUEUE_TRANSFER_BIT）是另一条优化路，本项目不走
+        const auto familyIndex = m_pDevice->GetQueueFamilySelection().graphicsFamilyIndex.value();
+
+        VkCommandPoolCreateInfo createInfo{};
+        createInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        //告诉驱动这个池里的缓冲寿命很短，会被很快重置或释放。
+        //这是关于用法的声明，不是语义开关 —— 它不改变任何状态规则，
+        //驱动拿它来挑池的分配策略（比如整池一起分配、不为此做长期规划）
+        createInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        //注意这里没有 RESET_COMMAND_BUFFER_BIT，和有绘制缓冲的那个池不一样。
+        //那个位决定「能不能重置池里的单个缓冲」，而本池的缓冲根本不需要重置 ——
+        //每次用完就地释放（见 DoodleGraphicsBuffer::CopyTo），下一次是全新分配、天然处于 initial 状态。
+        //加了这个位反而会让「begin 会隐式重置」这条规矩在这里也成立，
+        //从而掩盖掉某天有人试着复用一个旧句柄时的错误
+        createInfo.queueFamilyIndex = familyIndex;
+
+        const auto result = vkCreateCommandPool(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_transferCommandPool);
+        if (result != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to create transfer command pool!");
+        }
+    }
+
+    void DoodleCommandBuffer::DestroyTransferCommandPool()
+    {
+        //池引用了逻辑设备，必须先于设备层销毁
+        vkDestroyCommandPool(m_pDevice->GetLogicalDevice(), m_transferCommandPool, nullptr);
+        m_transferCommandPool = VK_NULL_HANDLE;
+    }
+
+    VkCommandBuffer DoodleCommandBuffer::Record(const uint32_t frameIndex,
+                                                const uint32_t imageIndex,
+                                                VkBuffer vertexBuffer,
+                                                VkBuffer indexBuffer,
+                                                const uint32_t indexCount)
     {
         //录制期间用到的句柄全部现取，本层不缓存副本，
         //这样交换链重建之后重录，拿到的就是新句柄
@@ -90,15 +155,20 @@ namespace Doodle
         beginInfo.flags = 0;                    //不承诺任何特殊用法
         beginInfo.pInheritanceInfo = nullptr;   //只对次级有意义，主级必须为空
 
+        //本帧录在哪一条：按帧索引从池里那几条中取。现取而不缓存，
+        //与上面 imageExtent 的理由相同 —— 本层不攥着任何上游状态的副本。
+        //录完会把它交回给调用方提交，见函数末尾
+        const auto commandBuffer = m_commandBuffers[frameIndex];
+
         //对已录制过的缓冲调用 begin 会隐式重置它，命令缓冲不能追加只能重录
-        if (vkBeginCommandBuffer(pCommandBuffer, &beginInfo) != VK_SUCCESS)
+        if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
         {
             throw std::runtime_error("failed to begin recording command buffer!");
         }
 
         //① 取图之后、开画之前：转成能当颜色附件用的布局。
         //原来是渲染通道入口自动做的（连同转换时机），动态渲染之后两件事都归这个函数
-        RecordImageTransitionToColorAttachment(pCommandBuffer, imageIndex);
+        RecordImageTransitionToColorAttachment(commandBuffer, imageIndex);
 
         //② 开始渲染。原来要指一个 VkRenderPass 加一个 VkFramebuffer，现在改成把
         //这批结构直接当参数写出来：视图、布局、load/store、清屏值。
@@ -125,10 +195,10 @@ namespace Doodle
         renderingInfo.pColorAttachments = &colorAttachment;
 
         //开始渲染。begin 与 end 必须成对，且落在同一个命令缓冲里
-        vkCmdBeginRendering(pCommandBuffer, &renderingInfo);
+        vkCmdBeginRendering(commandBuffer, &renderingInfo);
 
         //绑定管线
-        vkCmdBindPipeline(pCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pGraphicsPipeline->GetGraphicsPipeline());
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pGraphicsPipeline->GetGraphicsPipeline());
 
         //视口与剪裁在管线层被声明为动态状态，没有烘焙进管线，只能在这里补上。
         //交换链尺寸变化时只影响这里，不用重建管线
@@ -139,33 +209,62 @@ namespace Doodle
         viewport.height = static_cast<float>(imageExtent.height);
         viewport.minDepth = 0.0f;
         viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(pCommandBuffer, 0, 1, &viewport);
+        vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
         VkRect2D scissor{};
         scissor.offset = {0, 0};
         scissor.extent = imageExtent;
-        vkCmdSetScissor(pCommandBuffer, 0, 1, &scissor);
+        vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-        //顶点数据目前硬编码在顶点着色器里，没有顶点缓冲，只画 3 个顶点。
-        //这个 3 必须与着色器里 positions 数组的长度一致
-        vkCmdDraw(pCommandBuffer, 3, 1, 0, 0);
+        //绑定顶点缓冲。这里的 binding 编号 0 指回管线顶点输入描述里的 binding = 0 ——
+        //所以它必须在 vkCmdBindPipeline 之后：管线还没绑定时，这个编号无从对应。
+        //绑定是录制状态，对之后录进来的每一次绘制都生效
+        const VkBuffer vertexBuffers[] = {vertexBuffer};
+        const VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+        //绑定索引缓冲。与上面那行有三处不一样：
+        //
+        //① 没有 binding 编号。索引缓冲全场只有一个槽位，不像顶点缓冲能同时绑好几条
+        //   数据流按编号取用 —— 所以这个函数收的是单个句柄，不是数组
+        //② 要多给一个索引类型。VkBuffer 只是一段字节，它自己不知道里面装的是 16 位
+        //   还是 32 位的索引，这个信息没有别处能推出来，只能在这里说
+        //③ 这里那个 0 是缓冲内的**字节偏移**，不是索引下标。要让绘制从第几个索引
+        //   开始，那是下面 firstIndex 的事，两者别混
+        //
+        //索引类型写死成 UINT16 而不做成参数：本项目的索引数组就是 uint16_t，
+        //做成参数只是把一个常量串过每一层。代价是它与 m_indices 绑在一起 ——
+        //将来顶点数越过 65535 换成 uint32_t 时，两处要一起改
+        vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
+        //按索引绘制。参数从「画几个顶点」变成「按几个索引去取顶点」——
+        //顶点数不再需要：索引指向哪个顶点就抓哪个，同一个顶点被两个三角形
+        //共用时也只抓一次
+        //
+        //后三个参数依次是 firstIndex / vertexOffset / firstInstance，这里全 0。
+        //它们正是「一块大缓冲里塞很多 mesh」那条路的入口：每个 mesh 各带一组
+        //非零值，就不必为它单独建缓冲
+        vkCmdDrawIndexed(commandBuffer, indexCount, 1, 0, 0, 0);
 
         //结束渲染
-        vkCmdEndRendering(pCommandBuffer);
+        vkCmdEndRendering(commandBuffer);
 
         //③ 画完、交回呈现引擎之前：转回呈现布局 —— 原来是渲染通道 finalLayout 的活。
         //为什么这一条的六格与入口那条不对称，写在实现里
-        RecordImageTransitionToPresent(pCommandBuffer, imageIndex);
+        RecordImageTransitionToPresent(commandBuffer, imageIndex);
 
         //vkCmd* 全部返回 void，这里是整个录制过程唯一的错误检查点
-        if (vkEndCommandBuffer(pCommandBuffer) != VK_SUCCESS)
+        if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
         {
             throw std::runtime_error("failed to record command buffer!");
         }
+
+        //交回去的正是刚刚录的那一条。调用方要提交它，而「本帧该用哪一条」
+        //只有本层知道 —— 让它成为返回值，就不可能出现「录 A 提交 B」
+        return commandBuffer;
     }
 
-    void DoodleCommandBuffer::RecordImageTransitionToColorAttachment(const VkCommandBuffer pCommandBuffer,
-                                                                     const uint32_t imageIndex)
+    void DoodleCommandBuffer::RecordImageTransitionToColorAttachment(VkCommandBuffer commandBuffer, const uint32_t imageIndex) const
     {
         //取图之后、开画之前。
         //
@@ -221,11 +320,10 @@ namespace Doodle
         dependencyInfo.imageMemoryBarrierCount = 1;
         dependencyInfo.pImageMemoryBarriers = &barrier;
 
-        vkCmdPipelineBarrier2(pCommandBuffer, &dependencyInfo);
+        vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
     }
 
-    void DoodleCommandBuffer::RecordImageTransitionToPresent(const VkCommandBuffer pCommandBuffer,
-                                                             const uint32_t imageIndex)
+    void DoodleCommandBuffer::RecordImageTransitionToPresent(VkCommandBuffer commandBuffer, const uint32_t imageIndex) const
     {
         //画完、交回呈现引擎之前。这一步原来是渲染通道 finalLayout 的活。
         VkImageMemoryBarrier2 barrier{};
@@ -267,6 +365,6 @@ namespace Doodle
         dependencyInfo.imageMemoryBarrierCount = 1;
         dependencyInfo.pImageMemoryBarriers = &barrier;
 
-        vkCmdPipelineBarrier2(pCommandBuffer, &dependencyInfo);
+        vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
     }
 }

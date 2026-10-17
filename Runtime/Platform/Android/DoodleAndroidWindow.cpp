@@ -95,7 +95,7 @@ namespace Doodle
         };
     }
 
-    VkResult DoodleAndroidWindow::CreateSurface(const VkInstance instance, VkSurfaceKHR* pSurface) const
+    VkResult DoodleAndroidWindow::CreateSurface(VkInstance instance, VkSurfaceKHR* pSurface) const
     {
         VkAndroidSurfaceCreateInfoKHR createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;

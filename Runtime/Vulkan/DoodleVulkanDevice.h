@@ -70,7 +70,7 @@ namespace Doodle
          */
         [[nodiscard]] VkInstance GetInstance() const
         {
-            return m_pInstance;
+            return m_instance;
         }
 
         /**
@@ -78,7 +78,7 @@ namespace Doodle
          */
         [[nodiscard]] VkSurfaceKHR GetSurface() const
         {
-            return m_pSurface;
+            return m_surface;
         }
 
         /**
@@ -86,7 +86,7 @@ namespace Doodle
          */
         [[nodiscard]] VkPhysicalDevice GetPhysicalDevice() const
         {
-            return m_pPhysicalDevice;
+            return m_physicalDevice;
         }
 
         /**
@@ -94,7 +94,7 @@ namespace Doodle
          */
         [[nodiscard]] VkDevice GetLogicalDevice() const
         {
-            return m_pLogicalDevice;
+            return m_logicalDevice;
         }
 
         /**
@@ -110,7 +110,7 @@ namespace Doodle
          */
         [[nodiscard]] VkQueue GetPresentQueue() const
         {
-            return m_pPresentQueue;
+            return m_presentQueue;
         }
 
         /**
@@ -215,24 +215,24 @@ namespace Doodle
         /**
          * Vulkan实例
          */
-        VkInstance m_pInstance = VK_NULL_HANDLE;
+        VkInstance m_instance = VK_NULL_HANDLE;
 
         /**
          * Window Surface
          *
          * 生命周期跟窗口走，不跟本对象走。见类注释
          */
-        VkSurfaceKHR m_pSurface = VK_NULL_HANDLE;
+        VkSurfaceKHR m_surface = VK_NULL_HANDLE;
 
         /**
          * Vulkan物理设备Handle
          */
-        VkPhysicalDevice m_pPhysicalDevice = VK_NULL_HANDLE;
+        VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
 
         /**
          * Vulkan逻辑设备Handle
          */
-        VkDevice m_pLogicalDevice = VK_NULL_HANDLE;
+        VkDevice m_logicalDevice = VK_NULL_HANDLE;
 
         /**
          * Graphics Queue
@@ -242,7 +242,7 @@ namespace Doodle
         /**
          * Present Queue
          */
-        VkQueue m_pPresentQueue = VK_NULL_HANDLE;
+        VkQueue m_presentQueue = VK_NULL_HANDLE;
 
         /**
          * 选中物理设备的队列族选择结果，在选择物理设备时确定

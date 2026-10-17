@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "DoodleShaderModule.h"
+#include "DoodleVertex.h"
 
 namespace Doodle
 {
@@ -39,7 +40,7 @@ namespace Doodle
         createInfo.pushConstantRangeCount = 0;
         createInfo.pPushConstantRanges = nullptr;
 
-        const auto result = vkCreatePipelineLayout(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_pPipelineLayout);
+        const auto result = vkCreatePipelineLayout(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_pipelineLayout);
         if (result != VK_SUCCESS)
         {
             throw std::runtime_error("failed to create pipeline layout!");
@@ -48,10 +49,10 @@ namespace Doodle
 
     void DoodleGraphicsPipeline::DestroyPipelineLayout()
     {
-        if (m_pPipelineLayout != VK_NULL_HANDLE)
+        if (m_pipelineLayout != VK_NULL_HANDLE)
         {
-            vkDestroyPipelineLayout(m_pDevice->GetLogicalDevice(), m_pPipelineLayout, nullptr);
-            m_pPipelineLayout = VK_NULL_HANDLE;
+            vkDestroyPipelineLayout(m_pDevice->GetLogicalDevice(), m_pipelineLayout, nullptr);
+            m_pipelineLayout = VK_NULL_HANDLE;
         }
     }
 
@@ -91,14 +92,22 @@ namespace Doodle
         dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
         dynamicState.pDynamicStates = dynamicStates.data();
 
-        //顶点输入：目前顶点数据硬编码在顶点着色器里，所以这里是空的。
-        //等「顶点缓冲」那一章再补上绑定与属性描述
+        //顶点输入：两份描述都从 Vertex 类型上取。管线只吃描述，不关心数据来自哪
+        //
+        //这两个是按值返回的局部量，取它们的地址喂给管线即可。
+        //VkPipelineVertexInputStateCreateInfo 里存的是裸指针、不拷贝内容，
+        //所以它们必须活到 vkCreateGraphicsPipelines 返回为止 —— 局部量正好满足：
+        //创建调用就在本函数里，两个变量的寿命完整覆盖它。
+        //（这也是为什么不能把描述做成返回临时对象引用的函数：出了那个函数就悬空了）
+        const auto bindingDescription = Vertex::GetBindingDescription();
+        const auto attributeDescriptions = Vertex::GetAttributeDescriptions();
+
         VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertexInputInfo.vertexBindingDescriptionCount = 0;
-        vertexInputInfo.pVertexBindingDescriptions = nullptr;
-        vertexInputInfo.vertexAttributeDescriptionCount = 0;
-        vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+        vertexInputInfo.vertexBindingDescriptionCount = 1;
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
         //输入装配：每 3 个顶点组成一个三角形
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -112,7 +121,9 @@ namespace Doodle
         viewportState.viewportCount = 1;
         viewportState.scissorCount = 1;
 
-        //光栅化。frontFace 取顺时针，与着色器里给出的顶点顺序（左上、右下、左下）一致
+        //光栅化。frontFace 取顺时针，与 C++ 里 m_vertices 的顶点顺序（左上、右上、右下、左下）
+        //以及 m_indices 切出来的两个三角形一致 —— 顺序就是绕序。
+        //这两样都由数据决定，改它们之前先看 DoodleVulkanManager 里那两份数组
         VkPipelineRasterizationStateCreateInfo rasterizer{};
         rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
         rasterizer.depthClampEnable = VK_FALSE;
@@ -179,7 +190,7 @@ namespace Doodle
         pipelineInfo.pDepthStencilState = nullptr;   //本阶段还没有深度缓冲
         pipelineInfo.pColorBlendState = &colorBlending;
         pipelineInfo.pDynamicState = &dynamicState;
-        pipelineInfo.layout = m_pPipelineLayout;
+        pipelineInfo.layout = m_pipelineLayout;
         //动态渲染的标志就是这两个字段一起留空：没有渲染通道对象可指，
         //子通道这个概念也随之消失。附件信息改由上一条 pNext 链承载
         pipelineInfo.renderPass = VK_NULL_HANDLE;
@@ -189,7 +200,7 @@ namespace Doodle
 
         //第二参数暂传 VK_NULL_HANDLE，即不使用管线缓存。
         //等「管线缓存」那一章再接上，用于跨次运行复用编译结果
-        const auto result = vkCreateGraphicsPipelines(pDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_pGraphicsPipeline);
+        const auto result = vkCreateGraphicsPipelines(pDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_graphicsPipeline);
         if (result != VK_SUCCESS)
         {
             throw std::runtime_error("failed to create graphics pipeline!");
@@ -202,10 +213,10 @@ namespace Doodle
 
     void DoodleGraphicsPipeline::DestroyGraphicsPipeline()
     {
-        if (m_pGraphicsPipeline != VK_NULL_HANDLE)
+        if (m_graphicsPipeline != VK_NULL_HANDLE)
         {
-            vkDestroyPipeline(m_pDevice->GetLogicalDevice(), m_pGraphicsPipeline, nullptr);
-            m_pGraphicsPipeline = VK_NULL_HANDLE;
+            vkDestroyPipeline(m_pDevice->GetLogicalDevice(), m_graphicsPipeline, nullptr);
+            m_graphicsPipeline = VK_NULL_HANDLE;
         }
     }
 }

@@ -82,7 +82,7 @@ namespace Doodle
         createInfo.oldSwapchain = VK_NULL_HANDLE;
 
         //创建交换链
-        const auto result = vkCreateSwapchainKHR(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_pSwapChain);
+        const auto result = vkCreateSwapchainKHR(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_swapChain);
         if (result != VK_SUCCESS)
         {
             throw std::runtime_error("failed to create swap chain!");
@@ -91,17 +91,17 @@ namespace Doodle
         //记录交换链图像数据
         m_swapChainImageFormat = surfaceFormat.format;
         m_swapChainImageExtent = extent;
-        vkGetSwapchainImagesKHR(m_pDevice->GetLogicalDevice(), m_pSwapChain, &imageCount, nullptr);
+        vkGetSwapchainImagesKHR(m_pDevice->GetLogicalDevice(), m_swapChain, &imageCount, nullptr);
         m_swapChainImages.resize(imageCount);
-        vkGetSwapchainImagesKHR(m_pDevice->GetLogicalDevice(), m_pSwapChain, &imageCount, m_swapChainImages.data());
+        vkGetSwapchainImagesKHR(m_pDevice->GetLogicalDevice(), m_swapChain, &imageCount, m_swapChainImages.data());
     }
 
     void DoodleSwapChain::DestroySwapChain()
     {
-        if (m_pSwapChain != VK_NULL_HANDLE)
+        if (m_swapChain != VK_NULL_HANDLE)
         {
-            vkDestroySwapchainKHR(m_pDevice->GetLogicalDevice(), m_pSwapChain, nullptr);
-            m_pSwapChain = VK_NULL_HANDLE;
+            vkDestroySwapchainKHR(m_pDevice->GetLogicalDevice(), m_swapChain, nullptr);
+            m_swapChain = VK_NULL_HANDLE;
         }
 
         //句柄之外的状态一并复位，重建时从干净状态开始

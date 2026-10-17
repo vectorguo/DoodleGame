@@ -90,7 +90,7 @@ namespace Doodle
          * 必须是这个签名：胶水层是 C 代码，回调是裸函数指针，没有 this 可用。
          * 所以构造时把本对象存进 pApp->userData，在这里取回来
          */
-        static void HandleAppCmd(android_app* pApp, int32_t command);
+        static void HandleAppCmd(android_app* pApp, const int32_t command);
 
         /**
          * 处理一条命令：先更新本层自己的状态，再全部转交驱动层
@@ -98,7 +98,7 @@ namespace Doodle
          * 「全部」是实情：前后台由本层消化（m_focused），但命令照样往下走，
          * 由驱动层挑它关心的那几条 —— 本层不替它做取舍
          */
-        void OnAppCmd(int32_t command);
+        void OnAppCmd(const int32_t command);
 
     private:
         /** 胶水层的应用对象，只借不放，生命周期由系统保证 */

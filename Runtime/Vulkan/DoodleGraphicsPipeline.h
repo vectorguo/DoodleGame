@@ -42,7 +42,7 @@ namespace Doodle
          */
         [[nodiscard]] VkPipelineLayout GetPipelineLayout() const
         {
-            return m_pPipelineLayout;
+            return m_pipelineLayout;
         }
 
         /**
@@ -50,7 +50,7 @@ namespace Doodle
          */
         [[nodiscard]] VkPipeline GetGraphicsPipeline() const
         {
-            return m_pGraphicsPipeline;
+            return m_graphicsPipeline;
         }
 
     private:
@@ -70,7 +70,7 @@ namespace Doodle
         /**
          * 创建图形管线
          *
-         * 前置条件：m_pPipelineLayout 已创建、m_pGraphicsPipeline 必须为空。
+         * 前置条件：m_pipelineLayout 已创建、m_graphicsPipeline 必须为空。
          * 重建时请走 Destroy 后重新 Initialize
          */
         void CreateGraphicsPipeline();
@@ -94,11 +94,11 @@ namespace Doodle
         /**
          * 管线布局
          */
-        VkPipelineLayout m_pPipelineLayout = VK_NULL_HANDLE;
+        VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
 
         /**
          * 图形管线
          */
-        VkPipeline m_pGraphicsPipeline = VK_NULL_HANDLE;
+        VkPipeline m_graphicsPipeline = VK_NULL_HANDLE;
     };
 }

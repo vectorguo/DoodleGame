@@ -122,7 +122,7 @@ namespace Doodle
         return extensions;
     }
 
-    VkResult DoodleMacWindow::CreateSurface(const VkInstance instance, VkSurfaceKHR* pSurface) const
+    VkResult DoodleMacWindow::CreateSurface(VkInstance instance, VkSurfaceKHR* pSurface) const
     {
         return glfwCreateWindowSurface(instance, m_pWindow, nullptr, pSurface);
     }
