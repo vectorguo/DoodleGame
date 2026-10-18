@@ -71,6 +71,12 @@ set(DOODLE_SHARED_SOURCES
     Runtime/Vulkan/DoodleSyncObjects.h
     Runtime/Vulkan/DoodleGraphicsBuffer.cpp
     Runtime/Vulkan/DoodleGraphicsBuffer.h
+    Runtime/Vulkan/DoodleDepthImages.cpp
+    Runtime/Vulkan/DoodleDepthImages.h
+    Runtime/Vulkan/DoodleImage.cpp
+    Runtime/Vulkan/DoodleImage.h
+    Runtime/Vulkan/DoodleTexture.cpp
+    Runtime/Vulkan/DoodleTexture.h
     Runtime/Vulkan/DoodleVulkanManager.cpp
     Runtime/Vulkan/DoodleVulkanManager.h
     Runtime/Vulkan/DoodleShaderModule.cpp

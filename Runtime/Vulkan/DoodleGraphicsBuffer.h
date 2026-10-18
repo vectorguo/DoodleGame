@@ -149,35 +149,6 @@ namespace Doodle
 
     private:
         /**
-         * 在物理设备的内存类型里挑一个：既要被这块缓冲允许，又要满足我们的用途
-         *
-         * 两个条件各来自一处。typeFilter 是驱动为这个缓冲算出来的「哪些类型它用得了」，
-         * 直接来自 vkGetBufferMemoryRequirements 的 memoryTypeBits；properties 是
-         * 「我们想拿它干什么」—— 比如「CPU 能映射、写完不必手动刷新」，或者「设备本地」
-         *
-         * 两个都得满足：驱动说能用的类型里可能有 CPU 根本映射不了的显存，
-         * 而我们要的属性也可能只落在某几个类型上
-         *
-         * properties 那一边是「全部满足」而不是「满足其一」：判据写成
-         * (flags & properties) == properties，少一位都不算命中
-         *
-         * 做成 static 成员：它不读本对象的任何成员，也就没有 this ——
-         * 「挑内存类型」是关于设备能力的查询，不是某一块缓冲的属性
-         *
-         * @param physicalDevice 用来查内存类型的物理设备
-         * @param typeFilter 驱动给出的可用类型位图
-         * @param properties 必须全部满足的内存属性
-         *
-         * @note 等到纹理（DoodleImage 之类）也需要挑内存类型时，它的自然归宿是
-         * DoodleVulkanDevice —— 那时有两个调用者都在问「这台设备有什么能力」。
-         * 现在只有本类一个调用者，放在这里比提前塞进设备层少一层依赖
-         */
-        [[nodiscard]] static uint32_t FindMemoryType(VkPhysicalDevice physicalDevice,
-                                                     const uint32_t typeFilter,
-                                                     VkMemoryPropertyFlags properties);
-
-    private:
-        /**
          * Vulkan设备层，在 Initialize 时绑定
          */
         const DoodleVulkanDevice* m_pDevice = nullptr;

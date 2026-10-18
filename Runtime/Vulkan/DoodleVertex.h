@@ -22,13 +22,13 @@ namespace Doodle
      * 一条绑定的 stride 就是整个结构体：
      *
      *     [pos0][color0] [pos1][color1] [pos2][color2]
-     *      ↑偏移 0 ↑偏移 8
-     *      └──── sizeof(Vertex) = 20 字节 ────┘
+     *      ↑偏移 0 ↑偏移 12
+     *      └──── sizeof(Vertex) = 24 字节 ────┘
      *
-     * 成员用 glm::vec2 / glm::vec3 而不是裸的 float[2] / float[3]：位置与颜色本来
-     * 就是向量，后面的 MVP 变换、法线、UV 也都会用 glm，一套词汇比两套好
+     * 成员用 glm::vec3 而不是裸的 float[3]：位置与颜色本来就是向量，
+     * 后面的 MVP 变换、法线、UV 也都会用 glm，一套词汇比两套好
      *
-     * 代价是「stride = 20、颜色在偏移 8」这两条不再只由本文件决定 —— 它们依赖
+     * 代价是「stride = 24、颜色在偏移 12」这两条不再只由本文件决定 —— 它们依赖
      * glm 的 vec3 是 12 字节、且不带尾部填充。这条假设必须被钉住：GLM 有一个
      * GLM_FORCE_ALIGNED_GENTYPES（以及连带的 GLM_FORCE_DEFAULT_ALIGNED_GENTYPES）
      * 会把它抬成 16 字节对齐，vec3 于是变成 16 字节。本项目没有定义那些宏，
@@ -47,9 +47,12 @@ namespace Doodle
     struct Vertex
     {
         /**
-         * 位置，对应着色器里的 layout(location = 0) in vec2
+         * 位置，对应着色器里的 layout(location = 0) in vec3
+         *
+         * 第三个分量是深度演示要的：本阶段还没有投影矩阵，z 直接落进裁剪空间，
+         * 必须在 [0,1] 里取值，更小的值更近
          */
-        glm::vec2 pos;
+        glm::vec3 pos;
 
         /**
          * 颜色，对应着色器里的 layout(location = 1) in vec3
@@ -94,10 +97,10 @@ namespace Doodle
         {
             std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
 
-            //位置：location 0，两个 32 位浮点分量（vec2）
+            //位置：location 0，三个 32 位浮点分量（vec3）
             attributeDescriptions[0].binding = 0;
             attributeDescriptions[0].location = 0;
-            attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+            attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
             //偏移用宏算，理由同上面的 sizeof：字段挪动位置时它自动跟上
             attributeDescriptions[0].offset = offsetof(Vertex, pos);
 
@@ -116,6 +119,6 @@ namespace Doodle
     //为什么值得写：这两条一旦悄悄变了，症状是模型整体错位或颜色串位，
     //校验层查不到（它不知道你把什么字节当成了顶点），而着色器那边也查不到
     //（它按 location 读，读到的就是错的数据）。把失败挪到编译期成本最低
-    static_assert(sizeof(Vertex) == 20, "Vertex 布局变了：glm::vec3 不再是 12 字节（是不是定义了 GLM_FORCE_ALIGNED_GENTYPES 之类？）");
-    static_assert(offsetof(Vertex, color) == 8, "Vertex 布局变了：color 不再位于偏移 8");
+    static_assert(sizeof(Vertex) == 24, "Vertex 布局变了：glm::vec3 不再是 12 字节（是不是定义了 GLM_FORCE_ALIGNED_GENTYPES 之类？）");
+    static_assert(offsetof(Vertex, color) == 12, "Vertex 布局变了：color 不再位于偏移 12");
 }

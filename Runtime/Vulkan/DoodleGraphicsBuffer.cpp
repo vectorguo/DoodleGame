@@ -48,9 +48,8 @@ namespace Doodle
         VkMemoryAllocateInfo allocateInfo{};
         allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         allocateInfo.allocationSize = memoryRequirements.size;
-        allocateInfo.memoryTypeIndex = FindMemoryType(device.GetPhysicalDevice(),
-                                                      memoryRequirements.memoryTypeBits,
-                                                      memoryProperties);
+        allocateInfo.memoryTypeIndex = device.FindMemoryType(memoryRequirements.memoryTypeBits,
+                                                             memoryProperties);
 
         //分配失败要把第一步建出来的对象收掉再抛。
         //半成品留在场上，调用方没有任何办法把它认出来并释放 ——
@@ -239,27 +238,5 @@ namespace Doodle
         //同一件事换个主语。机制只留一份：写成两份实现，
         //将来改其中一份（补同步、改错误处理）必然漏掉另一份
         srcBuffer.CopyTo(*this, size);
-    }
-
-    uint32_t DoodleGraphicsBuffer::FindMemoryType(VkPhysicalDevice physicalDevice,
-                                                  const uint32_t typeFilter,
-                                                  VkMemoryPropertyFlags properties)
-    {
-        VkPhysicalDeviceMemoryProperties memoryProperties;
-        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memoryProperties);
-
-        for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; ++i)
-        {
-            const bool isUsableByBuffer = (typeFilter & (1u << i)) != 0;
-            const bool hasRequiredProperties =
-                (memoryProperties.memoryTypes[i].propertyFlags & properties) == properties;
-
-            if (isUsableByBuffer && hasRequiredProperties)
-            {
-                return i;
-            }
-        }
-
-        throw std::runtime_error("failed to find suitable memory type!");
     }
 }

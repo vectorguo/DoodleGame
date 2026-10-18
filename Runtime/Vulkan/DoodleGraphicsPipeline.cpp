@@ -12,10 +12,13 @@
 
 namespace Doodle
 {
-    void DoodleGraphicsPipeline::Initialize(const DoodleVulkanDevice& device, const DoodleSwapChain& swapChain)
+    void DoodleGraphicsPipeline::Initialize(const DoodleVulkanDevice& device,
+                                            const DoodleSwapChain& swapChain,
+                                            const DoodleDepthImages& depthImages)
     {
         m_pDevice = &device;
         m_pSwapChain = &swapChain;
+        m_pDepthImages = &depthImages;
 
         //管线布局是管线的前置条件，先创建
         CreatePipelineLayout();
@@ -172,8 +175,34 @@ namespace Doodle
         const auto colorFormat = m_pSwapChain->GetImageFormat();
         renderingCreateInfo.colorAttachmentCount = 1;
         renderingCreateInfo.pColorAttachmentFormats = &colorFormat;
-        //深度与模板附件本阶段还没有，留零即「不声明」。
-        //等「深度缓冲」那一章，这里补 depthAttachmentFormat 即可，写法与颜色对称
+
+        //深度格式从深度图组取 —— 格式是那一组挑的，这里只消费结果。
+        //与颜色格式一样，创建管线时读一次、编译进管线，之后不再读
+        const auto depthFormat = m_pDepthImages->GetFormat();
+        renderingCreateInfo.depthAttachmentFormat = depthFormat;
+
+        //含模板分量时，stencil 那一栏必须一起填，且与深度相同。
+        //只填 depth 不填 stencil，校验层会报两者不一致
+        if (DoodleDepthImages::HasStencilComponent(depthFormat))
+        {
+            renderingCreateInfo.stencilAttachmentFormat = depthFormat;
+        }
+
+        //深度／模板状态。声明了 depthAttachmentFormat 之后，这一格必须是有效指针 ——
+        //规范为 renderPass 为空的情形专门写了这条约束。两处必须同一次改完：
+        //只填格式不给状态，管线建不出来；只给状态不填格式，校验层要到绘制时才报
+        VkPipelineDepthStencilStateCreateInfo depthStencil{};
+        depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depthStencil.depthTestEnable = VK_TRUE;
+        depthStencil.depthWriteEnable = VK_TRUE;
+        //更小的深度 = 更近，与清屏值 1.0（最远）配对
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+        //边界测试与模板都先不用。注意 depthBounds 是可选设备特性，
+        //本项目的 VkPhysicalDeviceFeatures 全零，也就是没开它
+        depthStencil.depthBoundsTestEnable = VK_FALSE;
+        depthStencil.stencilTestEnable = VK_FALSE;
+        depthStencil.front = {};
+        depthStencil.back = {};
 
         //上面这些状态结构体都是栈上的局部变量，pipelineInfo 只记录它们的地址。
         //所以创建调用必须留在本函数作用域内 —— 拆出去就是悬垂指针
@@ -187,7 +216,7 @@ namespace Doodle
         pipelineInfo.pViewportState = &viewportState;
         pipelineInfo.pRasterizationState = &rasterizer;
         pipelineInfo.pMultisampleState = &multisampling;
-        pipelineInfo.pDepthStencilState = nullptr;   //本阶段还没有深度缓冲
+        pipelineInfo.pDepthStencilState = &depthStencil;
         pipelineInfo.pColorBlendState = &colorBlending;
         pipelineInfo.pDynamicState = &dynamicState;
         pipelineInfo.layout = m_pipelineLayout;

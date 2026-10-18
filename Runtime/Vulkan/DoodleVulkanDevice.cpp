@@ -447,4 +447,30 @@ namespace Doodle
 
         return details;
     }
+
+    uint32_t DoodleVulkanDevice::FindMemoryType(const uint32_t typeFilter,
+                                                const VkMemoryPropertyFlags properties) const
+    {
+        //用 2 版：语义与 1.0 版相同，但查询结构多一层、将来要挂 pNext 时不用再换。
+        //这里真正需要的是 memoryTypes 那张表，pNext 链留空
+        VkPhysicalDeviceMemoryProperties2 memoryProperties{};
+        memoryProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+        vkGetPhysicalDeviceMemoryProperties2(m_physicalDevice, &memoryProperties);
+
+        const auto& types = memoryProperties.memoryProperties;
+        for (uint32_t i = 0; i < types.memoryTypeCount; ++i)
+        {
+            //两个条件都得满足：驱动允许这个资源用，且这一型的能力覆盖我们要的全部属性
+            const bool isUsable = (typeFilter & (1u << i)) != 0;
+            const bool hasRequiredProperties =
+                (types.memoryTypes[i].propertyFlags & properties) == properties;
+
+            if (isUsable && hasRequiredProperties)
+            {
+                return i;
+            }
+        }
+
+        throw std::runtime_error("failed to find suitable memory type!");
+    }
 }

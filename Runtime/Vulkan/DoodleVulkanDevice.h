@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
@@ -126,6 +127,26 @@ namespace Doodle
          * @return 交换链支持信息
          */
         [[nodiscard]] SwapChainSupportDetails QuerySwapChainSupport() const;
+
+        /**
+         * 在物理设备的内存类型里挑一个：既要被这块资源允许，又要满足我们的用途
+         *
+         * 两个条件各来自一处。typeFilter 是驱动为该资源算出来的「哪些类型它用得了」
+         * （来自 vkGetImageMemoryRequirements / vkGetBufferMemoryRequirements 的
+         * memoryTypeBits）；properties 是「我们想拿它干什么」—— 比如
+         * 「CPU 能映射、写完不必手动刷新」，或者「设备本地」
+         *
+         * properties 那一边是「全部满足」而不是「满足其一」：
+         * 判据写成 (flags & properties) == properties，少一位都不算命中
+         *
+         * 放在设备层而不是某一种资源里：它只查物理设备，与 QuerySwapChainSupport
+         * 同属「问这台机器有什么」。缓冲与深度图两个调用者都在问同一个问题
+         *
+         * @param typeFilter 驱动给出的可用类型位图
+         * @param properties 必须全部满足的内存属性
+         * @return 选中的内存类型索引
+         */
+        [[nodiscard]] uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
 
     private:
         /**

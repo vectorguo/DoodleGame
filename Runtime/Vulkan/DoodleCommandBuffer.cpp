@@ -34,11 +34,13 @@ namespace Doodle
 
     void DoodleCommandBuffer::Initialize(const DoodleVulkanDevice& device,
                                          const DoodleSwapChain& swapChain,
-                                         const DoodleGraphicsPipeline& graphicsPipeline)
+                                         const DoodleGraphicsPipeline& graphicsPipeline,
+                                         const DoodleDepthImages& depthImages)
     {
         m_pDevice = &device;
         m_pSwapChain = &swapChain;
         m_pGraphicsPipeline = &graphicsPipeline;
+        m_pDepthImages = &depthImages;
 
         //命令缓冲从池中分配，池必须先建出来
         CreateCommandPool();
@@ -170,6 +172,10 @@ namespace Doodle
         //原来是渲染通道入口自动做的（连同转换时机），动态渲染之后两件事都归这个函数
         RecordImageTransitionToColorAttachment(commandBuffer, imageIndex);
 
+        //①' 深度图也转一次：UNDEFINED → DEPTH_STENCIL_ATTACHMENT_OPTIMAL。
+        //它只转布局；跨帧的复用安全由帧栅栏保证，见该函数里的注释
+        RecordImageTransitionToDepthAttachment(commandBuffer, frameIndex);
+
         //② 开始渲染。原来要指一个 VkRenderPass 加一个 VkFramebuffer，现在改成把
         //这批结构直接当参数写出来：视图、布局、load/store、清屏值。
         //
@@ -185,6 +191,23 @@ namespace Doodle
         //VkClearValue 是 union，逐层聚合初始化：VkClearValue → .color → float32[4]，三重大括号不能少
         colorAttachment.clearValue = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
 
+        //深度附件。与颜色附件同一套写法：视图、当前布局、load/store、清屏值。
+        //注意这里没有「新建一张图」的语义 —— 图已经在深度图组里建好，
+        //本函数只是把它登记成这次渲染的深度目标
+        VkRenderingAttachmentInfo depthAttachment{};
+        depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        //按 frameIndex 取本帧那一张，不缓存 —— 本层「不缓存上游句柄」那条不变量
+        depthAttachment.imageView = m_pDepthImages->GetImageView(frameIndex);
+        //这句是陈述句：必须是上面那条屏障转换出来的布局，写错了是未定义行为
+        depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        //画完就没人看它了。瓦片式硬件（Apple GPU 就是这样）会因此
+        //根本不把深度写回显存 —— 这是白拿的一笔带宽
+        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        //1.0 = 最远（Vulkan 的深度范围是 0..1，1 在远平面）：
+        //任何片段都比它近，第一笔画的东西必然通过
+        depthAttachment.clearValue.depthStencil = {1.0f, 0};
+
         VkRenderingInfo renderingInfo{};
         renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
         renderingInfo.renderArea.offset = {0, 0};
@@ -193,6 +216,7 @@ namespace Doodle
         renderingInfo.layerCount = 1;   //图像数组的层数，与 imageArrayLayers 一致，不是图像张数
         renderingInfo.colorAttachmentCount = 1;
         renderingInfo.pColorAttachments = &colorAttachment;
+        renderingInfo.pDepthAttachment = &depthAttachment;
 
         //开始渲染。begin 与 end 必须成对，且落在同一个命令缓冲里
         vkCmdBeginRendering(commandBuffer, &renderingInfo);
@@ -315,6 +339,63 @@ namespace Doodle
         //sync2 的入口：一批屏障收进一个 VkDependencyInfo。
         //memory 与 buffer 两栏留空 —— 本次只提交图像屏障（旧式里那是 vkCmdPipelineBarrier
         //那一长串参数，现在各自成栏，不用填的自然不用出现）
+        VkDependencyInfo dependencyInfo{};
+        dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependencyInfo.imageMemoryBarrierCount = 1;
+        dependencyInfo.pImageMemoryBarriers = &barrier;
+
+        vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
+    }
+
+    void DoodleCommandBuffer::RecordImageTransitionToDepthAttachment(
+        VkCommandBuffer commandBuffer, const uint32_t frameIndex) const
+    {
+        //取图之后、开画之前。这一步在渲染通道时代由驱动在通道入口自动完成；
+        //动态渲染把它交还给录制者 —— 原文标注为「可以跳过」的那一节，在这里是必做
+        VkImageMemoryBarrier2 barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+
+        //每帧都从 UNDEFINED 起算，与本层处理交换链图像那条同一个写法：
+        //旧内容反正紧接着就被清屏覆盖，重算期望态比依赖上一帧留下的布局更不容易出错
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        //按 frameIndex 取本帧那一张：本层不缓存上游句柄，重建后重录拿到的自然是新的
+        barrier.image = m_pDepthImages->GetImage(frameIndex);
+
+        //切面按格式算：候选表落到带模板的格式时，模板分量必须一起声明
+        VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        if (DoodleDepthImages::HasStencilComponent(m_pDepthImages->GetFormat()))
+        {
+            aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+        }
+
+        barrier.subresourceRange =
+        {
+            .aspectMask = aspectMask,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1
+        };
+
+        //源 scope 留空：这张图上一次被用的是同一槽位的上一轮（k-2 帧），
+        //而 DrawFrame 开头等本槽位栅栏时，它必定已经执行完了；k-1 帧用的是另一张图。
+        //所以这条屏障只负责转布局，不再负责串两帧。NONE 是 sync2 里
+        //「源 scope 为空」的正当写法（见《同步的现代写法》）
+        barrier.srcAccessMask = VK_ACCESS_2_NONE;
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_NONE;
+
+        //目的地是本帧的深度测试：读（比较）+ 写（通过时写回）。
+        //两个 stage 都写，是因为测试落在哪个阶段取决于着色器有没有声明
+        //early fragment tests —— 与原文那条 dependency 两个阶段都写同理
+        barrier.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                              | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
+                             | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+
         VkDependencyInfo dependencyInfo{};
         dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
         dependencyInfo.imageMemoryBarrierCount = 1;

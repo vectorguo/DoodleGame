@@ -7,6 +7,7 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
+#include "DoodleDepthImages.h"
 #include "DoodleGraphicsPipeline.h"
 #include "DoodleSwapChain.h"
 #include "DoodleVulkanDevice.h"
@@ -31,7 +32,8 @@ namespace Doodle
      * 只读引用设备层、交换链层与图形管线层，生命周期须短于 DoodleSwapChain
      *
      * 动态渲染之后本层多担一件事：渲染目标的布局转换。
-     * 渲染通道时代那是驱动在通道边界自动做的，现在两条屏障都写在这里
+     * 渲染通道时代那是驱动在通道边界自动做的，现在三条屏障都写在这里
+     * （颜色入口、深度入口、颜色出口）
      *
      * 本类在进程内是唯一的一份：构造时登记、析构时注销，
      * 供 DoodleGraphicsBuffer::CopyTo 找到它 —— 理由与代价见 GetInstance
@@ -80,10 +82,12 @@ namespace Doodle
          * @param device 已初始化的Vulkan设备
          * @param swapChain 已初始化的交换链
          * @param graphicsPipeline 已初始化的图形管线
+         * @param depthImages 已初始化的深度图组，按 frameIndex 取本帧那一张
          */
         void Initialize(const DoodleVulkanDevice& device,
                         const DoodleSwapChain& swapChain,
-                        const DoodleGraphicsPipeline& graphicsPipeline);
+                        const DoodleGraphicsPipeline& graphicsPipeline,
+                        const DoodleDepthImages& depthImages);
 
         /**
          * 销毁命令缓冲层
@@ -148,6 +152,15 @@ namespace Doodle
         void RecordImageTransitionToColorAttachment(VkCommandBuffer commandBuffer, const uint32_t imageIndex) const;
 
         /**
+         * 录一次布局转换：取图之后、开画之前，把本帧的深度图转成能当深度附件用的布局
+         *
+         * 每帧收 frameIndex，因为深度图跟着在途帧轮转，不跟交换链图像走。
+         * 这条屏障的源 scope 是空的：同一槽位上一次使用（k-2 帧）由帧栅栏保证已完成，
+         * 它只负责转布局，不负责串两帧
+         */
+        void RecordImageTransitionToDepthAttachment(VkCommandBuffer commandBuffer, const uint32_t frameIndex) const;
+
+        /**
          * 录一次布局转换：画完之后、交回呈现引擎之前，转回呈现布局
          */
         void RecordImageTransitionToPresent(VkCommandBuffer commandBuffer, const uint32_t imageIndex) const;
@@ -207,6 +220,11 @@ namespace Doodle
          * 图形管线层，在 Initialize 时绑定
          */
         const DoodleGraphicsPipeline* m_pGraphicsPipeline = nullptr;
+
+        /**
+         * 深度图组，在 Initialize 时绑定，按 frameIndex 取本帧那一张
+         */
+        const DoodleDepthImages* m_pDepthImages = nullptr;
 
         /**
          * 命令池

@@ -18,8 +18,10 @@ namespace Doodle
 
         m_device.Initialize(window);
         m_swapChain.Initialize(m_device, window);
-        m_graphicsPipeline.Initialize(m_device, m_swapChain);
-        m_commandBuffer.Initialize(m_device, m_swapChain, m_graphicsPipeline);
+        //深度图按交换链尺寸建；图形管线要读它的格式，所以它必须排在管线之前
+        m_depthImages.Initialize(m_device, m_swapChain.GetImageExtent());
+        m_graphicsPipeline.Initialize(m_device, m_swapChain, m_depthImages);
+        m_commandBuffer.Initialize(m_device, m_swapChain, m_graphicsPipeline, m_depthImages);
         //两份顶点数据要赶在命令缓冲第一次录制之前送上 GPU：DrawFrame 里的 Record
         //会把它们绑上去，那时句柄还是空的话校验层当场报错。
         //
@@ -45,6 +47,7 @@ namespace Doodle
         DestroyVertexBuffer();
         m_commandBuffer.Destroy();
         m_graphicsPipeline.Destroy();
+        m_depthImages.Destroy();
         m_swapChain.Destroy();
         m_device.Destroy();
     }
@@ -59,6 +62,7 @@ namespace Doodle
         //同步对象其实不引用任何一层（它的 Destroy 只碰设备），排在最先是为了让全场
         //只有一条规矩：建的时候什么序，拆的时候就倒过来。读的人不必逐层去推谁依赖谁
         m_syncObjects.Destroy();
+        m_depthImages.Destroy();
         m_swapChain.Destroy();
 
         //表面本身最后拆。它归设备层管，但失效的时机由窗口决定，
@@ -265,11 +269,12 @@ namespace Doodle
 
         //按依赖倒序销毁
         m_syncObjects.Destroy();
+        m_depthImages.Destroy();
         m_swapChain.Destroy();
 
         //按依赖正序创建，顺序与 Initialize 里这几层的一致。
         //
-        //图形管线不在这里重建。它把颜色附件格式按值编译进了管线，交换链格式真变了
+        //图形管线不在这里重建。它把颜色与深度格式按值编译进了管线，格式真变了
         //它就不再匹配 —— 但那个格式要变，得把窗口拖到另一块不同色域的显示器上，
         //是极罕见的情况；而重建代价是把管线整个重编译一遍（几十毫秒）。
         //为一次窗口缩放付这个钱不值得。真到要处理的那天，判据是这里比对格式变没变，
@@ -278,6 +283,9 @@ namespace Doodle
         //命令缓冲也不重建：它不缓存任何上游句柄，每帧录制时现取，
         //重建后重录拿到的自然是新的
         m_swapChain.Initialize(m_device, *m_pWindow);
+        //深度图的尺寸跟着交换链走，所以它必须在这里重建；它的格式不会因缩放而变，
+        //图形管线因此不必跟着重建
+        m_depthImages.Initialize(m_device, m_swapChain.GetImageExtent());
         m_syncObjects.Initialize(m_device, m_swapChain);
 
         //到这里交换链已经照当前窗口尺寸建好了，积压的 resize 通知就算兑现。

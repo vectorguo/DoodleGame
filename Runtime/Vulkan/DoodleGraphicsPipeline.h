@@ -6,6 +6,7 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include "DoodleDepthImages.h"
 #include "DoodleSwapChain.h"
 #include "DoodleVulkanDevice.h"
 
@@ -14,11 +15,11 @@ namespace Doodle
     /**
      * 图形管线层：着色器与固定功能状态编译成的不可变绘制配置
      *
-     * 只读引用设备层与交换链层，生命周期须短于 DoodleSwapChain。
+     * 只读引用设备层、交换链层与深度图组，生命周期须短于 DoodleSwapChain。
      *
-     * 交换链在这里只出一件东西：颜色附件格式 —— Initialize 时读一次、编译进管线，
-     * 之后不再读。所以交换链重建不必重建本层：重建不换格式，
-     * 管线里编译进去的那份照样是对的
+     * 交换链在这里只出一件东西：颜色附件格式；深度图组也只出一件东西：深度格式。
+     * 两者都是 Initialize 时读一次、编译进管线，之后不再读。所以交换链重建不必
+     * 重建本层：重建不换格式，管线里编译进去的那份照样是对的
      *
      * 引用交换链不是为尺寸：视口与剪裁走动态状态，创建管线时不消费它
      */
@@ -28,9 +29,12 @@ namespace Doodle
         /**
          * 初始化图形管线
          * @param device 已初始化的Vulkan设备
-         * @param swapChain 已初始化的交换链
+         * @param swapChain 已初始化的交换链，取颜色附件格式用
+         * @param depthImages 已初始化的深度图组，取深度格式用
          */
-        void Initialize(const DoodleVulkanDevice& device, const DoodleSwapChain& swapChain);
+        void Initialize(const DoodleVulkanDevice& device,
+                        const DoodleSwapChain& swapChain,
+                        const DoodleDepthImages& depthImages);
 
         /**
          * 销毁图形管线
@@ -90,6 +94,11 @@ namespace Doodle
          * 交换链层，在 Initialize 时绑定，取颜色附件格式用
          */
         const DoodleSwapChain* m_pSwapChain = nullptr;
+
+        /**
+         * 深度图组，在 Initialize 时绑定，取深度格式用
+         */
+        const DoodleDepthImages* m_pDepthImages = nullptr;
 
         /**
          * 管线布局
