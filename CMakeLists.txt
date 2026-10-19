@@ -172,11 +172,11 @@ if(ANDROID)
     # 别把工程根目录（CMAKE_CURRENT_SOURCE_DIR 本身）加进来。
     # 理由在下面桌面分支那段注释里写全了，两边是同一个坑
     #
-    # third_party 里是仓库自带的第三方库（目前只有 glm/）。Android 侧没有 brew、
+    # ThirdParty 里是仓库自带的第三方库（目前只有 glm/）。Android 侧没有 brew、
     # 也没有包管理器，系统路径上不会有它们 —— 收进仓库才有得用，
     # 这也是两个平台能共用同一版本的原因
     target_include_directories(DoodleGame PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+        ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty
         ${CMAKE_CURRENT_SOURCE_DIR}/Runtime
         ${_doodle_shader_output_dir}
         ${_doodle_native_app_glue_dir}
@@ -214,15 +214,15 @@ endif()
 # 第三方头文件 / 库的搜索目录。
 # Vulkan SDK 在 /usr/local，Homebrew 的 GLFW / GLM 在 /opt/homebrew。
 #
-# 加的是 third_party 本身、不是 third_party/glm —— 一个库一个目录，
-# 路径加父目录，这样 #include <glm/glm.hpp> 解析到 third_party/glm/glm.hpp。
+# 加的是 ThirdParty 本身、不是 ThirdParty/glm —— 一个库一个目录，
+# 路径加父目录，这样 #include <glm/glm.hpp> 解析到 ThirdParty/glm/glm.hpp。
 # 将来再引别的（volk 之类）照同一规矩放，不必再加路径
 #
 # 仓库自带的那份排在最前。这台机器上 brew 也装了一份同名同版本的 GLM，
 # 顺序反了会静默用到系统那份 —— 你以为在用仓库里锁定的版本，实际不是，
-# 换台机器行为就可能不同（见 third_party/glm/README.md）
+# 换台机器行为就可能不同（见 ThirdParty/glm/README.md）
 set(DOODLE_HEADER_SEARCH_PATHS
-    ${CMAKE_SOURCE_DIR}/third_party
+    ${CMAKE_SOURCE_DIR}/ThirdParty
     /usr/local/include
     /opt/homebrew/include
     ${CMAKE_SOURCE_DIR}/Runtime
