@@ -20,26 +20,61 @@ namespace Doodle
         m_pSwapChain = &swapChain;
         m_pDepthImages = &depthImages;
 
-        //管线布局是管线的前置条件，先创建
+        //描述符集布局是管线布局的输入，后者又是图形管线的输入，三层依次创建
+        CreateDescriptorSetLayout();
         CreatePipelineLayout();
         CreateGraphicsPipeline();
     }
 
     void DoodleGraphicsPipeline::Destroy()
     {
-        //管线在创建时引用了布局，先销毁管线
+        //逆着创建序拆：管线引用布局，布局引用描述符集布局。
+        //描述符池必须已经先销毁，否则池里的集合仍然引用着描述符集布局
         DestroyGraphicsPipeline();
         DestroyPipelineLayout();
+        DestroyDescriptorSetLayout();
+    }
+
+    void DoodleGraphicsPipeline::CreateDescriptorSetLayout()
+    {
+        //binding 0 对应顶点着色器里 layout(set = 0, binding = 0) 的 UBO 块。
+        //stageFlags 只写顶点阶段：片元着色器没有读它，声明得越准确，驱动越省事
+        VkDescriptorSetLayoutBinding uboLayoutBinding{};
+        uboLayoutBinding.binding = 0;
+        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        uboLayoutBinding.descriptorCount = 1;
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        uboLayoutBinding.pImmutableSamplers = nullptr; // 只对采样器描述符有意义
+
+        VkDescriptorSetLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &uboLayoutBinding;
+
+        if (vkCreateDescriptorSetLayout(m_pDevice->GetLogicalDevice(), &layoutInfo,
+                                        nullptr, &m_descriptorSetLayout) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to create descriptor set layout!");
+        }
+    }
+
+    void DoodleGraphicsPipeline::DestroyDescriptorSetLayout()
+    {
+        if (m_descriptorSetLayout != VK_NULL_HANDLE)
+        {
+            vkDestroyDescriptorSetLayout(m_pDevice->GetLogicalDevice(), m_descriptorSetLayout, nullptr);
+            m_descriptorSetLayout = VK_NULL_HANDLE;
+        }
     }
 
     void DoodleGraphicsPipeline::CreatePipelineLayout()
     {
-        //本阶段还没有 uniform 与 push constant，先建一个空布局占位。
-        //管线必须有一个布局，哪怕它是空的
+        //先放一套描述符集布局；push constant 暂时不用，数量留 0。
+        //图形管线必须有一个管线布局，现在它开始承载真实接口，不再只是空壳
         VkPipelineLayoutCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        createInfo.setLayoutCount = 0;
-        createInfo.pSetLayouts = nullptr;
+        createInfo.setLayoutCount = 1;
+        createInfo.pSetLayouts = &m_descriptorSetLayout;
         createInfo.pushConstantRangeCount = 0;
         createInfo.pPushConstantRanges = nullptr;
 
@@ -124,9 +159,10 @@ namespace Doodle
         viewportState.viewportCount = 1;
         viewportState.scissorCount = 1;
 
-        //光栅化。frontFace 取顺时针，与 C++ 里 m_vertices 的顶点顺序（左上、右上、右下、左下）
-        //以及 m_indices 切出来的两个三角形一致 —— 顺序就是绕序。
-        //这两样都由数据决定，改它们之前先看 DoodleVulkanManager 里那两份数组
+        //光栅化。顶点数组本身仍按「左上 → 右上 → 右下 → 左下」排，
+        //但顶点着色器用 GLM 投影时做了 Y 翻转（proj[1][1] *= -1）——
+        //那一步把屏幕空间的绕序整体反了过来，所以这里的 frontFace 取逆时针。
+        //frontFace、投影约定与顶点顺序三者必须一起看；只改其中一处，画面会整片消失
         VkPipelineRasterizationStateCreateInfo rasterizer{};
         rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
         rasterizer.depthClampEnable = VK_FALSE;
@@ -134,7 +170,7 @@ namespace Doodle
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0f;
         rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rasterizer.depthBiasEnable = VK_FALSE;
 
         //多重采样：先关闭

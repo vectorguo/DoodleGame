@@ -50,6 +50,17 @@ namespace Doodle
         }
 
         /**
+         * 获取描述符集布局
+         *
+         * 门面创建描述符集时需要它。布局的所有权仍在本层：调用方只读，
+         * 不能销毁，也不应该把它缓存到生命周期更长的地方
+         */
+        [[nodiscard]] VkDescriptorSetLayout GetDescriptorSetLayout() const
+        {
+            return m_descriptorSetLayout;
+        }
+
+        /**
          * 获取图形管线Handle
          */
         [[nodiscard]] VkPipeline GetGraphicsPipeline() const
@@ -59,10 +70,26 @@ namespace Doodle
 
     private:
         /**
+         * 创建描述符集布局
+         *
+         * 它声明 binding 0 是一个只在顶点阶段可见的 uniform buffer。
+         * 必须在 CreatePipelineLayout 之前完成 —— 管线布局会引用它
+         */
+        void CreateDescriptorSetLayout();
+
+        /**
+         * 销毁描述符集布局，并把句柄置空
+         *
+         * 调用前必须确认描述符池已经销毁：集合从池里分配，池先走，
+         * 布局才能安全销毁。顺序由 DoodleVulkanManager::Destroy 保证
+         */
+        void DestroyDescriptorSetLayout();
+
+        /**
          * 创建管线布局
          *
-         * 本阶段还没有 uniform 与 push constant，布局是空的。
-         * 但管线必须有一个布局，所以仍要建一个空壳
+         * 管线布局引用描述符集布局，把 UBO 的契约接进管线。
+         * 仍在创建图形管线之前完成。
          */
         void CreatePipelineLayout();
 
@@ -99,6 +126,14 @@ namespace Doodle
          * 深度图组，在 Initialize 时绑定，取深度格式用
          */
         const DoodleDepthImages* m_pDepthImages = nullptr;
+
+        /**
+         * 描述符集布局
+         *
+         * 它是管线接口的一部分：管线布局引用它，门面用它分配描述符集。
+         * 寿命与图形管线相同，销毁顺序为：管线 → 管线布局 → 本布局
+         */
+        VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
 
         /**
          * 管线布局

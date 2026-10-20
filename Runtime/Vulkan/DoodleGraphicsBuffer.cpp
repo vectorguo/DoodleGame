@@ -6,10 +6,8 @@
 //
 
 #include "DoodleGraphicsBuffer.h"
-
 #include "DoodleCommandBuffer.h"
 
-#include <cstring>
 #include <stdexcept>
 
 namespace Doodle
@@ -69,6 +67,13 @@ namespace Doodle
 
     void DoodleGraphicsBuffer::Destroy()
     {
+        //映射是 CPU 与内存之间的临时关系，释放内存前先解除它。
+        //Destroy 自己兜住这条规则，调用方不必在每处销毁前手写 vkUnmapMemory
+        if (m_pDevice != nullptr)
+        {
+            Unmap();
+        }
+
         //两个对象都引用了逻辑设备，必须先于设备层销毁
         const auto logicalDevice = m_pDevice->GetLogicalDevice();
 
@@ -112,6 +117,15 @@ namespace Doodle
             throw std::runtime_error("upload size exceeds buffer size!");
         }
 
+        //已经持久映射时，直接写进那块映射，不再二次映射同一块内存。
+        //vkMapMemory 对同一块内存重复调用是允许的，但会多一对 map/unmap；
+        //而且那会让「谁持有映射」变得模糊，索性在这里收口
+        if (m_pMappedData != nullptr)
+        {
+            memcpy(m_pMappedData, pData, static_cast<size_t>(size));
+            return;
+        }
+
         const auto logicalDevice = m_pDevice->GetLogicalDevice();
 
         //映射的范围只取要写的那一段（0 .. size），不是整块内存
@@ -125,6 +139,46 @@ namespace Doodle
         //HOST_COHERENT 管的是「CPU 写完的东西，这块内存自己知道」—— 所以不必手动 flush。
         //而「GPU 什么时候真能读到」是另一件事，规范给了免费保证：在下一次 vkQueueSubmit
         //时完成。所以「写完 → 提交通知 GPU」这个顺序摆对就够了，中间不必插屏障
+    }
+
+    void DoodleGraphicsBuffer::Map()
+    {
+        if (m_pMappedData != nullptr)
+        {
+            throw std::runtime_error("cannot map buffer: it is already mapped!");
+        }
+
+        if (m_pDevice == nullptr || m_bufferMemory == VK_NULL_HANDLE)
+        {
+            throw std::runtime_error("cannot map buffer: it is not initialized!");
+        }
+
+        //与 Upload 一样，本类只支持 HOST_COHERENT 的路径：
+        //没有它就得在每次写完后手动 flush，项目还没有这个需要，也不该静默假装已经处理了
+        const VkMemoryPropertyFlags required = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        if ((m_memoryProperties & required) != required)
+        {
+            throw std::runtime_error("cannot map buffer: memory is not host-visible and coherent!");
+        }
+
+        const auto logicalDevice = m_pDevice->GetLogicalDevice();
+        if (vkMapMemory(logicalDevice, m_bufferMemory, 0, m_size, 0, &m_pMappedData) != VK_SUCCESS)
+        {
+            m_pMappedData = nullptr;
+            throw std::runtime_error("failed to map buffer memory!");
+        }
+    }
+
+    void DoodleGraphicsBuffer::Unmap()
+    {
+        if (m_pMappedData == nullptr)
+        {
+            return;
+        }
+
+        vkUnmapMemory(m_pDevice->GetLogicalDevice(), m_bufferMemory);
+        m_pMappedData = nullptr;
     }
 
     void DoodleGraphicsBuffer::CopyTo(const DoodleGraphicsBuffer& dstBuffer, VkDeviceSize size) const

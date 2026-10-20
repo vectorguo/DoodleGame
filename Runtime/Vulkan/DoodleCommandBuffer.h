@@ -102,7 +102,9 @@ namespace Doodle
          * @param vertexBuffer 本帧要画的顶点缓冲
          * @param indexBuffer 本帧要用的索引缓冲
          * @param indexCount 索引条数，即该缓冲里的索引个数 —— 不是顶点数。
-         *        本项目的矩形 6 个索引、4 个顶点，两个数字都对不上
+         *        本项目当前是 36 个索引、24 个顶点，两个数字都对不上
+         * @param descriptorSet 本帧要绑定的描述符集，必须与 frameIndex 同槽位。
+         *        它把该帧的 UBO 接到 binding 0；所有权在门面，本层只使用
          * @return 录好的那条命令缓冲，供调用方提交
          *
          * 把句柄交回去而不是让调用方自己再按索引取一次：录的和提交的必须是同一条，
@@ -110,10 +112,10 @@ namespace Doodle
          *
          * 交换链的图像与图像视图都按 imageIndex 现取，所以本层不随交换链重建
          *
-         * 两个缓冲都走参数、不走成员：本层使用它们，但不拥有它们。它们的寿命锚在程序上
-         * （与窗口尺寸无关，不随交换链重建），归门面持有 —— 塞成成员等于把程序级资源
-         * 挂到这条会重建的链上，凭空多出「重建时要不要跟着重建」这种本来不存在的问题。
-         * 「谁使用」和「谁拥有」是两件事
+         * 两个缓冲与描述符集都走参数、不走成员：本层使用它们，但不拥有它们。
+         * 它们的寿命锚在程序上（与窗口尺寸无关，不随交换链重建），归门面持有 ——
+         * 塞成成员等于把程序级资源挂到这条会重建的链上，凭空多出「重建时要不要
+         * 跟着重建」这种本来不存在的问题。「谁使用」和「谁拥有」是两件事
          *
          * 索引类型不在此列：本项目的索引就是 uint16_t，这个事实写死在实现里，
          * 不做成参数把一个常量串过每一层。代价是它与 m_indices 的元素类型绑在一起 ——
@@ -123,7 +125,7 @@ namespace Doodle
          */
         [[nodiscard]] VkCommandBuffer Record(const uint32_t frameIndex, const uint32_t imageIndex,
                                              VkBuffer vertexBuffer, VkBuffer indexBuffer,
-                                             const uint32_t indexCount);
+                                             const uint32_t indexCount, VkDescriptorSet descriptorSet);
 
         /**
          * 取传输命令池

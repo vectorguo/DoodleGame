@@ -33,6 +33,12 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 
+# GLM 的投影函数默认按 OpenGL 的裁剪空间生成深度（[-1, 1]），
+# Vulkan 的 NDC 深度范围是 [0, 1]。这个宏必须对所有 GLM 使用者保持一致，
+# 所以放在编译命令行上，而不是某个 .cpp 里单独 #define ——
+# 后者会让不同翻译单元看到不同的 GLM 配置，属于 ODR 问题。
+add_compile_definitions(GLM_FORCE_DEPTH_ZERO_TO_ONE)
+
 # 最低支持的 macOS 版本。只在 Mac 上生效。
 if(APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "15.5")
@@ -71,6 +77,7 @@ set(DOODLE_SHARED_SOURCES
     Runtime/Vulkan/DoodleSyncObjects.h
     Runtime/Vulkan/DoodleGraphicsBuffer.cpp
     Runtime/Vulkan/DoodleGraphicsBuffer.h
+    Runtime/Vulkan/DoodleUniformBufferObject.h
     Runtime/Vulkan/DoodleDepthImages.cpp
     Runtime/Vulkan/DoodleDepthImages.h
     Runtime/Vulkan/DoodleImage.cpp

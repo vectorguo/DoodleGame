@@ -79,8 +79,8 @@ namespace Doodle
         /**
          * 从 CPU 内存写一段数据进这块缓冲
          *
-         * 只对本进程可映射的内存有意义，所以实际只在中转缓冲上用得到 ——
-         * 设备本地的缓冲 CPU 根本碰不到，给它送数据必须借助中转 + 拷贝命令
+         * 只对本进程可映射的内存有意义，所以实际只在中转缓冲与每帧 UBO 上用得到 ——
+         * 设备本地的缓冲 CPU 根本碰不到，给它送数据必须借助中转 + 拷贝命令。
          *
          * @param pData 源数据
          * @param size 要写的字节数，不得超过创建时的 size
@@ -88,8 +88,50 @@ namespace Doodle
          * @note 内存属性里必须同时有 HOST_VISIBLE 与 HOST_COHERENT。
          * 前者是能映射的前提，后者管的是「CPU 写完的东西，这块内存自己知道」——
          * 少了它就得手动 flush，而本项目还没有需要走那条路的缓冲
+         *
+         * @note 如果这块缓冲已经通过 Map 持久映射，本函数直接写进映射指针，
+         * 不会再调用一次 vkMapMemory
          */
         void Upload(const void* pData, VkDeviceSize size);
+
+        /**
+         * 持久映射整块缓冲
+         *
+         * 映射一次、之后每一帧直接往 GetMapped 返回的指针里写。适合每帧都要更新、
+         * 尺寸又很小（一个 UBO）的缓冲；像顶点/索引那种初始化期一次性上传的数据，
+         * 不需要走这条路。
+         *
+         * @note 内存属性必须同时有 HOST_VISIBLE 与 HOST_COHERENT；
+         * 重复映射、缓冲尚未 Initialize 或已经销毁时抛 std::runtime_error
+         */
+        void Map();
+
+        /**
+         * 解除持久映射
+         *
+         * 未映射时是空操作。Destroy 会自动调用它，调用方不必手工记得这条顺序；
+         * 但如果有「先解除映射再改内存属性」之类的新语义，仍应显式调用。
+         */
+        void Unmap();
+
+        /**
+         * 取持久映射后的 CPU 指针
+         *
+         * @return 未 Map 时返回 nullptr。写入前必须确认非空；本类不替调用方
+         *         做「映射是否存在」之外的范围检查
+         */
+        [[nodiscard]] void* GetMapped()
+        {
+            return m_pMappedData;
+        }
+
+        /**
+         * 取持久映射后的只读 CPU 指针
+         */
+        [[nodiscard]] const void* GetMapped() const
+        {
+            return m_pMappedData;
+        }
 
         /**
          * 把本缓冲的内容整段拷到 dstBuffer，拷完才返回
@@ -173,9 +215,18 @@ namespace Doodle
         /**
          * 分配时要求的内存属性
          *
-         * 留一份是为了让 Upload 能当场判断这块缓冲到底能不能映射 ——
+         * 留一份是为了让 Upload / Map 能当场判断这块缓冲到底能不能映射 ——
          * 否则错误要等到 vkMapMemory 失败，或者更糟，等到校验层报 VUID
          */
         VkMemoryPropertyFlags m_memoryProperties = 0;
+
+        /**
+         * 持久映射的 CPU 指针
+         *
+         * nullptr 表示当前未映射。Map 成功后指向整块缓冲；Unmap 与 Destroy
+         * 会把它恢复为 nullptr。它不是 VkDevice 的资源，只是 vkMapMemory 的返回值，
+         * 所以不需要单独销毁，解除映射即可
+         */
+        void* m_pMappedData = nullptr;
     };
 }

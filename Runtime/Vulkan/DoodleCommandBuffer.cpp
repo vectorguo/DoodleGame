@@ -146,7 +146,8 @@ namespace Doodle
                                                 const uint32_t imageIndex,
                                                 VkBuffer vertexBuffer,
                                                 VkBuffer indexBuffer,
-                                                const uint32_t indexCount)
+                                                const uint32_t indexCount,
+                                                VkDescriptorSet descriptorSet)
     {
         //录制期间用到的句柄全部现取，本层不缓存副本，
         //这样交换链重建之后重录，拿到的就是新句柄
@@ -260,6 +261,20 @@ namespace Doodle
         //做成参数只是把一个常量串过每一层。代价是它与 m_indices 绑在一起 ——
         //将来顶点数越过 65535 换成 uint32_t 时，两处要一起改
         vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
+        //绑定描述符集。与顶点/索引缓冲不同，描述符集绑定必须说明是给图形管线用的
+        //（计算管线是另一个 bind point），而且必须用创建管线时那份管线布局来解释它。
+        //firstSet = 0 / setCount = 1：本项目的管线布局只有 set 0 一个槽位。
+        //集合里的 binding 0 指向当前帧的 UBO，着色器按 (set = 0, binding = 0) 读取
+        vkCmdBindDescriptorSets(
+            commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_pGraphicsPipeline->GetPipelineLayout(),
+            0,
+            1,
+            &descriptorSet,
+            0,
+            nullptr);
 
         //按索引绘制。参数从「画几个顶点」变成「按几个索引去取顶点」——
         //顶点数不再需要：索引指向哪个顶点就抓哪个，同一个顶点被两个三角形

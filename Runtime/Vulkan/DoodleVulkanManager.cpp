@@ -4,10 +4,15 @@
 
 #include "DoodleVulkanManager.h"
 
+#include "DoodleUniformBufferObject.h"
 #include "DoodleVulkanConfig.h"
 
+#include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <stdexcept>
+
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace Doodle
 {
@@ -29,6 +34,14 @@ namespace Doodle
         //是上面那一行建出来的。顺序反了就是拿着空池去录命令
         CreateVertexBuffer();
         CreateIndexBuffer();
+
+        //UBO 每帧更新，走 host-visible + 持久映射，不走设备本地 + 中转。
+        //描述符池/集必须排在 UBO 与图形管线之后：池要分配集合，集合要读取已经建好的
+        //图形管线 set layout，写入时又要有 UBO 句柄
+        CreateUniformBuffers();
+        CreateDescriptorPool();
+        CreateDescriptorSets();
+
         m_syncObjects.Initialize(m_device, m_swapChain);
     }
 
@@ -41,11 +54,17 @@ namespace Doodle
         //把不变量守在不变量真正起作用的地方，将来多一个调用方也不会漏掉
         vkDeviceWaitIdle(m_device.GetLogicalDevice());
 
-        //逆序销毁
+        //按「使用者先、被使用者后」销毁。
+        //
+        //命令缓冲先走，因为它录下的绘制命令可能引用描述符集；接着池走，
+        //集合随之失效；然后 UBO 才能安全销毁。图形管线持有 set layout，
+        //必须排在池之后。其余资源与这几条依赖无关，按原有逆序排列
         m_syncObjects.Destroy();
+        m_commandBuffer.Destroy();
+        DestroyDescriptorPool();
+        DestroyUniformBuffers();
         DestroyIndexBuffer();
         DestroyVertexBuffer();
-        m_commandBuffer.Destroy();
         m_graphicsPipeline.Destroy();
         m_depthImages.Destroy();
         m_swapChain.Destroy();
@@ -162,20 +181,28 @@ namespace Doodle
         //   承诺落空，栅栏停在未发出信号状态，下一轮等它就永远等不到
         vkResetFences(logicalDevice, 1, &inFlightFence);
 
+        //③' 写本帧的 UBO。位置不能更早也不能更晚：
+        //    栅栏已等过，说明 GPU 不再读本槽位上一轮的数据；
+        //    命令还没开始录，说明本帧还没有引用它。
+        //    用同一块 UBO 给两个在途帧共用，会在这两者之间形成读写竞争
+        UpdateUniformBuffer(frameIndex);
+
         //④ 录制本帧命令。命令缓冲层不缓存任何上游句柄，录制时现取，
         //   所以交换链重建之后重录拿到的自然是新句柄。
         //   它自己那条命令缓冲由它按 frameIndex 取 —— 本层交出帧索引即可，
         //   不必先取好句柄再传进去，也就没有「传错槽位」这种可能。
         //   顶点与索引缓冲反着来：它们不随交换链重建，所以由本层持有、每帧当参数递进去。
         //   命令缓冲层使用它们，但拥有它们的是这里 —— 谁使用和谁拥有是两件事。
-        //   索引数传 m_indices 的条数（6），不是 m_vertices 的条数（4）——
+        //   索引数传 m_indices 的条数（36），不是 m_vertices 的条数（24）——
         //   vkCmdDrawIndexed 要的是「按几个索引去取顶点」
+        //   描述符集同理：它归本层持有，Record 只在本帧使用它
         //
         //   返回值就是刚录好的那一条，⑤ 提交要用。提交归门面，
         //   但「本帧录在哪一条」归命令缓冲层 —— 让它顺手交回来，两边就不可能指向不同的槽位
         const auto commandBuffer = m_commandBuffer.Record(frameIndex, imageIndex,
                                                           m_vertexBuffer.GetBuffer(), m_indexBuffer.GetBuffer(),
-                                                          static_cast<uint32_t>(m_indices.size()));
+                                                          static_cast<uint32_t>(m_indices.size()),
+                                                          m_descriptorSets[frameIndex]);
 
         //⑤ 提交到图形队列
         //
@@ -358,5 +385,162 @@ namespace Doodle
     void DoodleVulkanManager::DestroyIndexBuffer()
     {
         m_indexBuffer.Destroy();
+    }
+
+    void DoodleVulkanManager::CreateUniformBuffers()
+    {
+        constexpr VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+        //每帧一块，不允许共用：在途帧的 GPU 可能还在读上一轮，
+        //host 这边却已经开始写下一轮的矩阵
+        for (auto& buffer : m_uniformBuffers)
+        {
+            //只声明 UNIFORM_BUFFER 用途，不需要 TRANSFER_DST：
+            //数据由 host 直接映射写入，不经过拷贝命令
+            buffer.Initialize(
+                m_device,
+                bufferSize,
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+            //映射一次，之后每帧只 memcpy。map/unmap 不便宜，不适合放进帧循环
+            buffer.Map();
+        }
+    }
+
+    void DoodleVulkanManager::DestroyUniformBuffers()
+    {
+        //Destroy 内部会先解除持久映射，再销毁 buffer/memory
+        for (auto& buffer : m_uniformBuffers)
+        {
+            buffer.Destroy();
+        }
+    }
+
+    void DoodleVulkanManager::UpdateUniformBuffer(const uint32_t frameIndex)
+    {
+        //steady_clock 保证单调，不会被系统时间调整影响。
+        //静态起点在第一帧初始化一次，量的是进程启动后的秒数
+        static const auto startTime = std::chrono::steady_clock::now();
+        const auto currentTime = std::chrono::steady_clock::now();
+        const float time = std::chrono::duration<float>(currentTime - startTime).count();
+
+        UniformBufferObject ubo{};
+
+        //绕世界 Z 轴旋转，每秒 90 度。正方体绕自身中心转动，
+        //六个面会依次转到相机前方
+        ubo.model = glm::rotate(
+            glm::mat4(1.0f),
+            time * glm::radians(90.0f),
+            glm::vec3(0.0f, 0.0f, 1.0f));
+
+        //相机放在 (2, 2, 2)，看向原点，以世界 Z 轴为上方向。
+        //上方向不能与视线平行，否则 lookAt 的叉乘退化
+        ubo.view = glm::lookAt(
+            glm::vec3(2.0f, 2.0f, 2.0f),
+            glm::vec3(0.0f, 0.0f, 0.0f),
+            glm::vec3(0.0f, 0.0f, 1.0f));
+
+        //每帧重新读交换链尺寸：窗口缩放后宽高比自动正确，
+        //描述符集与 UBO 对象本身都不需要重建
+        const auto extent = m_swapChain.GetImageExtent();
+        ubo.proj = glm::perspective(
+            glm::radians(45.0f),
+            static_cast<float>(extent.width) / static_cast<float>(extent.height),
+            0.1f,
+            10.0f);
+
+        //GLM 默认按 OpenGL 的裁剪空间生成投影；Vulkan 的 Y 轴方向相反。
+        //Z 轴方向已经由 CMake 里的 GLM_FORCE_DEPTH_ZERO_TO_ONE 处理，
+        //这里只剩 Y 需要翻转
+        ubo.proj[1][1] *= -1.0f;
+
+        auto* pMapped = m_uniformBuffers[frameIndex].GetMapped();
+        if (pMapped == nullptr)
+        {
+            throw std::runtime_error("uniform buffer is not mapped!");
+        }
+
+        //HOST_COHERENT 保证不需要手动 flush；下一次 vkQueueSubmit 之后再读取时，
+        //这份写入对 GPU 可见。写入位置已在调用处保证：栅栏之后、录制之前
+        std::memcpy(pMapped, &ubo, sizeof(ubo));
+    }
+
+    void DoodleVulkanManager::CreateDescriptorPool()
+    {
+        //每种描述符要多少：每在途帧一个 UBO
+        VkDescriptorPoolSize poolSize{};
+        poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+        VkDescriptorPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        //不单独释放某个集合：集合寿命与程序一致，随池一起销毁即可
+        poolInfo.flags = 0;
+        poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+
+        if (vkCreateDescriptorPool(m_device.GetLogicalDevice(), &poolInfo, nullptr,
+                                   &m_descriptorPool) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to create descriptor pool!");
+        }
+    }
+
+    void DoodleVulkanManager::DestroyDescriptorPool()
+    {
+        if (m_descriptorPool != VK_NULL_HANDLE)
+        {
+            //池销毁时，池里分配的描述符集自动失效，不需要逐个 vkFreeDescriptorSets
+            vkDestroyDescriptorPool(m_device.GetLogicalDevice(), m_descriptorPool, nullptr);
+            m_descriptorPool = VK_NULL_HANDLE;
+        }
+
+        m_descriptorSets.fill(VK_NULL_HANDLE);
+    }
+
+    void DoodleVulkanManager::CreateDescriptorSets()
+    {
+        //pSetLayouts 要求「每个集合一个布局句柄」，不会自动广播同一个布局，
+        //所以即使所有集合共用同一份布局，也要把它重复 N 次
+        const auto descriptorSetLayout = m_graphicsPipeline.GetDescriptorSetLayout();
+        std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
+
+        VkDescriptorSetAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = m_descriptorPool;
+        allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+        allocInfo.pSetLayouts = layouts.data();
+
+        m_descriptorSets.fill(VK_NULL_HANDLE);
+        if (vkAllocateDescriptorSets(m_device.GetLogicalDevice(), &allocInfo,
+                                     m_descriptorSets.data()) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to allocate descriptor sets!");
+        }
+
+        //把第 i 块 UBO 接到第 i 个集合的 binding 0。
+        //这一步是 host 侧更新，不是录制命令；集合在首次绘制前写完，之后不再改
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+        {
+            VkDescriptorBufferInfo bufferInfo{};
+            bufferInfo.buffer = m_uniformBuffers[i].GetBuffer();
+            bufferInfo.offset = 0;
+            bufferInfo.range = sizeof(UniformBufferObject);
+
+            VkWriteDescriptorSet descriptorWrite{};
+            descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrite.dstSet = m_descriptorSets[i];
+            descriptorWrite.dstBinding = 0;
+            descriptorWrite.dstArrayElement = 0;
+            descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrite.descriptorCount = 1;
+            descriptorWrite.pBufferInfo = &bufferInfo;
+            descriptorWrite.pImageInfo = nullptr;
+            descriptorWrite.pTexelBufferView = nullptr;
+
+            vkUpdateDescriptorSets(m_device.GetLogicalDevice(), 1, &descriptorWrite, 0, nullptr);
+        }
     }
 }
