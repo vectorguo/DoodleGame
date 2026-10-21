@@ -97,6 +97,11 @@ set(DOODLE_SHARED_SOURCES
     Runtime/Platform/DoodleApplication.h
     Runtime/Platform/DoodleLog.cpp
     Runtime/Platform/DoodleLog.h
+    Runtime/Core/DoodleTransform.h
+    Runtime/Core/DoodleUpdateContext.h
+    Runtime/Core/DoodleComponent.h
+    Runtime/Core/DoodleGameObject.h
+    Runtime/Core/DoodleGameObject.cpp
     Runtime/Utility/Singleton.h
 )
 
