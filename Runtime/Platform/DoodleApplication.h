@@ -6,9 +6,11 @@
 //
 #pragma once
 
+#include <chrono>
 #include <memory>
 
 #include "DoodleWindow.h"
+#include "Scene/DoodleSceneManager.h"
 #include "Vulkan/DoodleVulkanManager.h"
 
 namespace Doodle
@@ -32,12 +34,25 @@ namespace Doodle
      * 所以它的三个生命周期函数在
      * Runtime/Platform/Android/DoodleAndroidApplication.h 里另有实现。
      *
-     * 覆盖时只有一条硬要求：Vulkan 各层的起停顺序是 InitializeVulkan /
-     * DestroyVulkan 这对 helper 的事，别绕开它们自己拼。除此之外时刻表随平台定，
-     * 这正是「窗口与程序同寿」这条前提失效时唯一需要重写的东西
+     * 覆盖时有三条硬要求：Vulkan 各层的起停顺序是 InitializeVulkan /
+     * DestroyVulkan 这对 helper 的事，别绕开它们自己拼；销毁时必须先调
+     * DestroyScenes 再拆 Vulkan，组件的 OnDestroy 可能还要用到 GPU 资源；
+     * Run 进入循环前要把 m_lastFrameTime 设为当前时刻，Tick 才有起点。
+     * 除此之外时刻表随平台定，这正是「窗口与程序同寿」这条前提失效时唯一
+     * 需要重写的东西
      */
     class DoodleApplication
     {
+    protected:
+        /**
+         * 构造即登记为当前实例
+         *
+         * 登记放在这里而不是 Initialize 里：登记的时机本该是「这个对象存在了」，
+         * 而不是「这个对象开始干活了」。绑到构造函数上之后，实例的有效期
+         * 与对象的存活期是同一条线，不用再去论证「哪些调用会泵事件、
+         * 会不会赶在登记之前」——窗口是 Initialize 里才建的，比构造晚
+         */
+        DoodleApplication();
     public:
         virtual ~DoodleApplication();
 
@@ -45,7 +60,6 @@ namespace Doodle
         DoodleApplication(DoodleApplication&&) = delete;
         DoodleApplication& operator= (const DoodleApplication&) = delete;
 
-    public:
         /**
          * 当前应用实例
          *
@@ -88,15 +102,18 @@ namespace Doodle
         /**
          * 一直画到窗口关闭
          *
-         * 默认实现：泵事件 → 画一帧，循环条件只认关闭请求
+         * 默认实现：泵事件 → 推进一帧（先更新场景，再画），循环条件只认关闭请求。
+         * 进入循环前先把帧时钟的起点设为当前时刻：构造与 Initialize 的耗时
+         * 不属于任何一帧。覆盖 Run 的平台也要在循环前做同一件事
          *
          * @note 必须先调 Initialize
          */
         virtual void Run();
 
         /**
-         * 按依赖倒序销毁：先 Vulkan 后窗口
+         * 按依赖倒序销毁：先场景，再 Vulkan，最后窗口
          *
+         * 组件的 OnDestroy 可能持有 GPU 资源，场景必须赶在 Vulkan 之前拆；
          * 交换链、表面都依附于窗口，窗口先没的话，销毁它们就是拿着一个
          * 已经作废的句柄去用
          *
@@ -113,16 +130,29 @@ namespace Doodle
          */
         void NotifyWindowResized();
 
+        /**
+         * 场景管理器
+         *
+         * 应用只负责驱动，不规定场景内容：游戏层通过这里创建场景。
+         * 管理器由本对象独占，生命周期覆盖整个应用；游戏层也可以不经过
+         * 应用对象，直接调 DoodleSceneManager::GetInstance() 取同一份。
+         */
+        [[nodiscard]] DoodleSceneManager& GetSceneManager()
+        {
+            return m_sceneManager;
+        }
+
     protected:
         /**
-         * 构造即登记为当前实例
+         * 推进一帧：先按两帧间隔更新场景，再画一帧
          *
-         * 登记放在这里而不是 Initialize 里：登记的时机本该是「这个对象存在了」，
-         * 而不是「这个对象开始干活了」。绑到构造函数上之后，实例的有效期
-         * 与对象的存活期是同一条线，不用再去论证「哪些调用会泵事件、
-         * 会不会赶在登记之前」——窗口是 Initialize 里才建的，比构造晚
+         * deltaSeconds 在这里算：steady_clock 求差并钳到 0.1s，防止断点、
+         * 拖窗口或系统卡顿之后单帧过大。首帧的「上一帧」是 Run 进入循环的时刻，
+         * 同样走这条钳制，不单独判首帧。
+         *
+         * 两个平台的帧循环都调用它，保证「场景先更新、渲染后执行」只有一处。
          */
-        DoodleApplication();
+        void Tick();
 
         /**
          * 建出本平台的窗口，所有权交出来
@@ -152,6 +182,14 @@ namespace Doodle
          */
         void DestroyVulkan();
 
+        /**
+         * 销毁场景管理器里的所有场景
+         *
+         * 必须在 DestroyVulkan 之前调用：组件可能持有 GPU 资源，它们的
+         * OnDestroy 要跑在 Vulkan 各层还在的时候。
+         */
+        void DestroyScenes();
+
     protected:
         /**
          * 窗口
@@ -170,6 +208,24 @@ namespace Doodle
          * Vulkan子系统
          */
         DoodleVulkanManager m_vulkanManager;
+
+        /**
+         * 场景管理器
+         *
+         * 声明在 Vulkan 之后：成员逆序析构时场景先于 Vulkan 释放，和显式
+         * Destroy 的顺序一致。场景更新在 Tick 里、渲染之前。
+         */
+        DoodleSceneManager m_sceneManager;
+
+        /**
+         * 上一帧的时间戳；由 Run 在进入循环前取初值，Tick 每帧更新
+         *
+         * 不在构造时取：构造到进入 Run 之间还有建窗与 Vulkan 初始化，
+         * 那段时间不属于任何一帧。首帧按「进入 Run → 第一帧」求差即可，
+         * 它和 Suspend / Resume 之后的长间隔是同一类东西，都由 Tick 里的
+         * 上限钳住，所以不需要首帧标志。
+         */
+        std::chrono::steady_clock::time_point m_lastFrameTime;
 
     private:
         /**

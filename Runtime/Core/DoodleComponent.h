@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "DoodleLifecycleState.h"
 #include "DoodleUpdateContext.h"
 
 namespace Doodle
@@ -19,7 +20,7 @@ namespace Doodle
      * 生命周期回调（全部是虚函数、默认空实现）：
      *   OnAwake   只调用一次，在组件进入容器、owner 已设置之后
      *   OnEnable  在 OnAwake 之后调用（若组件处于启用状态）；之后每次 SetEnabled(true) 再触发
-     *   OnUpdate  每帧调用，仅当组件启用且没有被标记删除
+     *   OnUpdate  每帧调用，仅当组件启用且生命周期状态为 Alive
      *   OnDisable 每次 SetEnabled(false) 触发；销毁前若仍处于启用状态也补一次
      *   OnDestroy 销毁前调用一次
      *
@@ -64,22 +65,38 @@ namespace Doodle
         }
 
         /**
-         * 当前是否处于启用状态且未被标记删除
+         * 生命周期是否仍是 Alive
+         */
+        [[nodiscard]] bool IsAlive() const
+        {
+            return m_lifecycleState == ELifecycleState::Alive;
+        }
+
+        /**
+         * 当前是否处于启用状态且仍然活着
          */
         [[nodiscard]] bool IsEnabled() const
         {
-            return m_enabled && !m_pendingRemove;
+            return m_lifecycleState == ELifecycleState::Alive && m_enabled;
+        }
+
+        /**
+         * 已请求销毁，等待宿主在 sweep 里处理
+         */
+        [[nodiscard]] bool IsPendingDestroy() const
+        {
+            return m_lifecycleState == ELifecycleState::PendingDestroy;
         }
 
         /**
          * 启用 / 停用组件
          *
-         * 状态没有变化时什么都不做；已标记删除的组件不再响应。
+         * 状态没有变化时什么都不做；生命周期不是 Alive 的组件不再响应。
          * OnEnable / OnDisable 在这里同步触发。
          */
         void SetEnabled(const bool enabled)
         {
-            if (m_pendingRemove || m_enabled == enabled)
+            if (m_lifecycleState != ELifecycleState::Alive || m_enabled == enabled)
             {
                 return;
             }
@@ -110,16 +127,19 @@ namespace Doodle
         DoodleGameObject* m_pGameObject = nullptr;
 
         /**
-         * 启用状态，默认启用
+         * 生命周期状态
+         *
+         * 只有宿主（DoodleGameObject）推进它：RemoveComponent 置 PendingDestroy，
+         * 跑 OnDisable / OnDestroy 前后置 Destroying / Destroyed。
          */
-        bool m_enabled = true;
+        ELifecycleState m_lifecycleState = ELifecycleState::Alive;
 
         /**
-         * 已请求删除，等待 Update 末尾统一销毁
+         * 启用状态，可逆模式；与生命周期状态正交
          *
-         * 从置位到真正 erase 之间：不再收 OnUpdate，GetComponent 也查不到，
-         * 但对象仍然存活 —— 其它组件缓存的指针在这段时间内仍然有效。
+         * 销毁前是否要补一次 OnDisable 也由它决定：RemoveComponent 只推进
+         * 生命周期，不改这个标志。
          */
-        bool m_pendingRemove = false;
+        bool m_enabled = true;
     };
 }

@@ -42,6 +42,10 @@ namespace Doodle
 
     void DoodleAndroidApplication::Run()
     {
+        //帧时钟的起点，和基类 Run 一致：构造与 Initialize 的耗时不算进首帧。
+        //本类重写了 Run，这一行不能指望基类那份去做
+        m_lastFrameTime = std::chrono::steady_clock::now();
+
         //取回具体类型：IsRenderable 是 Android 窗口特有的，不在 DoodleWindow 接口上。
         //窗口是本类自己刚建出来的，转换安全；所有权仍在 m_pWindow 那一处，
         //这里只是借一个更具体的视角
@@ -53,11 +57,11 @@ namespace Doodle
             {
                 pWindow->PumpEvents();
 
-                //窗口不在或不在前台时什么都不做。PumpEvents 那边会阻塞等事件，
-                //所以这里不是忙等
+                // 窗口不在或不在前台时什么都不做。PumpEvents 那边会阻塞等事件，
+                // 所以这里不是忙等
                 if (pWindow->IsRenderable())
                 {
-                    m_vulkanManager.DrawFrame();
+                    Tick();
                 }
             }
         }
@@ -72,6 +76,10 @@ namespace Doodle
 
     void DoodleAndroidApplication::Destroy()
     {
+        // 场景先于 Vulkan：组件的 OnDestroy 可能持有 GPU 资源。
+        // 场景是纯 CPU 侧的，Vulkan 一次都没起来过也要正常销毁。
+        DestroyScenes();
+
         //可能一次都没起来过：窗口都没等到就退出了。那时去拆是拿着一个
         //不存在的实例去用
         if (m_initialized)
