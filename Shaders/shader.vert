@@ -9,13 +9,21 @@
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColor;
 
-// 每帧的 MVP 矩阵。set/binding 必须与 DoodleGraphicsPipeline 里的
+// 每个对象自己的模型矩阵，走 push constant。
+// 它不在 UBO 里：UBO 一帧一份、所有对象共用，装不下逐对象的数据。
+// 范围（stage = 顶点、offset = 0、size = 64）由 C++ 侧的
+// DoodleGraphicsPipeline::ModelPushConstant* 声明，两边必须一致
+layout(push_constant) uniform PushConstantObject
+{
+    mat4 model;
+} pc;
+
+// 整帧共享的相机矩阵。set/binding 必须与 DoodleGraphicsPipeline 里的
 // VkDescriptorSetLayoutBinding 以及写入时的 dstBinding 对齐。
 // std140 是 uniform block 的排布规则：C++ 侧的 UniformBufferObject
 // 用 alignas(16) 和 static_assert 保证成员偏移与这里一致
 layout(set = 0, binding = 0, std140) uniform UniformBufferObject
 {
-    mat4 model;
     mat4 view;
     mat4 proj;
 } ubo;
@@ -24,9 +32,9 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject
 layout(location = 0) out vec3 fragColor;
 
 void main() {
-    // 把位置补成齐次坐标，再依次乘 model / view / proj。
+    // 位置补成齐次坐标，再依次乘 model / view / proj。
     // 顺序不能反：矩阵从右往左作用，顶点先进入模型空间，再到观察空间，最后到裁剪空间
-    gl_Position = ubo.proj * ubo.view * ubo.model * vec4(inPosition, 1.0);
+    gl_Position = ubo.proj * ubo.view * pc.model * vec4(inPosition, 1.0);
 
     fragColor = inColor;
 }

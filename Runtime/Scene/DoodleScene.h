@@ -20,8 +20,6 @@ namespace Doodle
     //只以引用 / 指针与 unique_ptr 成员出现，析构在源文件定义，这里不需要完整类型
     class DoodleGameObject;
 
-    class DoodleSceneManager;
-
     /**
      * 场景：GameObject 的独占容器与生命周期驱动
      *
@@ -113,6 +111,26 @@ namespace Doodle
          * 返回的是非拥有视图，对象被销毁后失效。
          */
         [[nodiscard]] DoodleGameObject* FindGameObject(const std::string_view name) const;
+
+        /**
+         * 取本场景存活的 GameObject，按创建顺序
+         *
+         * 只返回 Alive 的对象：已请求销毁、正在等 sweep 回收的不在其中 ——
+         * 这与 Update 的跳过规则一致，避免「逻辑上已经没了、画面上还在」。
+         * 返回的是调用那一刻的快照，之后新建 / 销毁对象不会改变已返回的向量。
+         *
+         * 指针非拥有，寿命由本场景保证；对象被销毁后指针失效。
+         * 每帧调用的路径请用接收向量的重载，避免反复分配
+         */
+        [[nodiscard]] std::vector<DoodleGameObject*> GetGameObjects() const;
+
+        /**
+         * 取本场景存活的 GameObject，写进调用方提供的向量
+         *
+         * 先 clear 再写入，传进来的是跨帧复用的缓冲时，结果恰好是本帧的
+         * 存活对象；其余语义与返回值重载相同
+         */
+        void GetGameObjects(std::vector<DoodleGameObject*>& gameObjects) const;
 
         /**
          * 场景名

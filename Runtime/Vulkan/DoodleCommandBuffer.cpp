@@ -7,6 +7,7 @@
 #include "DoodleCommandBuffer.h"
 #include "DoodleDepthImages.h"
 #include "DoodleGraphicsPipeline.h"
+#include "DoodleMesh.h"
 #include "DoodleSwapChain.h"
 #include "DoodleVulkanConfig.h"
 #include "DoodleVulkanDevice.h"
@@ -148,9 +149,7 @@ namespace Doodle
 
     VkCommandBuffer DoodleCommandBuffer::Record(const uint32_t frameIndex,
                                                 const uint32_t imageIndex,
-                                                VkBuffer vertexBuffer,
-                                                VkBuffer indexBuffer,
-                                                const uint32_t indexCount,
+                                                const std::vector<DoodleDrawItem>& drawItems,
                                                 VkDescriptorSet descriptorSet)
     {
         //录制期间用到的句柄全部现取，本层不缓存副本，
@@ -245,31 +244,14 @@ namespace Doodle
         scissor.extent = imageExtent;
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-        //绑定顶点缓冲。这里的 binding 编号 0 指回管线顶点输入描述里的 binding = 0 ——
-        //所以它必须在 vkCmdBindPipeline 之后：管线还没绑定时，这个编号无从对应。
-        //绑定是录制状态，对之后录进来的每一次绘制都生效
-        const VkBuffer vertexBuffers[] = {vertexBuffer};
-        const VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
-
-        //绑定索引缓冲。与上面那行有三处不一样：
-        //
-        //① 没有 binding 编号。索引缓冲全场只有一个槽位，不像顶点缓冲能同时绑好几条
-        //   数据流按编号取用 —— 所以这个函数收的是单个句柄，不是数组
-        //② 要多给一个索引类型。VkBuffer 只是一段字节，它自己不知道里面装的是 16 位
-        //   还是 32 位的索引，这个信息没有别处能推出来，只能在这里说
-        //③ 这里那个 0 是缓冲内的**字节偏移**，不是索引下标。要让绘制从第几个索引
-        //   开始，那是下面 firstIndex 的事，两者别混
-        //
-        //索引类型写死成 UINT16 而不做成参数：本项目的索引数组就是 uint16_t，
-        //做成参数只是把一个常量串过每一层。代价是它与 DoodleMesh 的 uint16_t 索引绑在一起 ——
-        //将来顶点数越过 65535 换成 uint32_t 时，两处要一起改
-        vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-
         //绑定描述符集。与顶点/索引缓冲不同，描述符集绑定必须说明是给图形管线用的
         //（计算管线是另一个 bind point），而且必须用创建管线时那份管线布局来解释它。
         //firstSet = 0 / setCount = 1：本项目的管线布局只有 set 0 一个槽位。
-        //集合里的 binding 0 指向当前帧的 UBO，着色器按 (set = 0, binding = 0) 读取
+        //集合里的 binding 0 指向当前帧的 UBO（view / proj），着色器按
+        //(set = 0, binding = 0) 读取
+        //
+        //整帧只绑一次：组里所有对象共用同一份相机数据，没有「每个对象一个集合」
+        //这种话。将来加材质纹理时，材质属于自己的描述符集，那才会在循环里重绑
         vkCmdBindDescriptorSets(
             commandBuffer,
             VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -280,14 +262,59 @@ namespace Doodle
             0,
             nullptr);
 
-        //按索引绘制。参数从「画几个顶点」变成「按几个索引去取顶点」——
-        //顶点数不再需要：索引指向哪个顶点就抓哪个，同一个顶点被两个三角形
-        //共用时也只抓一次
-        //
-        //后三个参数依次是 firstIndex / vertexOffset / firstInstance，这里全 0。
-        //它们正是「一块大缓冲里塞很多 mesh」那条路的入口：每个 mesh 各带一组
-        //非零值，就不必为它单独建缓冲
-        vkCmdDrawIndexed(commandBuffer, indexCount, 1, 0, 0, 0);
+        //逐个对象录绘制。循环里只做随对象变化的三件事：
+        //推 model、绑该对象的顶点 / 索引缓冲、发一次索引绘制
+        for (const DoodleDrawItem& drawItem : drawItems)
+        {
+            //model 每个对象一份，走 push constant。
+            //stage 与大小引用管线布局那边的同一组常量：范围是那边声明的，
+            //这里只是照着填数据。两边各写一个字面量 64 的话，改一处就会
+            //出现「范围 64、推了 128」这种只在绘制时报的错
+            //
+            //push 的是这条命令缓冲的当前值，下一条 push 直接覆盖 ——
+            //不需要每对象一块 UBO，也不需要等 GPU 用完上一份
+            vkCmdPushConstants(
+                commandBuffer,
+                m_pGraphicsPipeline->GetPipelineLayout(),
+                DoodleGraphicsPipeline::ModelPushConstantStage,
+                0,
+                DoodleGraphicsPipeline::ModelPushConstantSize,
+                &drawItem.model);
+
+            //网格给出的是顶点 / 索引缓冲句柄与索引条数。
+            //本函数不认识网格是什么，只把它们录进命令里
+            const DoodleMesh& mesh = *drawItem.pMesh;
+
+            //绑定顶点缓冲。这里的 binding 编号 0 指回管线顶点输入描述里的 binding = 0 ——
+            //所以它必须在 vkCmdBindPipeline 之后：管线还没绑定时，这个编号无从对应。
+            //绑定是录制状态，对之后录进来的每一次绘制都生效，所以每个对象各绑一次
+            const VkBuffer vertexBuffers[] = {mesh.GetVertexBuffer()};
+            const VkDeviceSize offsets[] = {0};
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
+            //绑定索引缓冲。与上面那行有三处不一样：
+            //
+            //① 没有 binding 编号。索引缓冲全场只有一个槽位，不像顶点缓冲能同时绑好几条
+            //   数据流按编号取用 —— 所以这个函数收的是单个句柄，不是数组
+            //② 要多给一个索引类型。VkBuffer 只是一段字节，它自己不知道里面装的是 16 位
+            //   还是 32 位的索引，这个信息没有别处能推出来，只能在这里说
+            //③ 这里那个 0 是缓冲内的**字节偏移**，不是索引下标。要让绘制从第几个索引
+            //   开始，那是下面 firstIndex 的事，两者别混
+            //
+            //索引类型写死成 UINT16 而不做成参数：本项目的索引数组就是 uint16_t，
+            //做成参数只是把一个常量串过每一层。代价是它与 DoodleMesh 的 uint16_t 索引绑在一起 ——
+            //将来顶点数越过 65535 换成 uint32_t 时，两处要一起改
+            vkCmdBindIndexBuffer(commandBuffer, mesh.GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT16);
+
+            //按索引绘制。参数从「画几个顶点」变成「按几个索引去取顶点」——
+            //顶点数不再需要：索引指向哪个顶点就抓哪个，同一个顶点被两个三角形
+            //共用时也只抓一次
+            //
+            //后三个参数依次是 firstIndex / vertexOffset / firstInstance，这里全 0。
+            //它们正是「一块大缓冲里塞很多 mesh」那条路的入口：每个 mesh 各带一组
+            //非零值，就不必为它单独建缓冲
+            vkCmdDrawIndexed(commandBuffer, mesh.GetIndexCount(), 1, 0, 0, 0);
+        }
 
         //结束渲染
         vkCmdEndRendering(commandBuffer);

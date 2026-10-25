@@ -123,6 +123,25 @@ namespace Doodle
         [[nodiscard]] DoodleScene* FindScene(const std::string_view name) const;
 
         /**
+         * 取管理器下的所有存活场景，按创建顺序
+         *
+         * 只返回 Alive 的场景；已请求销毁、等待 sweep 的不在其中。active
+         * 不在过滤条件里 —— 它只影响 Update，是否绘制由收集侧决定。
+         * 返回的是调用那一刻的快照，之后增删场景不影响已返回的向量。
+         *
+         * 指针非拥有，寿命由管理器保证。
+         * 每帧调用的路径请用接收向量的重载，避免反复分配
+         */
+        [[nodiscard]] std::vector<DoodleScene*> GetScenes() const;
+
+        /**
+         * 取所有存活场景，写进调用方提供的向量
+         *
+         * 先 clear 再写入；其余语义与返回值重载相同
+         */
+        void GetScenes(std::vector<DoodleScene*>& scenes) const;
+
+        /**
          * 生命周期是否仍是 Alive
          */
         [[nodiscard]] bool IsAlive() const

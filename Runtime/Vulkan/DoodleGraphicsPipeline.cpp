@@ -72,14 +72,26 @@ namespace Doodle
 
     void DoodleGraphicsPipeline::CreatePipelineLayout()
     {
-        //先放一套描述符集布局；push constant 暂时不用，数量留 0。
-        //图形管线必须有一个管线布局，现在它开始承载真实接口，不再只是空壳
+        //描述符集布局负责整帧共享的相机数据（view / proj）；
+        //每个对象自己的 model 矩阵走 push constant。
+        //
+        //范围只声明一次、offset 从 0 起：数据每帧按对象换，但接口不换，
+        //所以管线布局建一次就够，不需要为不同对象建不同的布局。
+        //
+        //stageFlags 只写顶点阶段：片元着色器没有读它。范围大小与阶段对不上
+        //录制侧那次 push，校验层会当场报错，而不是画错位置
+        const VkPushConstantRange modelPushConstantRange{
+            .stageFlags = ModelPushConstantStage,
+            .offset = 0,
+            .size = ModelPushConstantSize
+        };
+
         VkPipelineLayoutCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         createInfo.setLayoutCount = 1;
         createInfo.pSetLayouts = &m_descriptorSetLayout;
-        createInfo.pushConstantRangeCount = 0;
-        createInfo.pPushConstantRanges = nullptr;
+        createInfo.pushConstantRangeCount = 1;
+        createInfo.pPushConstantRanges = &modelPushConstantRange;
 
         const auto result = vkCreatePipelineLayout(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_pipelineLayout);
         if (result != VK_SUCCESS)

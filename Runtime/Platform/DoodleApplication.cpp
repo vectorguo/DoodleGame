@@ -8,6 +8,11 @@
 #include "DoodleApplication.h"
 #include "DoodleWindow.h"
 
+#include "Core/DoodleGameObject.h"
+#include "Rendering/DoodleMeshRenderer.h"
+#include "Scene/DoodleScene.h"
+#include "Vulkan/DoodleMeshLibrary.h"
+
 #include <algorithm>
 #include <chrono>
 #include <stdexcept>
@@ -95,15 +100,65 @@ namespace Doodle
 
         m_lastFrameTime = now;
 
-        // 先更新场景再画：渲染读到的是本帧最新的 Transform。
+        // 先更新场景，再收集本帧要画的东西，最后画：渲染读到的是本帧最新的
+        // Transform，而收集夹在两者之间，拿到的是 Update 之后的一致快照
         m_sceneManager.Update(DoodleUpdateContext{deltaSeconds});
-        m_vulkanManager.DrawFrame();
+        CollectDrawItems();
+        m_vulkanManager.DrawFrame(m_reusableDrawItems);
+    }
+
+    void DoodleApplication::CollectDrawItems()
+    {
+        m_reusableDrawItems.clear();
+
+        m_sceneManager.GetScenes(m_reusableScenes);
+        for (const DoodleScene* pScene : m_reusableScenes)
+        {
+            pScene->GetGameObjects(m_reusableGameObjects);
+            for (const DoodleGameObject* pGameObject : m_reusableGameObjects)
+            {
+                // 一个对象只取第一个渲染器：GetComponent 的现有语义。
+                // 需要同一对象画多份网格时，再扩展成遍历全部组件
+                const auto* pRenderer = pGameObject->GetComponent<DoodleMeshRenderer>();
+                if (pRenderer != nullptr && pRenderer->IsEnabled())
+                {
+                    const DoodleMesh* pMesh = pRenderer->GetMesh();
+                    if (pMesh != nullptr)
+                    {
+                        m_reusableDrawItems.push_back(
+                     {
+                            .pMesh = pMesh,
+                            .model = pGameObject->GetTransform().GetMatrix()
+                        });
+                    }
+                }
+            }
+        }
     }
 
     void DoodleApplication::InitializeVulkan()
     {
         //传给 Vulkan 各层的是引用：它们只借不放，窗口的持有者仍在本类
         m_vulkanManager.Initialize(*m_pWindow);
+
+        // ---- 第 3 步的临时内容，第 4 步由场景文件加载替换 ----
+        //
+        // 手工建一个场景与对象，验证「MeshRenderer + Transform → 每帧收集 →
+        // DrawFrame」这条路径。位置放在这里，是因为 macOS 的 Initialize 与
+        // Android 首次 APP_CMD_INIT_WINDOW 都经过 InitializeVulkan，此刻
+        // 网格库已经初始化完成；第 4 步的加载器也接在同一个点
+        DoodleScene& scene = m_sceneManager.CreateScene("Demo");
+        DoodleGameObject& cube = scene.CreateGameObject("Cube");
+
+        const DoodleMesh* const pCubeMesh =
+            m_vulkanManager.GetMeshLibrary().Find(DoodleMeshLibrary::BuiltinCubeName);
+        if (pCubeMesh == nullptr)
+        {
+            throw std::runtime_error("builtin cube mesh is missing from the mesh library!");
+        }
+
+        DoodleMeshRenderer& meshRenderer = cube.AddComponent<DoodleMeshRenderer>();
+        meshRenderer.SetMesh(pCubeMesh);
     }
 
     void DoodleApplication::DestroyVulkan()

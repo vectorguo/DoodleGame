@@ -131,6 +131,28 @@ namespace Doodle
         return nullptr;
     }
 
+    std::vector<DoodleGameObject*> DoodleScene::GetGameObjects() const
+    {
+        std::vector<DoodleGameObject*> gameObjects;
+        GetGameObjects(gameObjects);
+        return gameObjects;
+    }
+
+    void DoodleScene::GetGameObjects(std::vector<DoodleGameObject*>& gameObjects) const
+    {
+        // 先清空：调用方复用的是同一块缓冲，结果应是本帧的完整快照，
+        // 而不是和上一帧叠在一起
+        gameObjects.clear();
+
+        for (const auto& pGameObject : m_gameObjects)
+        {
+            if (pGameObject->IsAlive())
+            {
+                gameObjects.push_back(pGameObject.get());
+            }
+        }
+    }
+
     void DoodleScene::DestroyReally()
     {
         if (m_lifecycleState == ELifecycleState::Destroying ||

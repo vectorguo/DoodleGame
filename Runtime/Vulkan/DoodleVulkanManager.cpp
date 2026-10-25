@@ -5,9 +5,9 @@
 #include "DoodleVulkanManager.h"
 
 #include "../Platform/DoodleWindow.h"
+#include "DoodleDrawItem.h"
 #include "DoodleUniformBufferObject.h"
 
-#include <chrono>
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
@@ -42,7 +42,7 @@ namespace Doodle
         //网格库排在最后：上传只依赖设备与命令缓冲层的传输池（上面已建好），
         //不与 UBO、描述符集、同步对象打交道，先建后建都一样。
         //硬约束只有两条：在命令缓冲层之后（否则传输池还是空的）、首帧 Record 之前
-        //（DrawFrame 会把内建正方体的顶点/索引缓冲绑上去，空句柄校验层当场报错）
+        //（Record 会绑定 draw item 里的网格缓冲，空句柄校验层当场报错）
         m_meshLibrary.Initialize(m_device);
     }
 
@@ -111,7 +111,7 @@ namespace Doodle
         RecreateSwapChain();
     }
 
-    void DoodleVulkanManager::DrawFrame()
+    void DoodleVulkanManager::DrawFrame(const std::vector<DoodleDrawItem>& drawItems)
     {
         //表面已被 Suspend 拆掉，没有可呈现的目标。
         //驱动层本就不该在这时调进来，但这个检查比崩溃便宜得多 ——
@@ -195,27 +195,15 @@ namespace Doodle
         //   所以交换链重建之后重录拿到的自然是新句柄。
         //   它自己那条命令缓冲由它按 frameIndex 取 —— 本层交出帧索引即可，
         //   不必先取好句柄再传进去，也就没有「传错槽位」这种可能。
-        //   顶点与索引缓冲不随交换链重建，归网格库持有、寿命锚在设备上；
-        //   本层只是每帧把内建正方体那组句柄递进去 —— 谁使用、谁拥有是两件事。
-        //   索引数取网格的 GetIndexCount()（36），不是顶点数（24）——
-        //   vkCmdDrawIndexed 要的是「按几个索引去取顶点」
         //   描述符集同理：它归本层持有，Record 只在本帧使用它
         //
         //   返回值就是刚录好的那一条，⑤ 提交要用。提交归门面，
         //   但「本帧录在哪一条」归命令缓冲层 —— 让它顺手交回来，两边就不可能指向不同的槽位
         //
-        //   本步骤的临时做法：固定画库里那颗内建正方体。把绘制对象搬到场景端
-        //   之后，这里会换成一组 draw item
-        const DoodleMesh* const pMesh = m_meshLibrary.Find(DoodleMeshLibrary::BuiltinCubeName);
-        if (pMesh == nullptr)
-        {
-            throw std::runtime_error("builtin cube mesh is missing from the mesh library!");
-        }
-
+        //   绘制项由调用方（应用层）从场景里收集好交进来，本层不关心它们
+        //   从哪来。空列表也会录一条只做布局转换、不画东西的命令缓冲
         const auto commandBuffer = m_commandBuffer.Record(frameIndex, imageIndex,
-                                                          pMesh->GetVertexBuffer(),
-                                                          pMesh->GetIndexBuffer(),
-                                                          pMesh->GetIndexCount(),
+                                                          drawItems,
                                                           m_descriptorSets[frameIndex]);
 
         //⑤ 提交到图形队列
@@ -370,20 +358,7 @@ namespace Doodle
 
     void DoodleVulkanManager::UpdateUniformBuffer(const uint32_t frameIndex)
     {
-        //steady_clock 保证单调，不会被系统时间调整影响。
-        //静态起点在第一帧初始化一次，量的是进程启动后的秒数
-        static const auto startTime = std::chrono::steady_clock::now();
-        const auto currentTime = std::chrono::steady_clock::now();
-        const float time = std::chrono::duration<float>(currentTime - startTime).count();
-
         UniformBufferObject ubo{};
-
-        //绕世界 Z 轴旋转，每秒 90 度。正方体绕自身中心转动，
-        //六个面会依次转到相机前方
-        ubo.model = glm::rotate(
-            glm::mat4(1.0f),
-            time * glm::radians(90.0f),
-            glm::vec3(0.0f, 0.0f, 1.0f));
 
         //相机放在 (2, 2, 2)，看向原点，以世界 Z 轴为上方向。
         //上方向不能与视线平行，否则 lookAt 的叉乘退化
@@ -409,6 +384,9 @@ namespace Doodle
         //HOST_COHERENT 保证不需要手动 flush；下一次 vkQueueSubmit 之后再读取时，
         //这份写入对 GPU 可见。写入位置已在调用处保证：栅栏之后、录制之前。
         //第一次调用会在缓冲内部建立持久映射，之后每帧只是一次 memcpy
+        //
+        //这里只有相机数据。每个对象的 model 走 push constant，
+        //由 DoodleCommandBuffer::Record 在逐个 draw item 时推进命令缓冲
         m_uniformBuffers[frameIndex].Write(&ubo, sizeof(ubo));
     }
 
@@ -460,8 +438,7 @@ namespace Doodle
         allocInfo.pSetLayouts = layouts.data();
 
         m_descriptorSets.fill(VK_NULL_HANDLE);
-        if (vkAllocateDescriptorSets(m_device.GetLogicalDevice(), &allocInfo,
-                                     m_descriptorSets.data()) != VK_SUCCESS)
+        if (vkAllocateDescriptorSets(m_device.GetLogicalDevice(), &allocInfo, m_descriptorSets.data()) != VK_SUCCESS)
         {
             throw std::runtime_error("failed to allocate descriptor sets!");
         }

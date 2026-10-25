@@ -4,6 +4,9 @@
 
 #pragma once
 
+#include <cstdint>
+
+#include <glm/glm.hpp>
 #include <vulkan/vulkan_core.h>
 
 namespace Doodle
@@ -69,6 +72,19 @@ namespace Doodle
             return m_graphicsPipeline;
         }
 
+        /**
+         * 每个 draw item 的 model 矩阵走 push constant
+         *
+         * 这是管线布局与录制命令两侧共同的契约：填充范围时用这一组值，
+         * vkCmdPushConstants 的 stage 与大小也必须与它一致，对不上校验层会报。
+         * 写在一个地方，两边就没有「各改各的」这种可能
+         *
+         * 大小取 sizeof(glm::mat4) 而不是字面量 64：这个数字是从着色器里的
+         * mat4 推出来的，改类型时自动跟上
+         */
+        static constexpr VkShaderStageFlags ModelPushConstantStage = VK_SHADER_STAGE_VERTEX_BIT;
+        static constexpr uint32_t ModelPushConstantSize = sizeof(glm::mat4);
+
     private:
         /**
          * 创建描述符集布局
@@ -89,7 +105,8 @@ namespace Doodle
         /**
          * 创建管线布局
          *
-         * 管线布局引用描述符集布局，把 UBO 的契约接进管线。
+         * 管线布局引用描述符集布局（整帧共享的 view / proj），并声明
+         * 每个 draw item 的 model push constant 范围 —— 两条契约都在这里接进管线。
          * 仍在创建图形管线之前完成。
          */
         void CreatePipelineLayout();

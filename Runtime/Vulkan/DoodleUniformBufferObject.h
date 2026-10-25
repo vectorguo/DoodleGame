@@ -14,20 +14,24 @@
 namespace Doodle
 {
     /**
-     * 每帧送进顶点着色器的变换数据
+     * 每帧送进顶点着色器的相机变换
      *
      * 布局必须与 Shaders/shader.vert 里的 uniform block 逐成员对应：
      *
-     *     layout(set = 0, binding = 0) uniform UniformBufferObject
+     *     layout(set = 0, binding = 0, std140) uniform UniformBufferObject
      *     {
-     *         mat4 model;
      *         mat4 view;
      *         mat4 proj;
      *     } ubo;
      *
-     * 三个 mat4 都是 64 字节、按 16 字节对齐，所以偏移是 0 / 64 / 128，
-     * 总长 192。末尾的 static_assert 把这条契约钉在编译期：改结构体顺序、加字段，
+     * 两个 mat4 都是 64 字节、按 16 字节对齐，所以偏移是 0 / 64，总长 128。
+     * 末尾的 static_assert 把这条契约钉在编译期：改结构体顺序、加字段，
      * 或者哪天有人引入会改变 glm 类型布局的宏，构建都会当场失败。
+     *
+     * model 不在这里：它每个对象都不一样，装在 UBO 里就得每个对象一块缓冲、
+     * 或者每帧按对象重写同一块缓冲。它走 push constant
+     * （见 DoodleGraphicsPipeline 的 ModelPushConstant* 与 DoodleDrawItem），
+     * UBO 只装整帧共享的相机数据 —— 一次写入，本帧所有对象共用
      *
      * 为什么显式写 alignas：
      * - uniform block 按 std140 排布，mat4 必须落在 16 字节边界上；
@@ -41,17 +45,14 @@ namespace Doodle
      */
     struct alignas(16) UniformBufferObject
     {
-        alignas(16) glm::mat4 model;
         alignas(16) glm::mat4 view;
         alignas(16) glm::mat4 proj;
     };
 
-    static_assert(offsetof(UniformBufferObject, model) == 0,
-                  "UniformBufferObject 布局变了：model 必须从偏移 0 开始");
-    static_assert(offsetof(UniformBufferObject, view) == 64,
-                  "UniformBufferObject 布局变了：view 必须从偏移 64 开始");
-    static_assert(offsetof(UniformBufferObject, proj) == 128,
-                  "UniformBufferObject 布局变了：proj 必须从偏移 128 开始");
-    static_assert(sizeof(UniformBufferObject) == 192,
-                  "UniformBufferObject 必须保持 192 字节，与着色器的 std140 布局一致");
+    static_assert(offsetof(UniformBufferObject, view) == 0,
+                  "UniformBufferObject 布局变了：view 必须从偏移 0 开始");
+    static_assert(offsetof(UniformBufferObject, proj) == 64,
+                  "UniformBufferObject 布局变了：proj 必须从偏移 64 开始");
+    static_assert(sizeof(UniformBufferObject) == 128,
+                  "UniformBufferObject 必须保持 128 字节，与着色器的 std140 布局一致");
 }

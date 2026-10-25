@@ -5,8 +5,10 @@
 #pragma once
 
 #include <array>
+#include <vector>
 
 #include "DoodleCommandBuffer.h"
+#include "DoodleDrawItem.h"
 #include "DoodleDepthImages.h"
 #include "DoodleGraphicsBuffer.h"
 #include "DoodleGraphicsPipeline.h"
@@ -70,6 +72,16 @@ namespace Doodle
          * 复位栅栏并写入本帧 UBO、录制命令缓冲、提交、呈现。顺序不能调换，
          * 每一步都在为下一步准备前提条件
          *
+         * 绘制项由调用方每帧收集后传入。本门面不认识场景与 GameObject，
+         * 只负责把这一组数据录进命令缓冲；空列表合法，表示本帧只清屏 ——
+         * 场景为空、对象全被隐藏时都会走到这里，不是错误。
+         *
+         * 只读引用而不是 span：当前唯一调用方传的就是 vector，换成视图
+         * 类型没有收益。等出现第二种容器 / 只取一段子区间时再泛化
+         *
+         * drawItems 只在本次调用期间使用：命令在这一步同步录完，返回后
+         * 调用方即可清空或复用容器。网格指针与矩阵本身都不归本层所有
+         *
          * 交换链与窗口不再匹配时（缩放窗口等），本函数内部完成重建：
          * acquire 返回 out-of-date 就立刻重建并放弃本帧；呈现返回 out-of-date /
          * suboptimal，或收到过 resize 通知，则在呈现之后重建。
@@ -83,7 +95,7 @@ namespace Doodle
          *
          * @note 里面的 Vulkan 调用大多是异步的，返回不代表 GPU 已完成
          */
-        void DrawFrame();
+        void DrawFrame(const std::vector<DoodleDrawItem>& drawItems);
 
         /**
          * 通知窗口尺寸发生了变化，下一帧需要重建交换链
@@ -227,10 +239,13 @@ namespace Doodle
         void DestroyUniformBuffers();
 
         /**
-         * 把本帧的 MVP 矩阵写进第 frameIndex 块 uniform 缓冲
+         * 把本帧的 view / proj 矩阵写进第 frameIndex 块 uniform 缓冲
          *
          * 调用位置在等完本槽位栅栏之后、录制命令之前：此时 GPU 不会再读写
          * 这块缓冲的上一轮内容，而本帧命令还没开始引用它
+         *
+         * 这里不写 model：它每个对象都不一样，改由 Record 逐个 draw item
+         * 推进 push constant。本块缓冲只装整帧共享的相机数据
          *
          * @param frameIndex 在途帧索引，与描述符集、命令缓冲使用同一个索引
          */

@@ -81,6 +81,7 @@ set(DOODLE_SHARED_SOURCES
     Runtime/Vulkan/DoodleMesh.h
     Runtime/Vulkan/DoodleMeshLibrary.cpp
     Runtime/Vulkan/DoodleMeshLibrary.h
+    Runtime/Vulkan/DoodleDrawItem.h
     Runtime/Vulkan/DoodleUniformBufferObject.h
     Runtime/Vulkan/DoodleDepthImages.cpp
     Runtime/Vulkan/DoodleDepthImages.h
@@ -111,6 +112,7 @@ set(DOODLE_SHARED_SOURCES
     Runtime/Scene/DoodleScene.cpp
     Runtime/Scene/DoodleSceneManager.h
     Runtime/Scene/DoodleSceneManager.cpp
+    Runtime/Rendering/DoodleMeshRenderer.h
     Runtime/Utility/Singleton.h
 )
 

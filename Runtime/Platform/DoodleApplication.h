@@ -8,14 +8,20 @@
 
 #include <chrono>
 #include <memory>
+#include <vector>
 
 #include "Scene/DoodleSceneManager.h"
+#include "Vulkan/DoodleDrawItem.h"
 #include "Vulkan/DoodleVulkanManager.h"
 
 namespace Doodle
 {
     //只以 unique_ptr 成员与工厂返回类型出现，析构在源文件定义，这里不需要完整类型
     class DoodleWindow;
+
+    //只作为遍历结果的元素出现，完整定义留给源文件
+    class DoodleGameObject;
+    class DoodleScene;
 
     /**
      * 应用对象：驱动帧循环、按顺序起停 Vulkan 子系统
@@ -192,6 +198,21 @@ namespace Doodle
          */
         void DestroyScenes();
 
+    private:
+        /**
+         * 收集本帧要画的绘制项
+         *
+         * 遍历所有存活场景的存活对象，取每个对象的第一个 MeshRenderer：
+         * 组件停用、网格为空的对象跳过。model 取收集那一刻 Transform 的矩阵，
+         * 所以本函数必须排在场景 Update 之后、DrawFrame 之前。
+         *
+         * 结果写进 m_reusableDrawItems；三个容器都是跨帧重复使用的，
+         * 稳态下不再分配。
+         * 绘制顺序就是遍历顺序：场景创建顺序 → 对象创建顺序 → 组件添加顺序。
+         * 当前没有透明对象，不按深度排序，前后关系由深度测试负责
+         */
+        void CollectDrawItems();
+
     protected:
         /**
          * 窗口
@@ -228,6 +249,17 @@ namespace Doodle
          * 上限钳住，所以不需要首帧标志。
          */
         std::chrono::steady_clock::time_point m_lastFrameTime;
+
+        /**
+         * 每帧收集绘制项时重复使用的暂存容器
+         *
+         * 三个都不拥有任何东西：场景与对象的指针只是遍历结果，绘制项里的
+         * 网格指针归 MeshLibrary。每帧 clear 后重新填入，容量保留，
+         * 稳态下不再分配。绘制项只在本次 Tick 内使用，DrawFrame 录完命令即可丢弃
+         */
+        std::vector<DoodleScene*> m_reusableScenes;
+        std::vector<DoodleGameObject*> m_reusableGameObjects;
+        std::vector<DoodleDrawItem> m_reusableDrawItems;
 
     private:
         /**

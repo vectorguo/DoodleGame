@@ -129,6 +129,27 @@ namespace Doodle
         return nullptr;
     }
 
+    std::vector<DoodleScene*> DoodleSceneManager::GetScenes() const
+    {
+        std::vector<DoodleScene*> scenes;
+        GetScenes(scenes);
+        return scenes;
+    }
+
+    void DoodleSceneManager::GetScenes(std::vector<DoodleScene*>& scenes) const
+    {
+        // 先清空：调用方复用的是同一块缓冲，结果应是本帧的完整快照
+        scenes.clear();
+
+        for (const auto& pScene : m_scenes)
+        {
+            if (pScene->IsAlive())
+            {
+                scenes.push_back(pScene.get());
+            }
+        }
+    }
+
     void DoodleSceneManager::DestroyReally()
     {
         if (m_lifecycleState == ELifecycleState::Destroying ||

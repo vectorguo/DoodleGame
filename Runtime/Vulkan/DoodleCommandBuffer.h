@@ -7,6 +7,8 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
+#include "DoodleDrawItem.h"
+
 namespace Doodle
 {
     //四者只在接口签名与成员指针里出现，完整定义留给源文件
@@ -100,12 +102,12 @@ namespace Doodle
          * @param frameIndex 本帧用哪一条命令缓冲。由本层按它自己取 ——
          *        调用方交出帧索引即可，不必先取好句柄再传进来
          * @param imageIndex 当前交换链图像的索引，来自vkAcquireNextImageKHR
-         * @param vertexBuffer 本帧要画的顶点缓冲
-         * @param indexBuffer 本帧要用的索引缓冲
-         * @param indexCount 索引条数，即该缓冲里的索引个数 —— 不是顶点数。
-         *        本项目当前是 36 个索引、24 个顶点，两个数字都对不上
+         * @param drawItems 本帧要画的一组对象。每个元素给出网格与模型矩阵；
+         *        空表示本帧只清屏不画东西 —— 那是合法状态，不是错误。
+         *        用 const vector& 而不是 span：当前唯一调用方传的就是 vector，
+         *        视图类型没有实际收益；出现第二种容器 / 子区间时再泛化
          * @param descriptorSet 本帧要绑定的描述符集，必须与 frameIndex 同槽位。
-         *        它把该帧的 UBO 接到 binding 0；所有权在门面，本层只使用
+         *        它把该帧的 UBO（view / proj）接到 binding 0；所有权在门面，本层只使用
          * @return 录好的那条命令缓冲，供调用方提交
          *
          * 把句柄交回去而不是让调用方自己再按索引取一次：录的和提交的必须是同一条，
@@ -113,10 +115,18 @@ namespace Doodle
          *
          * 交换链的图像与图像视图都按 imageIndex 现取，所以本层不随交换链重建
          *
-         * 两个缓冲与描述符集都走参数、不走成员：本层使用它们，但不拥有它们。
-         * 它们的寿命锚在程序上（与窗口尺寸无关，不随交换链重建），归门面持有 ——
-         * 塞成成员等于把程序级资源挂到这条会重建的链上，凭空多出「重建时要不要
-         * 跟着重建」这种本来不存在的问题。「谁使用」和「谁拥有」是两件事
+         * 这组对象与描述符集都走参数、不走成员：本层使用它们，但不拥有它们。
+         * 绘制项每帧由应用层从场景收集后交进来，描述符集的寿命锚在程序上。
+         * 塞成成员等于把「每帧都会变的东西」和「只认程序生命周期的东西」混在一起，
+         * 凭空多出「重建时要不要跟着换」这种问题。「谁使用」和「谁拥有」是两件事
+         *
+         * 组里每个对象共用同一条管线、同一份视口、同一个描述符集；
+         * 随对象变化的只有 model（push constant）、顶点 / 索引缓冲和索引条数。
+         * 所以这些共用状态在循环外只设一次，循环里只录随对象变的那几样
+         *
+         * 绘制顺序就是数组顺序：本帧没有透明对象，不需要按深度排序，
+         * 深度测试自己会把前后关系画对。等引入透明混合时，排序是收集侧的
+         * 责任，不是本层 —— 本层照着顺序录，不替调用方重排
          *
          * 索引类型不在此列：本项目的索引就是 uint16_t，这个事实写死在实现里，
          * 不做成参数把一个常量串过每一层。代价是它与 DoodleMesh 的索引类型绑在一起 ——
@@ -125,8 +135,8 @@ namespace Doodle
          * 名字不带 CommandBuffer：类名已经交代了宾语，重复一遍不带来信息
          */
         [[nodiscard]] VkCommandBuffer Record(const uint32_t frameIndex, const uint32_t imageIndex,
-                                             VkBuffer vertexBuffer, VkBuffer indexBuffer,
-                                             const uint32_t indexCount, VkDescriptorSet descriptorSet);
+                                             const std::vector<DoodleDrawItem>& drawItems,
+                                             VkDescriptorSet descriptorSet);
 
         /**
          * 取传输命令池
