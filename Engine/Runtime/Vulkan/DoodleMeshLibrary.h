@@ -20,11 +20,13 @@ namespace Doodle
     /**
      * 网格库：网格资产的拥有者与名字索引
      *
-     * 挂在 DoodleVulkanManager 下，寿命跟着 Vulkan 设备走 —— Android 上
-     * Vulkan 是延迟初始化的，库不能做成应用级静态量。它只在初始化期上传
-     * 数据，不参与每帧绘制。
+     * 现在不再直接挂在 DoodleVulkanManager 下，而是作为
+     * DoodleMeshAssetLoader 的内部成员，由 DoodleAssetManager 间接持有。
+     * 寿命仍然跟着 Vulkan 设备走 —— 资产管理器在设备销毁之前释放它；
+     * Android 上 Vulkan 是延迟初始化的，所以库也不能做成应用级静态量。
+     * 它只在加载期上传数据，不参与每帧绘制。
      *
-     * 现在只有内建的 "builtin:cube"；场景文件加载时按名字来这里取。
+     * 现在只有内建的 "builtin:cube"；场景加载时资产管理器按名字来这里取。
      * Find 返回非拥有指针，寿命与库一致：库销毁后指针失效。
      *
      * 用 std::map + std::less<> 而不是 unordered_map：Find 收 string_view，

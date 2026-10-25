@@ -8,6 +8,7 @@
 
 #include <memory>
 
+#include "DoodleMacFileSystem.h"
 #include "DoodleMacWindow.h"
 
 namespace Doodle
@@ -21,5 +22,10 @@ namespace Doodle
         //DoodleMacWindow::FramebufferSizeCallback），本函数只回答
         //「这次启动开个多大的窗、叫什么名字」
         return std::make_unique<DoodleMacWindow>(1280, 800, "Doodle");
+    }
+
+    std::unique_ptr<DoodleFileSystem> DoodleMacApplication::CreateFileSystem()
+    {
+        return std::make_unique<DoodleMacFileSystem>();
     }
 } // Doodle

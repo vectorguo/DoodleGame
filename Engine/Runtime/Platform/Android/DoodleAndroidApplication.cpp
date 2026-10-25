@@ -12,6 +12,7 @@
 
 #include <android_native_app_glue.h>
 
+#include "DoodleAndroidFileSystem.h"
 #include "DoodleAndroidWindow.h"
 #include "../DoodleLog.h"
 
@@ -29,6 +30,13 @@ namespace Doodle
         return std::make_unique<DoodleAndroidWindow>(m_pApp, *this);
     }
 
+    std::unique_ptr<DoodleFileSystem> DoodleAndroidApplication::CreateFileSystem()
+    {
+        // APK assets 的来源需要 android_app（AAssetManager）—— 第 5 步接进
+        // DoodleAndroidFileSystem。现在返回的对象只支持文件系统路径
+        return std::make_unique<DoodleAndroidFileSystem>();
+    }
+
     void DoodleAndroidApplication::Initialize()
     {
         //只建窗口对象，不起 Vulkan —— 基类那份默认实现是「建窗即起 Vulkan」，
@@ -38,6 +46,9 @@ namespace Doodle
         //窗口本身必须现在就建：它在构造里接管 pApp->onAppCmd，
         //不先建出来的话，之后的命令进不到本类
         m_pWindow = CreateWindow();
+
+        //文件来源不依赖窗口，现在就建好；Vulkan、资产与内容等 INIT_WINDOW
+        InitializeFileSystem();
     }
 
     void DoodleAndroidApplication::Run()
@@ -76,18 +87,11 @@ namespace Doodle
 
     void DoodleAndroidApplication::Destroy()
     {
-        // 场景先于 Vulkan：组件的 OnDestroy 可能持有 GPU 资源。
-        // 场景是纯 CPU 侧的，Vulkan 一次都没起来过也要正常销毁。
-        DestroyScenes();
+        // 运行时可能一次都没起来过；DestroyRuntime 内部按状态决定拆到哪一步
+        DestroyRuntime();
 
-        //可能一次都没起来过：窗口都没等到就退出了。那时去拆是拿着一个
-        //不存在的实例去用
-        if (m_initialized)
-        {
-            DestroyVulkan();
-            m_initialized = false;
-        }
-
+        // 文件系统最后放：资产管理器在析构兜底路径上还可能读它
+        DestroyFileSystem();
         m_pWindow.reset();
     }
 
@@ -111,7 +115,7 @@ namespace Doodle
 
                 try
                 {
-                    if (m_initialized)
+                    if (m_runtimeInitialized)
                     {
                         //切后台回来：实例与设备都还在，只需把依附于表面的那几层重建
                         m_vulkanManager.Resume(*m_pWindow);
@@ -119,8 +123,7 @@ namespace Doodle
                     else
                     {
                         //第一次拿到窗口，从头起
-                        InitializeVulkan();
-                        m_initialized = true;
+                        InitializeRuntime();
                     }
                 }
                 catch (const std::exception& e)
@@ -135,7 +138,7 @@ namespace Doodle
             //窗口要没了。注意此刻 app.window 还指着旧窗口 —— 胶水层是在本回调
             //返回之后才把它置空的（post_exec_cmd）。所以销毁表面的正确时机就在
             //这里：早了窗口还在，晚了就拿着一个已经作废的句柄去销毁
-            if (m_initialized)
+            if (m_runtimeInitialized)
             {
                 try
                 {
@@ -155,7 +158,7 @@ namespace Doodle
             //尺寸或屏幕配置变了。这里只记标志，重建留给帧循环 ——
             //旋转时系统会甩出一串事件，逐个处理会把交换链重建到卡死，
             //这个理由和桌面 resize 回调那边是同一个
-            if (m_initialized)
+            if (m_runtimeInitialized)
             {
                 NotifyWindowResized();
             }

@@ -12,7 +12,6 @@
 #include "DoodleDepthImages.h"
 #include "DoodleGraphicsBuffer.h"
 #include "DoodleGraphicsPipeline.h"
-#include "DoodleMeshLibrary.h"
 #include "DoodleSwapChain.h"
 #include "DoodleSyncObjects.h"
 #include "DoodleVulkanConfig.h"
@@ -110,6 +109,17 @@ namespace Doodle
         }
 
         /**
+         * 等待 GPU 空闲
+         *
+         * 给「设备资源在门面之外销毁」的调用方用：应用销毁资产管理器之前必须先
+         * 确保没有在途命令还在引用网格 / 纹理缓冲。门面自己的 Destroy 也会等，
+         * 但那已经排在资产管理器之后，等不到了
+         *
+         * @note 返回不代表任何排队中的工作已被取消，只是都完成了
+         */
+        void WaitIdle();
+
+        /**
          * 获取Vulkan设备
          */
         [[nodiscard]] DoodleVulkanDevice& GetDevice()
@@ -187,24 +197,6 @@ namespace Doodle
         [[nodiscard]] const DoodleSyncObjects& GetSyncObjects() const
         {
             return m_syncObjects;
-        }
-
-        /**
-         * 获取网格库
-         *
-         * 场景加载时按名字取网格资产用；对外的生命周期由本门面负责
-         */
-        [[nodiscard]] DoodleMeshLibrary& GetMeshLibrary()
-        {
-            return m_meshLibrary;
-        }
-
-        /**
-         * 获取网格库
-         */
-        [[nodiscard]] const DoodleMeshLibrary& GetMeshLibrary() const
-        {
-            return m_meshLibrary;
         }
 
     private:
@@ -314,17 +306,6 @@ namespace Doodle
          * 命令缓冲层：录制时引用上述各层，须排在图形管线之后
          */
         DoodleCommandBuffer m_commandBuffer;
-
-        /**
-         * 网格库：几何资产的拥有者与名字索引
-         *
-         * 排在命令缓冲层之后：上传要借它的传输池。寿命挂在 Vulkan 设备上 ——
-         * 不随交换链重建，也不随场景卸载：资产与场景是两回事。
-         *
-         * 内建正方体的顶点 / 索引数据住在库里（DoodleMeshLibrary.cpp），
-         * 门面不再直接持有任何几何数据
-         */
-        DoodleMeshLibrary m_meshLibrary;
 
         /**
          * 每帧一块 uniform 缓冲，HostVisible 类型

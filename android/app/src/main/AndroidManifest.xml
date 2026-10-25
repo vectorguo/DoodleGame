@@ -47,11 +47,15 @@
 
             想验证 Suspend/Resume 那条路的话，把 orientation|screenSize 从这行删掉，
             旋转屏幕就会走完整的「拆-建」流程
+
+            screenOrientation="landscape" 把 Activity 钉在横屏：从创建那一刻起
+            就是横的，不会先竖着起来再转，swapchain 也就不会先按竖屏尺寸建一遍
         -->
         <activity
             android:name="android.app.NativeActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density|uiMode"
             android:exported="true"
+            android:screenOrientation="landscape"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
 
             <meta-data

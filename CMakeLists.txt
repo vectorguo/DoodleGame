@@ -52,8 +52,8 @@ endif()
 # 桌面也没有。混在一摞里只能靠 #ifdef 挡，那是把平台判断散到各处，
 # 不如在这里一次说清
 #
-# 平台专属的那两摞，路径与 Runtime/Platform/<平台>/ 一一对应：
-# 一个平台的窗口实现和它的入口都在自己那个文件夹里。
+# 平台专属的那两摞，路径与 Engine/Runtime/Platform/<平台>/ 一一对应：
+# 一个平台的窗口实现、文件来源和它的入口都在自己那个文件夹里。
 # Platform/ 根目录下的是三摞共用的那部分（接口、驱动层、日志）
 #
 # DoodleApplication 编进了共享那摞而不是 macOS 那摞：它不依赖任何平台 API。
@@ -65,73 +65,90 @@ endif()
 
 # 与平台无关的部分：Vulkan 各层 + 窗口抽象 + 日志
 set(DOODLE_SHARED_SOURCES
-    Runtime/Vulkan/DoodleVulkanDevice.cpp
-    Runtime/Vulkan/DoodleVulkanDevice.h
-    Runtime/Vulkan/DoodleSwapChain.cpp
-    Runtime/Vulkan/DoodleSwapChain.h
-    Runtime/Vulkan/DoodleGraphicsPipeline.cpp
-    Runtime/Vulkan/DoodleGraphicsPipeline.h
-    Runtime/Vulkan/DoodleCommandBuffer.cpp
-    Runtime/Vulkan/DoodleCommandBuffer.h
-    Runtime/Vulkan/DoodleSyncObjects.cpp
-    Runtime/Vulkan/DoodleSyncObjects.h
-    Runtime/Vulkan/DoodleGraphicsBuffer.cpp
-    Runtime/Vulkan/DoodleGraphicsBuffer.h
-    Runtime/Vulkan/DoodleMesh.cpp
-    Runtime/Vulkan/DoodleMesh.h
-    Runtime/Vulkan/DoodleMeshLibrary.cpp
-    Runtime/Vulkan/DoodleMeshLibrary.h
-    Runtime/Vulkan/DoodleDrawItem.h
-    Runtime/Vulkan/DoodleUniformBufferObject.h
-    Runtime/Vulkan/DoodleDepthImages.cpp
-    Runtime/Vulkan/DoodleDepthImages.h
-    Runtime/Vulkan/DoodleImage.cpp
-    Runtime/Vulkan/DoodleImage.h
-    Runtime/Vulkan/DoodleTexture.cpp
-    Runtime/Vulkan/DoodleTexture.h
-    Runtime/Vulkan/DoodleVulkanManager.cpp
-    Runtime/Vulkan/DoodleVulkanManager.h
-    Runtime/Vulkan/DoodleShaderModule.cpp
-    Runtime/Vulkan/DoodleShaderModule.h
-    Runtime/Vulkan/DoodleVulkanConfig.h
-    Runtime/Vulkan/DoodleVertex.h
-    Runtime/Vulkan/QueueFamilySelection.h
-    Runtime/Vulkan/SwapChainSupportDetails.h
-    Runtime/Platform/DoodleWindow.h
-    Runtime/Platform/DoodleApplication.cpp
-    Runtime/Platform/DoodleApplication.h
-    Runtime/Platform/DoodleLog.cpp
-    Runtime/Platform/DoodleLog.h
-    Runtime/Core/DoodleTransform.h
-    Runtime/Core/DoodleUpdateContext.h
-    Runtime/Core/DoodleLifecycleState.h
-    Runtime/Core/DoodleComponent.h
-    Runtime/Core/DoodleGameObject.h
-    Runtime/Core/DoodleGameObject.cpp
-    Runtime/Scene/DoodleScene.h
-    Runtime/Scene/DoodleScene.cpp
-    Runtime/Scene/DoodleSceneManager.h
-    Runtime/Scene/DoodleSceneManager.cpp
-    Runtime/Rendering/DoodleMeshRenderer.h
-    Runtime/Utility/Singleton.h
+    Engine/Runtime/Vulkan/DoodleVulkanDevice.cpp
+    Engine/Runtime/Vulkan/DoodleVulkanDevice.h
+    Engine/Runtime/Vulkan/DoodleSwapChain.cpp
+    Engine/Runtime/Vulkan/DoodleSwapChain.h
+    Engine/Runtime/Vulkan/DoodleGraphicsPipeline.cpp
+    Engine/Runtime/Vulkan/DoodleGraphicsPipeline.h
+    Engine/Runtime/Vulkan/DoodleCommandBuffer.cpp
+    Engine/Runtime/Vulkan/DoodleCommandBuffer.h
+    Engine/Runtime/Vulkan/DoodleSyncObjects.cpp
+    Engine/Runtime/Vulkan/DoodleSyncObjects.h
+    Engine/Runtime/Vulkan/DoodleGraphicsBuffer.cpp
+    Engine/Runtime/Vulkan/DoodleGraphicsBuffer.h
+    Engine/Runtime/Vulkan/DoodleMesh.cpp
+    Engine/Runtime/Vulkan/DoodleMesh.h
+    Engine/Runtime/Vulkan/DoodleMeshLibrary.cpp
+    Engine/Runtime/Vulkan/DoodleMeshLibrary.h
+    Engine/Runtime/Vulkan/DoodleDrawItem.h
+    Engine/Runtime/Vulkan/DoodleUniformBufferObject.h
+    Engine/Runtime/Vulkan/DoodleDepthImages.cpp
+    Engine/Runtime/Vulkan/DoodleDepthImages.h
+    Engine/Runtime/Vulkan/DoodleImage.cpp
+    Engine/Runtime/Vulkan/DoodleImage.h
+    Engine/Runtime/Vulkan/DoodleTexture.cpp
+    Engine/Runtime/Vulkan/DoodleTexture.h
+    Engine/Runtime/Vulkan/DoodleVulkanManager.cpp
+    Engine/Runtime/Vulkan/DoodleVulkanManager.h
+    Engine/Runtime/Vulkan/DoodleShaderModule.cpp
+    Engine/Runtime/Vulkan/DoodleShaderModule.h
+    Engine/Runtime/Vulkan/DoodleVulkanConfig.h
+    Engine/Runtime/Vulkan/DoodleVertex.h
+    Engine/Runtime/Vulkan/QueueFamilySelection.h
+    Engine/Runtime/Vulkan/SwapChainSupportDetails.h
+    Engine/Runtime/Platform/DoodleWindow.h
+    Engine/Runtime/Platform/DoodleFileSystem.cpp
+    Engine/Runtime/Platform/DoodleFileSystem.h
+    Engine/Runtime/Platform/DoodleApplication.cpp
+    Engine/Runtime/Platform/DoodleApplication.h
+    Engine/Runtime/Platform/DoodleLog.cpp
+    Engine/Runtime/Platform/DoodleLog.h
+    Engine/Runtime/Core/DoodleTransform.h
+    Engine/Runtime/Core/DoodleUpdateContext.h
+    Engine/Runtime/Core/DoodleLifecycleState.h
+    Engine/Runtime/Core/DoodleComponent.h
+    Engine/Runtime/Core/DoodleGameObject.h
+    Engine/Runtime/Core/DoodleGameObject.cpp
+    Engine/Runtime/Asset/DoodleAssetLoadContext.h
+    Engine/Runtime/Asset/DoodleAssetLoader.h
+    Engine/Runtime/Asset/DoodleAssetManager.cpp
+    Engine/Runtime/Asset/DoodleAssetManager.h
+    Engine/Runtime/Asset/DoodleMeshAssetLoader.cpp
+    Engine/Runtime/Asset/DoodleMeshAssetLoader.h
+    Engine/Runtime/Scene/DoodleScene.h
+    Engine/Runtime/Scene/DoodleScene.cpp
+    Engine/Runtime/Scene/DoodleSceneData.h
+    Engine/Runtime/Scene/DoodleSceneLoader.cpp
+    Engine/Runtime/Scene/DoodleSceneLoader.h
+    Engine/Runtime/Scene/DoodleSceneBuilder.cpp
+    Engine/Runtime/Scene/DoodleSceneBuilder.h
+    Engine/Runtime/Scene/DoodleSceneManager.h
+    Engine/Runtime/Scene/DoodleSceneManager.cpp
+    Engine/Runtime/Rendering/DoodleMeshRenderer.h
+    Engine/Runtime/Utility/Singleton.h
 )
 
-# macOS 专属：入口、窗口实现
+# macOS 专属：入口、窗口与文件来源实现
 set(DOODLE_MACOS_SOURCES
-        Runtime/Platform/MacOS/DoodleMacMain.cpp
-        Runtime/Platform/MacOS/DoodleMacWindow.cpp
-        Runtime/Platform/MacOS/DoodleMacWindow.h
-        Runtime/Platform/MacOS/DoodleMacApplication.cpp
-        Runtime/Platform/MacOS/DoodleMacApplication.h
+        Engine/Runtime/Platform/MacOS/DoodleMacMain.cpp
+        Engine/Runtime/Platform/MacOS/DoodleMacWindow.cpp
+        Engine/Runtime/Platform/MacOS/DoodleMacWindow.h
+        Engine/Runtime/Platform/MacOS/DoodleMacFileSystem.cpp
+        Engine/Runtime/Platform/MacOS/DoodleMacFileSystem.h
+        Engine/Runtime/Platform/MacOS/DoodleMacApplication.cpp
+        Engine/Runtime/Platform/MacOS/DoodleMacApplication.h
 )
 
-# Android 专属：入口、驱动层实现、窗口实现
+# Android 专属：入口、驱动层实现、窗口与文件来源实现
 set(DOODLE_ANDROID_SOURCES
-    Runtime/Platform/Android/DoodleAndroidMain.cpp
-    Runtime/Platform/Android/DoodleAndroidApplication.cpp
-    Runtime/Platform/Android/DoodleAndroidApplication.h
-    Runtime/Platform/Android/DoodleAndroidWindow.cpp
-    Runtime/Platform/Android/DoodleAndroidWindow.h
+    Engine/Runtime/Platform/Android/DoodleAndroidMain.cpp
+    Engine/Runtime/Platform/Android/DoodleAndroidApplication.cpp
+    Engine/Runtime/Platform/Android/DoodleAndroidApplication.h
+    Engine/Runtime/Platform/Android/DoodleAndroidFileSystem.cpp
+    Engine/Runtime/Platform/Android/DoodleAndroidFileSystem.h
+    Engine/Runtime/Platform/Android/DoodleAndroidWindow.cpp
+    Engine/Runtime/Platform/Android/DoodleAndroidWindow.h
 )
 
 # ---- 着色器：编译 GLSL 并生成内嵌副本 ----
@@ -195,12 +212,12 @@ if(ANDROID)
     # 别把工程根目录（CMAKE_CURRENT_SOURCE_DIR 本身）加进来。
     # 理由在下面桌面分支那段注释里写全了，两边是同一个坑
     #
-    # ThirdParty 里是仓库自带的第三方库（目前只有 glm/）。Android 侧没有 brew、
+    # Engine/ThirdParty 里是仓库自带的第三方库（目前只有 glm/）。Android 侧没有 brew、
     # 也没有包管理器，系统路径上不会有它们 —— 收进仓库才有得用，
     # 这也是两个平台能共用同一版本的原因
     target_include_directories(DoodleGame PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty
-        ${CMAKE_CURRENT_SOURCE_DIR}/Runtime
+        ${CMAKE_CURRENT_SOURCE_DIR}/Engine/ThirdParty
+        ${CMAKE_CURRENT_SOURCE_DIR}/Engine/Runtime
         ${_doodle_shader_output_dir}
         ${_doodle_native_app_glue_dir}
     )
@@ -237,18 +254,18 @@ endif()
 # 第三方头文件 / 库的搜索目录。
 # Vulkan SDK 在 /usr/local，Homebrew 的 GLFW / GLM 在 /opt/homebrew。
 #
-# 加的是 ThirdParty 本身、不是 ThirdParty/glm —— 一个库一个目录，
-# 路径加父目录，这样 #include <glm/glm.hpp> 解析到 ThirdParty/glm/glm.hpp。
+# 加的是 Engine/ThirdParty 本身、不是 Engine/ThirdParty/glm —— 一个库一个目录，
+# 路径加父目录，这样 #include <glm/glm.hpp> 解析到 Engine/ThirdParty/glm/glm.hpp。
 # 将来再引别的（volk 之类）照同一规矩放，不必再加路径
 #
 # 仓库自带的那份排在最前。这台机器上 brew 也装了一份同名同版本的 GLM，
 # 顺序反了会静默用到系统那份 —— 你以为在用仓库里锁定的版本，实际不是，
-# 换台机器行为就可能不同（见 ThirdParty/glm/README.md）
+# 换台机器行为就可能不同（见 Engine/ThirdParty/glm/README.md）
 set(DOODLE_HEADER_SEARCH_PATHS
-    ${CMAKE_SOURCE_DIR}/ThirdParty
+    ${CMAKE_SOURCE_DIR}/Engine/ThirdParty
     /usr/local/include
     /opt/homebrew/include
-    ${CMAKE_SOURCE_DIR}/Runtime
+    ${CMAKE_SOURCE_DIR}/Engine/Runtime
 )
 set(DOODLE_LIBRARY_SEARCH_PATHS
     /usr/local/lib
@@ -314,12 +331,12 @@ add_executable(DoodleGame MACOSX_BUNDLE
 
 # 把头文件搜索路径接到这个 target 上（只给 DoodleGame 自己用，所以是 PRIVATE）。
 # 第三方头文件直接用上面的搜索目录，不再走 find_path；
-# Runtime/ 也在那里面，所以 #include "Vulkan/xxx.h"、"Platform/xxx.h" 这类能解析
+# Engine/Runtime/ 也在那里面，所以 #include "Vulkan/xxx.h"、"Platform/xxx.h" 这类能解析
 # （平台文件夹内部之间的引用走 "../xxx.h" 相对路径，不经过这条）。
 # _doodle_shader_output_dir 是着色器内嵌副本的生成位置，见上面的 add_custom_command。
 #
 # 这里**不要**再放工程根目录（CMAKE_SOURCE_DIR 本身）。
-# 曾经有一行，理由是「这样 #include "Runtime/xxx.h" 才能从根目录拼出来」，
+# 曾经有一行，理由是「这样 #include "Engine/Runtime/xxx.h" 才能从根目录拼出来」，
 # 但工程里根本没有任何一处这样写 —— 全是 "Vulkan/xxx.h" 或 "xxx.h" 这种形式。
 # 它的实际效果是把根目录下所有东西都当成头文件搜索路径，
 # Android Studio 的工程视图会把 .git、.idea、cmake-build-debug 这些
@@ -446,5 +463,23 @@ if(APPLE)
             "${CMAKE_SOURCE_DIR}/Shaders"
             "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Shaders"
         COMMENT "Copy Shaders into DoodleGame.app/Contents/Resources/Shaders"
+    )
+
+    # 场景文件是运行时数据，和 Shaders 一样拷进包内 Resources。
+    #
+    # 这不只是 Finder 双击时需要：GLFW 在 macOS 上默认把进程工作目录切到
+    # .app/Contents/Resources（GLFW_COCOA_CHDIR_RESOURCES），所以即使从终端
+    # 直接运行包内可执行文件，相对路径解析的起点也是 Resources。工程根目录
+    # 里的 Resources/Scenes 只是源文件。
+    #
+    # 与 Shaders 同理，先删再拷：copy_directory 只增不删，源码侧删掉的旧
+    # 场景文件会在包里活下来，运行时优先命中陈旧副本
+    add_custom_command(TARGET DoodleGame POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -rf
+            "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Scenes"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/Resources/Scenes"
+            "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Scenes"
+        COMMENT "Copy Scenes into DoodleGame.app/Contents/Resources/Scenes"
     )
 endif()

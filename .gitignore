@@ -4,10 +4,10 @@
 /*
 !/.gitignore
 !/CMakeLists.txt
-!/Runtime/
+!/Engine/
 !/Shaders/
+!/Resources/
 !/android/
-!/ThirdParty/
 
 # GLSL 源码入库，编译产物不入库。
 #

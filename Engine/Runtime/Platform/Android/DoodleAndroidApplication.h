@@ -32,8 +32,8 @@ namespace Doodle
      *                 这时候不能去拆一个不存在的实例
      *
      * 剩下那半边照旧用基类的：Vulkan 子系统、GetInstance、尺寸通知。
-     * Android 的生命周期不是另起一套，只是把 InitializeVulkan / DestroyVulkan
-     * 这对 helper 按另一个时刻表调用
+     * Android 的生命周期不是另起一套，只是把 InitializeRuntime 按另一个
+     * 时刻表调用；销毁时用 DestroyRuntime() / DestroyFileSystem()
      *
      * 本类由 Runtime/Platform/Android/DoodleAndroidMain.cpp 构造并驱动
      */
@@ -56,10 +56,11 @@ namespace Doodle
         // ---- DoodleApplication ----
 
         /**
-         * 建窗口对象并接管 APP_CMD，不碰 Vulkan
+         * 建窗口、文件来源对象并接管 APP_CMD，不碰 Vulkan
          *
          * 覆盖基类默认实现。此刻还没有 ANativeWindow，Vulkan 起不来 ——
-         * 那一步在拿到 APP_CMD_INIT_WINDOW 时由 OnAppCommand 做
+         * 那一步在拿到 APP_CMD_INIT_WINDOW 时由 OnAppCommand 调
+         * InitializeRuntime 完成。文件来源不依赖窗口，这里就能建好
          *
          * @note 必须先调，且只调一次：窗口在构造里接管 pApp->onAppCmd，
          *       不先建出来的话，之后的命令根本进不到本类
@@ -110,12 +111,16 @@ namespace Doodle
          */
         std::unique_ptr<DoodleWindow> CreateWindow() override;
 
+        /**
+         * 建出 Android 文件来源
+         *
+         * 目前只支持文件系统路径；APK assets 在第 5 步接入，接口不变
+         */
+        std::unique_ptr<DoodleFileSystem> CreateFileSystem() override;
+
     private:
         /** 胶水层的应用对象，只借不放 */
         android_app* m_pApp = nullptr;
-
-        /** Vulkan 是否已经起来过。第一轮 INIT_WINDOW 是 Initialize，之后都是 Resume */
-        bool m_initialized = false;
 
         /** 出过错，且不可能自行恢复。帧循环据此退出 */
         bool m_failed = false;

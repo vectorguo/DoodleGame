@@ -38,12 +38,11 @@ namespace Doodle
         CreateDescriptorSets();
 
         m_syncObjects.Initialize(m_device, m_swapChain);
+    }
 
-        //网格库排在最后：上传只依赖设备与命令缓冲层的传输池（上面已建好），
-        //不与 UBO、描述符集、同步对象打交道，先建后建都一样。
-        //硬约束只有两条：在命令缓冲层之后（否则传输池还是空的）、首帧 Record 之前
-        //（Record 会绑定 draw item 里的网格缓冲，空句柄校验层当场报错）
-        m_meshLibrary.Initialize(m_device);
+    void DoodleVulkanManager::WaitIdle()
+    {
+        vkDeviceWaitIdle(m_device.GetLogicalDevice());
     }
 
     void DoodleVulkanManager::Destroy()
@@ -53,7 +52,7 @@ namespace Doodle
         //
         //放在这里而不是主循环之后：本函数是唯一的销毁入口，
         //把不变量守在不变量真正起作用的地方，将来多一个调用方也不会漏掉
-        vkDeviceWaitIdle(m_device.GetLogicalDevice());
+        WaitIdle();
 
         //按「使用者先、被使用者后」销毁。
         //
@@ -62,9 +61,6 @@ namespace Doodle
         //必须排在池之后。其余资源与这几条依赖无关，按原有逆序排列
         m_syncObjects.Destroy();
         m_commandBuffer.Destroy();
-
-        //网格缓冲也被命令引用，排在命令缓冲之后销毁；此刻设备已空闲
-        m_meshLibrary.Destroy();
 
         DestroyDescriptorPool();
         DestroyUniformBuffers();

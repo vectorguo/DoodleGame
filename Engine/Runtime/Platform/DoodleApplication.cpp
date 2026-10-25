@@ -6,16 +6,31 @@
 //
 
 #include "DoodleApplication.h"
+#include "DoodleFileSystem.h"
 #include "DoodleWindow.h"
 
 #include "Core/DoodleGameObject.h"
 #include "Rendering/DoodleMeshRenderer.h"
 #include "Scene/DoodleScene.h"
-#include "Vulkan/DoodleMeshLibrary.h"
+#include "Scene/DoodleSceneBuilder.h"
+#include "Scene/DoodleSceneData.h"
 
 #include <algorithm>
 #include <chrono>
 #include <stdexcept>
+#include <string_view>
+
+namespace
+{
+    /**
+     * 启动场景的路径
+     *
+     * 相对路径，由 DoodleFileSystem 决定根在哪里：桌面是工作目录
+     * 或 .app/Contents/Resources，Android 将来是 APK assets。
+     * 修启动内容只改这一处（以及文件本身）
+     */
+    constexpr std::string_view kStartupScenePath = "Scenes/main.json";
+}
 
 namespace Doodle
 {
@@ -44,15 +59,16 @@ namespace Doodle
     {
         //窗口先于 Vulkan：表面建在窗口上
         m_pWindow = CreateWindow();
-
-        //子类把窗口交出来是它的分内事，理论上不可能为空。走不到的分支也要拦：
-        //不拦的话，Run 里第一次解引用就是一段和根因对不上的崩溃
         if (m_pWindow == nullptr)
         {
+            //子类把窗口交出来是它的分内事，理论上不可能为空。走不到的分支也要拦：
+            //不拦的话，Run 里第一次解引用就是一段和根因对不上的崩溃
             throw std::runtime_error("DoodleApplication: window is null");
         }
 
-        InitializeVulkan();
+        // 文件来源不依赖窗口，先建好；Vulkan、资产与内容由 InitializeRuntime 接手
+        InitializeFileSystem();
+        InitializeRuntime();
     }
 
     void DoodleApplication::Run()
@@ -70,19 +86,78 @@ namespace Doodle
 
     void DoodleApplication::Destroy()
     {
-        // 场景先于 Vulkan：组件的 OnDestroy 以后可能释放 GPU 资源，
-        // 必须赶在 Vulkan 各层拆掉之前跑。
-        DestroyScenes();
-
-        // 再按 Initialize 的反序拆 Vulkan 与窗口：交换链、表面都依附于窗口，
-        // 窗口先没的话，销毁它们就是拿着一个已经作废的句柄去用
-        DestroyVulkan();
+        // 运行时（场景 → 资产 → Vulkan）由 DestroyRuntime 统一拆。
+        // 文件系统与窗口在它之后释放：资产管理器在析构兜底路径上还可能读文件，
+        // 交换链、表面则依附于窗口
+        DestroyRuntime();
+        DestroyFileSystem();
         m_pWindow.reset();
     }
 
     void DoodleApplication::NotifyWindowResized()
     {
         m_vulkanManager.NotifyWindowResized();
+    }
+
+    void DoodleApplication::InitializeFileSystem()
+    {
+        m_pFileSystem = CreateFileSystem();
+        if (m_pFileSystem == nullptr)
+        {
+            throw std::runtime_error("DoodleApplication: file system is null");
+        }
+    }
+
+    void DoodleApplication::InitializeRuntime()
+    {
+        // 前置：窗口与文件系统已经就绪。传给 Vulkan 各层的是引用：
+        // 它们只借不放，窗口的持有者仍在本类
+        m_vulkanManager.Initialize(*m_pWindow);
+
+        // 资产管理器的内建 loader 需要设备与命令缓冲层，必须排在 Vulkan 之后。
+        // 文件来源归应用持有，资产管理器只借引用
+        m_assetManager.Initialize({
+            .fileSystem = *m_pFileSystem,
+            .device = m_vulkanManager.GetDevice(),
+            .commandBuffer = m_vulkanManager.GetCommandBuffer()});
+
+        // 内容加载放在这里：macOS 的 Initialize 与 Android 首次
+        // APP_CMD_INIT_WINDOW 都经过 InitializeRuntime，这是两个平台唯一共同的
+        // 「Vulkan 已就绪」时点
+        LoadStartupScene();
+
+        // 全部成功才算运行时起来：中途抛异常时保持 false，后续 DestroyRuntime
+        // 不会去等一个不存在或半初始化的实例
+        m_runtimeInitialized = true;
+    }
+
+    void DoodleApplication::DestroyRuntime()
+    {
+        // 场景先于资产：组件里的 MeshRenderer 引用着网格，OnDestroy 必须在
+        // 资产还活着时跑完。销毁是显式的，不把回调留给成员析构
+        m_sceneManager.DestroyReally();
+
+        // 网格缓冲可能还被在途帧引用：Vulkan 起来过才需要等一次。
+        // 等完之后先销毁资产、再拆命令缓冲，是规范允许的顺序：executable 状态的
+        // 命令缓冲只要不再提交、也不是 pending，就不阻止它引用的 buffer 先销毁
+        if (m_runtimeInitialized)
+        {
+            m_vulkanManager.WaitIdle();
+        }
+
+        // 资产是纯 CPU 侧 / 幂等的，运行时从未起来过也要走一遍
+        m_assetManager.Destroy();
+
+        if (m_runtimeInitialized)
+        {
+            m_vulkanManager.Destroy();
+            m_runtimeInitialized = false;
+        }
+    }
+
+    void DoodleApplication::DestroyFileSystem()
+    {
+        m_pFileSystem.reset();
     }
 
     void DoodleApplication::Tick()
@@ -105,6 +180,18 @@ namespace Doodle
         m_sceneManager.Update(DoodleUpdateContext{deltaSeconds});
         CollectDrawItems();
         m_vulkanManager.DrawFrame(m_reusableDrawItems);
+    }
+
+    void DoodleApplication::LoadStartupScene()
+    {
+        const DoodleSceneData* pSceneData = m_assetManager.Load<DoodleSceneData>(kStartupScenePath);
+        if (pSceneData == nullptr)
+        {
+            // Loader 的契约是不返回空指针；这里只做防御
+            throw std::runtime_error("DoodleApplication: startup scene data is null");
+        }
+
+        DoodleSceneBuilder::Build(m_sceneManager, m_assetManager, *pSceneData);
     }
 
     void DoodleApplication::CollectDrawItems()
@@ -134,41 +221,5 @@ namespace Doodle
                 }
             }
         }
-    }
-
-    void DoodleApplication::InitializeVulkan()
-    {
-        //传给 Vulkan 各层的是引用：它们只借不放，窗口的持有者仍在本类
-        m_vulkanManager.Initialize(*m_pWindow);
-
-        // ---- 第 3 步的临时内容，第 4 步由场景文件加载替换 ----
-        //
-        // 手工建一个场景与对象，验证「MeshRenderer + Transform → 每帧收集 →
-        // DrawFrame」这条路径。位置放在这里，是因为 macOS 的 Initialize 与
-        // Android 首次 APP_CMD_INIT_WINDOW 都经过 InitializeVulkan，此刻
-        // 网格库已经初始化完成；第 4 步的加载器也接在同一个点
-        DoodleScene& scene = m_sceneManager.CreateScene("Demo");
-        DoodleGameObject& cube = scene.CreateGameObject("Cube");
-
-        const DoodleMesh* const pCubeMesh =
-            m_vulkanManager.GetMeshLibrary().Find(DoodleMeshLibrary::BuiltinCubeName);
-        if (pCubeMesh == nullptr)
-        {
-            throw std::runtime_error("builtin cube mesh is missing from the mesh library!");
-        }
-
-        DoodleMeshRenderer& meshRenderer = cube.AddComponent<DoodleMeshRenderer>();
-        meshRenderer.SetMesh(pCubeMesh);
-    }
-
-    void DoodleApplication::DestroyVulkan()
-    {
-        m_vulkanManager.Destroy();
-    }
-
-    void DoodleApplication::DestroyScenes()
-    {
-        // 显式销毁，不把回调留给成员析构：SceneManager 的析构只是最后兜底。
-        m_sceneManager.DestroyReally();
     }
 }
