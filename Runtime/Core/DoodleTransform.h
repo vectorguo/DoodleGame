@@ -14,7 +14,7 @@
 namespace Doodle
 {
     /**
-     * 对象的位姿：位置 + 旋转，GameObject 唯一的位姿来源
+     * 对象的位姿：位置 + 旋转 + 缩放，GameObject 唯一的位姿来源
      *
      * 世界约定为 Z-up：局部 +X 是前，局部 +Z 是上，局部 -Y 是右。
      * 这个约定与现有 lookAt 的 up = (0, 0, 1) 一致，也是初始相机四元数
@@ -58,10 +58,16 @@ namespace Doodle
 
         /**
          * 局部到世界的变换矩阵
+         *
+         * 按 T * R * S 组合：先缩放、再旋转、最后平移。缩放因此作用在局部
+         * 轴上，随对象一起旋转；这与「模型的本地坐标先被拉伸，再摆进世界」
+         * 的直觉一致，也是 Unity 等引擎的 TRS 顺序。
          */
         [[nodiscard]] glm::mat4 GetMatrix() const
         {
-            return glm::translate(glm::mat4(1.0f), position) * glm::mat4_cast(rotation);
+            return glm::translate(glm::mat4(1.0f), position)
+                 * glm::mat4_cast(rotation)
+                 * glm::scale(glm::mat4(1.0f), scale);
         }
 
     public:
@@ -74,5 +80,13 @@ namespace Doodle
          * 局部到世界的旋转；恒等旋转表示「前 +X、上 +Z」
          */
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};   // w, x, y, z
+
+        /**
+         * 局部逐轴缩放，没有错切
+         *
+         * 只影响 GetMatrix；GetForward / GetUp / GetRight 仍返回单位方向向量，
+         * 不因为缩放变长或变短。默认 1 表示不缩放。
+         */
+        glm::vec3 scale{1.0f};
     };
 }

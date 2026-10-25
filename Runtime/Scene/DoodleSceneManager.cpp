@@ -6,6 +6,7 @@
 //
 
 #include "DoodleSceneManager.h"
+#include "DoodleScene.h"
 
 #include <cstddef>
 #include <stdexcept>

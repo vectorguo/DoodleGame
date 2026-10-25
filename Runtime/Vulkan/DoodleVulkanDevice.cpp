@@ -8,6 +8,8 @@
 #include <vector>
 
 #include "../Platform/DoodleLog.h"
+#include "../Platform/DoodleWindow.h"
+#include "SwapChainSupportDetails.h"
 
 namespace Doodle
 {
@@ -462,9 +464,7 @@ namespace Doodle
         {
             //两个条件都得满足：驱动允许这个资源用，且这一型的能力覆盖我们要的全部属性
             const bool isUsable = (typeFilter & (1u << i)) != 0;
-            const bool hasRequiredProperties =
-                (types.memoryTypes[i].propertyFlags & properties) == properties;
-
+            const bool hasRequiredProperties = (types.memoryTypes[i].propertyFlags & properties) == properties;
             if (isUsable && hasRequiredProperties)
             {
                 return i;

@@ -6,6 +6,10 @@
 
 #include <stdexcept>
 
+#include "DoodleSwapChain.h"
+#include "DoodleVulkanConfig.h"
+#include "DoodleVulkanDevice.h"
+
 namespace Doodle
 {
     void DoodleSyncObjects::Initialize(const DoodleVulkanDevice& device, const DoodleSwapChain& swapChain)

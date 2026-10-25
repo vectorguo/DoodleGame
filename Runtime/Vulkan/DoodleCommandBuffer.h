@@ -7,13 +7,14 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
-#include "DoodleDepthImages.h"
-#include "DoodleGraphicsPipeline.h"
-#include "DoodleSwapChain.h"
-#include "DoodleVulkanDevice.h"
-
 namespace Doodle
 {
+    //四者只在接口签名与成员指针里出现，完整定义留给源文件
+    class DoodleDepthImages;
+    class DoodleGraphicsPipeline;
+    class DoodleSwapChain;
+    class DoodleVulkanDevice;
+
     /**
      * 命令缓冲层：把命令录下来，送到队列上
      *
@@ -118,7 +119,7 @@ namespace Doodle
          * 跟着重建」这种本来不存在的问题。「谁使用」和「谁拥有」是两件事
          *
          * 索引类型不在此列：本项目的索引就是 uint16_t，这个事实写死在实现里，
-         * 不做成参数把一个常量串过每一层。代价是它与 m_indices 的元素类型绑在一起 ——
+         * 不做成参数把一个常量串过每一层。代价是它与 DoodleMesh 的索引类型绑在一起 ——
          * 将来顶点数越过 65535 换成 uint32_t 时，两处要一起改
          *
          * 名字不带 CommandBuffer：类名已经交代了宾语，重复一遍不带来信息

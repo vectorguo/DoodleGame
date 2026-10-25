@@ -12,12 +12,14 @@
 #include <string_view>
 #include <vector>
 
-#include "Core/DoodleGameObject.h"
 #include "Core/DoodleLifecycleState.h"
 #include "Core/DoodleUpdateContext.h"
 
 namespace Doodle
 {
+    //只以引用 / 指针与 unique_ptr 成员出现，析构在源文件定义，这里不需要完整类型
+    class DoodleGameObject;
+
     class DoodleSceneManager;
 
     /**

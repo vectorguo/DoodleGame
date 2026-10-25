@@ -8,15 +8,16 @@
 #pragma once
 
 #include <array>
-#include <cstdint>
 #include <vulkan/vulkan_core.h>
 
 #include "DoodleImage.h"
 #include "DoodleVulkanConfig.h"
-#include "DoodleVulkanDevice.h"
 
 namespace Doodle
 {
+    //只在接口签名与成员指针里出现，完整定义留给源文件
+    class DoodleVulkanDevice;
+
     /**
      * 深度图组：每个在途帧一张，按 frameIndex 取用
      *

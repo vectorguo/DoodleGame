@@ -9,12 +9,14 @@
 #include <chrono>
 #include <memory>
 
-#include "DoodleWindow.h"
 #include "Scene/DoodleSceneManager.h"
 #include "Vulkan/DoodleVulkanManager.h"
 
 namespace Doodle
 {
+    //只以 unique_ptr 成员与工厂返回类型出现，析构在源文件定义，这里不需要完整类型
+    class DoodleWindow;
+
     /**
      * 应用对象：驱动帧循环、按顺序起停 Vulkan 子系统
      *

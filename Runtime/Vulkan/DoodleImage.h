@@ -9,10 +9,11 @@
 
 #include <vulkan/vulkan_core.h>
 
-#include "DoodleVulkanDevice.h"
-
 namespace Doodle
 {
+    //只在接口签名与成员指针里出现，完整定义留给源文件
+    class DoodleVulkanDevice;
+
     /**
      * 一张 GPU 图像：VkImage 对象 + 它占的内存 + 一个视图
      *

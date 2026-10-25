@@ -8,12 +8,12 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
-#include "DoodleVulkanConfig.h"
-#include "DoodleSwapChain.h"
-#include "DoodleVulkanDevice.h"
-
 namespace Doodle
 {
+    //二者只在接口签名与成员指针里出现，完整定义留给源文件
+    class DoodleSwapChain;
+    class DoodleVulkanDevice;
+
     /**
      * 同步对象层：帧与帧之间的信号量、以及 host 侧的栅栏
      *

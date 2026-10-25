@@ -9,6 +9,8 @@
 
 #include <stdexcept>
 
+#include "DoodleVulkanDevice.h"
+
 namespace Doodle
 {
     void DoodleDepthImages::Initialize(const DoodleVulkanDevice& device, const VkExtent2D extent)

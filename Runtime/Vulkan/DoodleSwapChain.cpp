@@ -8,6 +8,10 @@
 #include <limits>
 #include <stdexcept>
 
+#include "DoodleVulkanDevice.h"
+#include "SwapChainSupportDetails.h"
+#include "../Platform/DoodleWindow.h"
+
 namespace Doodle
 {
     void DoodleSwapChain::Initialize(const DoodleVulkanDevice& device, const DoodleWindow& window)

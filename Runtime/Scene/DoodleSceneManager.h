@@ -15,11 +15,13 @@
 
 #include "Core/DoodleLifecycleState.h"
 #include "Core/DoodleUpdateContext.h"
-#include "DoodleScene.h"
 
 namespace Doodle
 {
     class DoodleApplication;
+
+    //只以引用 / 指针与 unique_ptr 成员出现，析构在源文件定义，这里不需要完整类型
+    class DoodleScene;
 
     /**
      * 场景管理器：场景的独占容器与生命周期驱动

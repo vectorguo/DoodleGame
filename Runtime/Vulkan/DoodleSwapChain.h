@@ -7,12 +7,12 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
-#include "DoodleVulkanDevice.h"
-#include "../Platform/DoodleWindow.h"
-#include "SwapChainSupportDetails.h"
-
 namespace Doodle
 {
+    //二者只在接口签名与成员指针里出现，完整定义留给源文件
+    class DoodleVulkanDevice;
+    class DoodleWindow;
+
     /**
      * 交换链层：窗口的呈现目标
      *

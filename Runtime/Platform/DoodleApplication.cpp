@@ -6,6 +6,7 @@
 //
 
 #include "DoodleApplication.h"
+#include "DoodleWindow.h"
 
 #include <algorithm>
 #include <chrono>

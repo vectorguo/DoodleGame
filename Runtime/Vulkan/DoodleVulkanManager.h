@@ -5,20 +5,22 @@
 #pragma once
 
 #include <array>
-#include <vector>
 
 #include "DoodleCommandBuffer.h"
 #include "DoodleDepthImages.h"
 #include "DoodleGraphicsBuffer.h"
 #include "DoodleGraphicsPipeline.h"
+#include "DoodleMeshLibrary.h"
 #include "DoodleSwapChain.h"
 #include "DoodleSyncObjects.h"
-#include "DoodleVertex.h"
+#include "DoodleVulkanConfig.h"
 #include "DoodleVulkanDevice.h"
-#include "../Platform/DoodleWindow.h"
 
 namespace Doodle
 {
+    //本层只按引用 / 指针持有窗口，完整定义留给源文件去取
+    class DoodleWindow;
+
     /**
      * Vulkan子系统门面：按依赖顺序持有各层，对外提供统一的Vulkan入口
      */
@@ -175,6 +177,24 @@ namespace Doodle
             return m_syncObjects;
         }
 
+        /**
+         * 获取网格库
+         *
+         * 场景加载时按名字取网格资产用；对外的生命周期由本门面负责
+         */
+        [[nodiscard]] DoodleMeshLibrary& GetMeshLibrary()
+        {
+            return m_meshLibrary;
+        }
+
+        /**
+         * 获取网格库
+         */
+        [[nodiscard]] const DoodleMeshLibrary& GetMeshLibrary() const
+        {
+            return m_meshLibrary;
+        }
+
     private:
         /**
          * 重建交换链，以及所有随它一起失效的层
@@ -192,64 +212,10 @@ namespace Doodle
         void RecreateSwapChain();
 
         /**
-         * 把一份数据送上 GPU 能读的设备本地缓冲
+         * 为每个在途帧建一块 CPU 可写的 uniform 缓冲
          *
-         * 中转流程五步：建设备本地缓冲（顺带加上 TRANSFER_DST —— 它要当拷贝的目标）→
-         * 建一块 host 可见的临时中转（TRANSFER_SRC）→ 把数据写进中转 →
-         * 用拷贝命令搬过去 → 销毁中转
-         *
-         * 为什么不直接往设备本地的缓冲里写：那块内存取的是 DEVICE_LOCAL，
-         * CPU 根本映射不到它。中转存在的全部理由就是这个 —— 它是一块 CPU 和 GPU
-         * 都能碰的内存，负责把数据摆到 GPU 够得着的地方，再由 GPU 自己搬一次。
-         * 那一次搬运的代价换来的是正式缓冲从此走显存，不像 host 可见内存那样
-         * 每次读取都过总线
-         *
-         * 中转在这里是局部量，不是成员：它的寿命只覆盖本函数中间几行，
-         * 做成成员会凭空引入「它此刻是否有效」这个本来不存在的状态问题
-         *
-         * @param buffer 目标缓冲。必须是空的（尚未 Initialize）
-         * @param usage 这份数据的用途，取 VERTEX_BUFFER / INDEX_BUFFER 之类。
-         *        TRANSFER_DST 由本函数加上，调用方不必自己带
-         * @param pData 源数据
-         * @param size 数据字节数
-         *
-         * @note 内部会提交一次拷贝并等待完成。所以只能在初始化期调用，
-         * 不得与在途的帧并发 —— 见 DoodleGraphicsBuffer::CopyTo
-         */
-        void CreateDeviceLocalBuffer(DoodleGraphicsBuffer& buffer, VkBufferUsageFlags usage,
-                                     const void* pData, VkDeviceSize size);
-
-        /**
-         * 把 m_vertices 送上一个设备本地的顶点缓冲
-         *
-         * 与上一轮的差别只在内存那一头：那时取 HOST_VISIBLE | HOST_COHERENT 直接映射写入，
-         * 是刻意写笨的过渡形态；现在换成设备本地 + 中转。顶点数据本身一个字节都没改
-         */
-        void CreateVertexBuffer();
-
-        /**
-         * 销毁顶点缓冲
-         */
-        void DestroyVertexBuffer();
-
-        /**
-         * 把 m_indices 送上一个设备本地的索引缓冲
-         *
-         * 建立过程与顶点缓冲逐字相同（都走 CreateDeviceLocalBuffer），只有 usage
-         * 与数据来源两处不同 —— 所以两个函数各自只剩一行
-         */
-        void CreateIndexBuffer();
-
-        /**
-         * 销毁索引缓冲
-         */
-        void DestroyIndexBuffer();
-
-        /**
-         * 为每个在途帧建一块 uniform 缓冲并持久映射
-         *
-         * UBO 与顶点/索引缓冲相反：它每帧都要更新，所以走 HOST_VISIBLE |
-         * HOST_COHERENT，不走设备本地 + 中转。映射只做一次，之后每帧直接 memcpy
+         * UBO 与顶点/索引缓冲相反：它每帧都要更新，所以走 HostVisible 类型，
+         * 不走设备本地 + 中转。第一次 Write 时建立持久映射，之后每帧直接 memcpy
          */
         void CreateUniformBuffers();
 
@@ -335,105 +301,18 @@ namespace Doodle
         DoodleCommandBuffer m_commandBuffer;
 
         /**
-         * 顶点数据：一个以原点为中心、边长为 1 的正方体
+         * 网格库：几何资产的拥有者与名字索引
          *
-         * 六个面各用 4 个顶点，共 24 个；同一个面的四个顶点同色。
-         * 不用共享的 8 个顶点，是因为现在每个面需要独立的颜色，
-         * 而共享顶点只能有一份颜色，面与面之间会插值出脏色。
-         * 等有了法线 / UV，这种按面拆点的做法也正好继续用
+         * 排在命令缓冲层之后：上传要借它的传输池。寿命挂在 Vulkan 设备上 ——
+         * 不随交换链重建，也不随场景卸载：资产与场景是两回事。
          *
-         * 每个面的四个顶点都按「站在面外看，逆时针」排列。
-         * 顶点着色器的投影矩阵做了 Y 翻转，屏幕空间绕序会再反一次，
-         * 所以管线配的是 frontFace = COUNTER_CLOCKWISE 与 cullMode = BACK。
-         * 重排任何一个面的顶点，都可能让它被当成背面剔除，而且不报错
-         *
-         * 相机在 (2, 2, 2) 看向原点，静止时能看到 +X、+Y、+Z 三个面
-         *
-         * 每个面四个顶点排成一个圈，两个三角形怎么切是 m_indices 的事
+         * 内建正方体的顶点 / 索引数据住在库里（DoodleMeshLibrary.cpp），
+         * 门面不再直接持有任何几何数据
          */
-        const std::vector<Vertex> m_vertices = {
-            //+X 面：橙色
-            {{0.5f, -0.5f, -0.5f}, {1.00f, 0.45f, 0.10f}},
-            {{0.5f, 0.5f, -0.5f}, {1.00f, 0.45f, 0.10f}},
-            {{0.5f, 0.5f, 0.5f}, {1.00f, 0.45f, 0.10f}},
-            {{0.5f, -0.5f, 0.5f}, {1.00f, 0.45f, 0.10f}},
-
-            //-X 面：红色
-            {{-0.5f, -0.5f, 0.5f}, {0.90f, 0.20f, 0.30f}},
-            {{-0.5f, 0.5f, 0.5f}, {0.90f, 0.20f, 0.30f}},
-            {{-0.5f, 0.5f, -0.5f}, {0.90f, 0.20f, 0.30f}},
-            {{-0.5f, -0.5f, -0.5f}, {0.90f, 0.20f, 0.30f}},
-
-            //+Y 面：绿色
-            {{-0.5f, 0.5f, -0.5f}, {0.20f, 0.75f, 0.35f}},
-            {{-0.5f, 0.5f, 0.5f}, {0.20f, 0.75f, 0.35f}},
-            {{0.5f, 0.5f, 0.5f}, {0.20f, 0.75f, 0.35f}},
-            {{0.5f, 0.5f, -0.5f}, {0.20f, 0.75f, 0.35f}},
-
-            //-Y 面：青色
-            {{-0.5f, -0.5f, 0.5f}, {0.15f, 0.65f, 0.75f}},
-            {{-0.5f, -0.5f, -0.5f}, {0.15f, 0.65f, 0.75f}},
-            {{0.5f, -0.5f, -0.5f}, {0.15f, 0.65f, 0.75f}},
-            {{0.5f, -0.5f, 0.5f}, {0.15f, 0.65f, 0.75f}},
-
-            //+Z 面：蓝色
-            {{-0.5f, -0.5f, 0.5f}, {0.25f, 0.50f, 1.00f}},
-            {{0.5f, -0.5f, 0.5f}, {0.25f, 0.50f, 1.00f}},
-            {{0.5f, 0.5f, 0.5f}, {0.25f, 0.50f, 1.00f}},
-            {{-0.5f, 0.5f, 0.5f}, {0.25f, 0.50f, 1.00f}},
-
-            //-Z 面：黄色
-            {{-0.5f, 0.5f, -0.5f}, {0.85f, 0.75f, 0.20f}},
-            {{0.5f, 0.5f, -0.5f}, {0.85f, 0.75f, 0.20f}},
-            {{0.5f, -0.5f, -0.5f}, {0.85f, 0.75f, 0.20f}},
-            {{-0.5f, -0.5f, -0.5f}, {0.85f, 0.75f, 0.20f}}
-        };
+        DoodleMeshLibrary m_meshLibrary;
 
         /**
-         * 索引数据：十二个三角形，三十六个索引，指向上面二十四个顶点
-         *
-         * 每个面由自己那 4 个顶点组成两个三角形：0,1,2 与 0,2,3。
-         * 六个面依次是 +X、-X、+Y、-Y、+Z、-Z，所以每组的基址是
-         * 0、4、8、12、16、20
-         *
-         * 用 uint16_t 而不是 uint32_t：现在 24 个唯一顶点，索引最大是 23，
-         * 16 位绰绰有余。索引位数只由唯一顶点数决定，与画几个三角形无关
-         *
-         * 顶点数越过 65535 时必须换成 uint32_t，那时 DoodleCommandBuffer::Record 里
-         * 写死的 VK_INDEX_TYPE_UINT16 要跟着一起改
-         */
-        const std::vector<uint16_t> m_indices = {
-            //+X
-            0, 1, 2, 0, 2, 3,
-            //-X
-            4, 5, 6, 4, 6, 7,
-            //+Y
-            8, 9, 10, 8, 10, 11,
-            //-Y
-            12, 13, 14, 12, 14, 15,
-            //+Z
-            16, 17, 18, 16, 18, 19,
-            //-Z
-            20, 21, 22, 20, 22, 23
-        };
-
-        /**
-         * 顶点缓冲
-         *
-         * 锚在程序生命周期上，与窗口尺寸无关，所以不进 RecreateSwapChain 那条链 ——
-         * 拖窗口不该让顶点数据重新上传一遍
-         */
-        DoodleGraphicsBuffer m_vertexBuffer;
-
-        /**
-         * 索引缓冲
-         *
-         * 寿命与 m_vertexBuffer 同：建一次，用到底
-         */
-        DoodleGraphicsBuffer m_indexBuffer;
-
-        /**
-         * 每帧一块 uniform 缓冲，持久映射
+         * 每帧一块 uniform 缓冲，HostVisible 类型
          *
          * 它们不随交换链重建：窗口缩放只改变投影矩阵的内容，不改变缓冲对象。
          * 数量必须与 MAX_FRAMES_IN_FLIGHT 一致，否则当前帧的 UBO 会和

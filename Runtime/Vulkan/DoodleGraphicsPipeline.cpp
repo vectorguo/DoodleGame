@@ -7,7 +7,10 @@
 #include <stdexcept>
 #include <vector>
 
+#include "DoodleDepthImages.h"
 #include "DoodleShaderModule.h"
+#include "DoodleSwapChain.h"
+#include "DoodleVulkanDevice.h"
 #include "DoodleVertex.h"
 
 namespace Doodle

@@ -9,11 +9,13 @@
 #include <vulkan/vulkan_core.h>
 
 #include "QueueFamilySelection.h"
-#include "SwapChainSupportDetails.h"
-#include "../Platform/DoodleWindow.h"
 
 namespace Doodle
 {
+    //窗口只在接口签名里出现；交换链支持信息只作返回类型，声明处不需要完整定义
+    class DoodleWindow;
+    struct SwapChainSupportDetails;
+
     /**
      * Vulkan设备层：Instance、Surface、物理设备、逻辑设备与队列
      *

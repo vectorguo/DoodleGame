@@ -5,7 +5,11 @@
 #include <stdexcept>
 
 #include "DoodleCommandBuffer.h"
+#include "DoodleDepthImages.h"
+#include "DoodleGraphicsPipeline.h"
+#include "DoodleSwapChain.h"
 #include "DoodleVulkanConfig.h"
+#include "DoodleVulkanDevice.h"
 
 namespace Doodle
 {
@@ -258,7 +262,7 @@ namespace Doodle
         //   开始，那是下面 firstIndex 的事，两者别混
         //
         //索引类型写死成 UINT16 而不做成参数：本项目的索引数组就是 uint16_t，
-        //做成参数只是把一个常量串过每一层。代价是它与 m_indices 绑在一起 ——
+        //做成参数只是把一个常量串过每一层。代价是它与 DoodleMesh 的 uint16_t 索引绑在一起 ——
         //将来顶点数越过 65535 换成 uint32_t 时，两处要一起改
         vkCmdBindIndexBuffer(commandBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 

@@ -11,10 +11,12 @@
 #include <vulkan/vulkan_core.h>
 
 #include "DoodleImage.h"
-#include "DoodleVulkanDevice.h"
 
 namespace Doodle
 {
+    //只在接口签名与成员指针里出现，完整定义留给源文件
+    class DoodleVulkanDevice;
+
     /**
      * 一张纹理：图像 + 采样器 + 一次性的像素上传
      *

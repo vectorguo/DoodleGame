@@ -6,12 +6,13 @@
 
 #include <vulkan/vulkan_core.h>
 
-#include "DoodleDepthImages.h"
-#include "DoodleSwapChain.h"
-#include "DoodleVulkanDevice.h"
-
 namespace Doodle
 {
+    //三者只在接口签名与成员指针里出现，完整定义留给源文件
+    class DoodleDepthImages;
+    class DoodleSwapChain;
+    class DoodleVulkanDevice;
+
     /**
      * 图形管线层：着色器与固定功能状态编译成的不可变绘制配置
      *

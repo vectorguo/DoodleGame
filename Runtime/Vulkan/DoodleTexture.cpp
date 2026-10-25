@@ -11,6 +11,7 @@
 
 #include "DoodleCommandBuffer.h"
 #include "DoodleGraphicsBuffer.h"
+#include "DoodleVulkanDevice.h"
 
 namespace Doodle
 {
@@ -57,9 +58,8 @@ namespace Doodle
         //中转缓冲：CPU 能写、GPU 能读。与顶点/索引缓冲同一套
         DoodleGraphicsBuffer stagingBuffer;
         stagingBuffer.Initialize(*m_pDevice, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        stagingBuffer.Upload(pixels, size);
+                                 DoodleGraphicsBuffer::EMemoryType::HostVisible);
+        stagingBuffer.Write(pixels, size);
 
         //传输池归命令缓冲层；取不到就是调用时机错了（命令层还没 Initialize）
         const auto* pCommandBufferLayer = DoodleCommandBuffer::GetInstance();
