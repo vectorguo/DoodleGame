@@ -14,6 +14,49 @@
 namespace Doodle
 {
     /**
+     * 类型擦除的 loader 句柄
+     *
+     * 资产管理器按 typeid(T) 存这一层：容器需要装不同 T 的 loader，
+     * 所以必须有一个与 T 无关的公共基类。这里只放所有 loader 共有的操作
+     * —— 虚析构与 Destroy；加载入口留在 DoodleAssetLoader<T> 上，因为
+     * 返回类型依赖 T，基类不可能替它声明。
+     *
+     * 这样 DoodleAssetManager 不用为每个 T 单独写一个槽位适配类：
+     * m_loaders 直接存 IDoodleAssetLoader，DoodleAssetLoader<T> 自己
+     * 继承它。注册与查找都按 typeid(T) 做键，所以 Load<T> 里下转型到
+     * DoodleAssetLoader<T>* 一定成立。
+     */
+    class IDoodleAssetLoader
+    {
+    public:
+        virtual ~IDoodleAssetLoader() = default;
+
+        IDoodleAssetLoader(const IDoodleAssetLoader&) = delete;
+        IDoodleAssetLoader& operator=(const IDoodleAssetLoader&) = delete;
+        IDoodleAssetLoader(IDoodleAssetLoader&&) = delete;
+        IDoodleAssetLoader& operator=(IDoodleAssetLoader&&) = delete;
+
+        /**
+         * 释放本 loader 持有的所有资产
+         *
+         * 由资产管理器在 Vulkan 设备销毁之前调用。纯 CPU 数据默认无操作。
+         *
+         * @note 析构器不得释放 GPU 资源：异常退出路径上资产管理器不会调用
+         *       Destroy，那时可能还有在途命令；资源交给进程回收
+         */
+        virtual void Destroy()
+        {
+
+        }
+
+    protected:
+        /**
+         * 只能由具体 loader 构造
+         */
+        IDoodleAssetLoader() = default;
+    };
+
+    /**
      * 单一资产类型的加载器，资产管理器内部使用
      *
      * 这是被 DoodleAssetManager 藏起来的那一半：调用方只会看到
@@ -26,15 +69,10 @@ namespace Doodle
      * 主线程调用；纯 CPU 的 loader 将来可以被工作线程使用。
      */
     template <typename T>
-    class DoodleAssetLoader
+    class DoodleAssetLoader : public IDoodleAssetLoader
     {
-    protected:
-        /**
-         * 只能由具体 loader 构造
-         */
-        DoodleAssetLoader() = default;
     public:
-        virtual ~DoodleAssetLoader() = default;
+        ~DoodleAssetLoader() override = default;
 
         DoodleAssetLoader(const DoodleAssetLoader&) = delete;
         DoodleAssetLoader& operator=(const DoodleAssetLoader&) = delete;
@@ -51,14 +89,10 @@ namespace Doodle
          */
         [[nodiscard]] virtual const T* Load(const DoodleAssetLoadContext& context, std::string_view key) = 0;
 
+    protected:
         /**
-         * 释放本 loader 持有的所有资产
-         *
-         * 由资产管理器在 Vulkan 设备销毁之前调用。纯 CPU 数据默认无操作。
-         *
-         * @note 析构器不得释放 GPU 资源：异常退出路径上资产管理器不会调用
-         *       Destroy，那时可能还有在途命令；资源交给进程回收
+         * 只能由具体 loader 构造
          */
-        virtual void Destroy() {}
+        DoodleAssetLoader() = default;
     };
 }

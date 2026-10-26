@@ -141,49 +141,13 @@ namespace Doodle
                 throw std::logic_error(std::string("DoodleAssetManager: no loader registered for ") + typeid(T).name());
             }
 
-            // 注册与查找都按 typeid(T) 做键，所以这个下转型一定成立
-            auto* pEntry = static_cast<LoaderEntry<T>*>(it->second.get());
-            return pEntry->Load(MakeLoadContext(), key);
+            // 注册与查找都按 typeid(T) 做键，所以这个下转型一定成立：
+            // 该键下只可能是 DoodleAssetLoader<T> 的派生对象
+            auto* pLoader = static_cast<DoodleAssetLoader<T>*>(it->second.get());
+            return pLoader->Load(MakeLoadContext(), key);
         }
 
     private:
-        /**
-         * 类型擦除的 loader 槽位
-         *
-         * 只提供销毁；加载走 Load<T> 里的类型化下转型。不在这里定义
-         * 「返回 void*」的加载接口，是因为那会把 const T* 的语义和生命周期
-         * 都挤进一个泛型签名里，反而更难读。
-         */
-        class ILoaderEntry
-        {
-        public:
-            virtual ~ILoaderEntry() = default;
-            virtual void Destroy() = 0;
-        };
-
-        template <typename T>
-        class LoaderEntry final : public ILoaderEntry
-        {
-        public:
-            explicit LoaderEntry(std::unique_ptr<DoodleAssetLoader<T>> pLoader)
-                : m_pLoader(std::move(pLoader))
-            {
-            }
-
-            [[nodiscard]] const T* Load(const DoodleAssetLoadContext& context, const std::string_view key) const
-            {
-                return m_pLoader->Load(context, key);
-            }
-
-            void Destroy() override
-            {
-                m_pLoader->Destroy();
-            }
-
-        private:
-            std::unique_ptr<DoodleAssetLoader<T>> m_pLoader;
-        };
-
         /**
          * 注册 loader；同一类型只允许一次
          */
@@ -198,27 +162,24 @@ namespace Doodle
             const std::type_index type(typeid(T));
             if (m_loaders.contains(type))
             {
-                throw std::logic_error(
-                    std::string("DoodleAssetManager: loader already registered for ") + typeid(T).name());
+                throw std::logic_error(std::string("DoodleAssetManager: loader already registered for ") + typeid(T).name());
             }
 
-            m_loaders.emplace(type, std::make_unique<LoaderEntry<T>>(std::move(pLoader)));
+            // 公共基类只保留与 T 无关的析构与 Destroy；DoodleAssetLoader<T>
+            // 自己继承它，所以这里直接交给容器，不再需要额外的槽位包装
+            m_loaders.emplace(type, std::unique_ptr<IDoodleAssetLoader>(std::move(pLoader)));
         }
-
-        /**
-         * 注册引擎自带的 loader
-         *
-         * 这是唯一知道「支持哪些资产类型」的地方。以后加 Texture / FBX / Material
-         * 就是在这里多一行。
-         */
-        void RegisterBuiltinLoaders(const DoodleAssetManagerInitContext& context);
 
         /**
          * 组成本次加载的上下文
          */
         [[nodiscard]] DoodleAssetLoadContext MakeLoadContext()
         {
-            return DoodleAssetLoadContext{*m_pFileSystem, *this};
+            return DoodleAssetLoadContext
+            {
+                .fileSystem = *m_pFileSystem,
+                .assetManager = *this
+            };
         }
 
     private:
@@ -236,7 +197,10 @@ namespace Doodle
 
         /**
          * 类型 → loader。系统独占 loader；loader 独占它加载出来的资产
+         *
+         * 元素类型是类型擦除后的 IDoodleAssetLoader；DoodleAssetLoader<T>
+         * 是它的 typed 派生，注册与查找用同一个 typeid(T) 配对
          */
-        std::unordered_map<std::type_index, std::unique_ptr<ILoaderEntry>> m_loaders;
+        std::unordered_map<std::type_index, std::unique_ptr<IDoodleAssetLoader>> m_loaders;
     };
 }

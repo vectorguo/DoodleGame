@@ -117,10 +117,12 @@ namespace Doodle
 
         // 资产管理器的内建 loader 需要设备与命令缓冲层，必须排在 Vulkan 之后。
         // 文件来源归应用持有，资产管理器只借引用
-        m_assetManager.Initialize({
+        m_assetManager.Initialize(
+     {
             .fileSystem = *m_pFileSystem,
             .device = m_vulkanManager.GetDevice(),
-            .commandBuffer = m_vulkanManager.GetCommandBuffer()});
+            .commandBuffer = m_vulkanManager.GetCommandBuffer()
+        });
 
         // 内容加载放在这里：macOS / Windows 的 Initialize 与 Android 首次
         // APP_CMD_INIT_WINDOW 都经过 InitializeRuntime，这是各平台唯一共同的

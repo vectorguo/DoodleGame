@@ -50,7 +50,10 @@ namespace Doodle
 
         try
         {
-            RegisterBuiltinLoaders(context);
+            // 网格 loader 内部持有 DoodleMeshLibrary：内建正方体在这里上传。
+            // 场景 loader 是纯 CPU 的，只需要通过上下文拿文件来源
+            RegisterLoader<DoodleMesh>(std::make_unique<DoodleMeshAssetLoader>(context.device));
+            RegisterLoader<DoodleSceneData>(std::make_unique<DoodleSceneLoader>());
         }
         catch (...)
         {
@@ -63,7 +66,7 @@ namespace Doodle
     void DoodleAssetManager::Destroy()
     {
         // 先让每个 loader 释放资产，再清容器。loader 的 Destroy 必须不抛异常：
-        // 它既在显式销毁路径上，也在本类析构兜底里
+        // 它只在显式销毁路径上调用（析构不做 GPU 清理）
         for (auto& entry : m_loaders)
         {
             entry.second->Destroy();
@@ -71,17 +74,5 @@ namespace Doodle
 
         m_loaders.clear();
         m_pFileSystem = nullptr;
-    }
-
-    void DoodleAssetManager::RegisterBuiltinLoaders(const DoodleAssetManagerInitContext& context)
-    {
-        // 网格 loader 内部持有 DoodleMeshLibrary：内建正方体在这里上传。
-        // 场景 loader 是纯 CPU 的，只需要通过上下文拿文件来源
-        RegisterLoader<DoodleMesh>(std::make_unique<DoodleMeshAssetLoader>(context.device));
-        RegisterLoader<DoodleSceneData>(std::make_unique<DoodleSceneLoader>());
-
-        // 目前 commandBuffer 没有 loader 使用；保留在初始化上下文里，
-        // 将来的贴图 / 材质 loader 需要它做中转上传和描述符资源创建
-        (void)context.commandBuffer;
     }
 }
