@@ -14,34 +14,12 @@
 #include <utility>
 #include <vector>
 
-#include <glm/gtc/quaternion.hpp>
-
 #include "Asset/DoodleAssetManager.h"
 #include "DoodleSceneData.h"
+#include "Math/DoodleMath.h"
 #include "Rendering/DoodleCamera.h"
 #include "Rendering/DoodleMeshRenderer.h"
 #include "Vulkan/DoodleMesh.h"
-
-namespace
-{
-    /**
-     * 文件里的欧拉角 → Transform 用的四元数
-     *
-     * 约定 q = Rz * Ry * Rx：先绕 X、再绕 Y、最后绕 Z，三个轴都是世界轴。
-     * 单轴测试（例如 [0, 0, 45]）与旋转顺序无关，但多轴组合必须有一份
-     * 写死的约定，否则同一份文件在不同实现里会得到不同的朝向。
-     *
-     * 不用 glm::quat(vec3)：它的分量组合顺序没有写在这边的代码里，
-     * 换一个人读时还得去翻 GLM 实现。这里逐个 angleAxis 乘，顺序一目了然。
-     */
-    glm::quat EulerDegreesToQuaternion(const glm::vec3& degrees)
-    {
-        const glm::vec3 radians = glm::radians(degrees);
-        return glm::angleAxis(radians.z, glm::vec3(0.0f, 0.0f, 1.0f))
-             * glm::angleAxis(radians.y, glm::vec3(0.0f, 1.0f, 0.0f))
-             * glm::angleAxis(radians.x, glm::vec3(1.0f, 0.0f, 0.0f));
-    }
-}
 
 namespace Doodle
 {
@@ -182,7 +160,7 @@ namespace Doodle
 
             DoodleTransform& transform = gameObject.GetTransform();
             transform.position = objectData.position;
-            transform.rotation = EulerDegreesToQuaternion(objectData.rotationDegrees);
+            transform.rotation = DoodleMath::EulerDegreesToQuaternion(objectData.rotationDegrees);
             transform.scale = objectData.scale;
 
             if (meshes[i] != nullptr)

@@ -62,7 +62,8 @@ namespace Doodle
          *
          * 只存在于文件边界：DoodleTransform 内部一律用四元数。转换顺序是
          * q = Rz * Ry * Rx（先绕 X、再绕 Y、最后绕 Z，世界轴），由
-         * DoodleScene::InitializeFromData 完成。这样手改场景文件时不用手算四元数。
+         * DoodleMath::EulerDegreesToQuaternion 完成（在
+         * DoodleScene::InitializeFromData 里调用）。这样手改场景文件时不用手算四元数。
          */
         glm::vec3 rotationDegrees{0.0f};
 

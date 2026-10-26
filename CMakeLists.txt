@@ -108,6 +108,8 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Platform/DoodleApplication.h
     Engine/Runtime/Platform/DoodleLog.cpp
     Engine/Runtime/Platform/DoodleLog.h
+    Engine/Runtime/Math/DoodleMath.cpp
+    Engine/Runtime/Math/DoodleMath.h
     Engine/Runtime/Core/DoodleTransform.h
     Engine/Runtime/Core/DoodleUpdateContext.h
     Engine/Runtime/Core/DoodleLifecycleState.h
