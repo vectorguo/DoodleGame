@@ -112,9 +112,10 @@ namespace Doodle
         std::unique_ptr<DoodleWindow> CreateWindow() override;
 
         /**
-         * 建出 Android 文件来源
+         * 建出 Android 文件来源，接管 APK assets 与外部文件
          *
-         * 目前只支持文件系统路径；APK assets 在第 5 步接入，接口不变
+         * AAssetManager 由 NativeActivity 在 android_main 之前挂好，
+         * 不依赖窗口，所以 Initialize 阶段就能建出来
          */
         std::unique_ptr<DoodleFileSystem> CreateFileSystem() override;
 

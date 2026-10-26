@@ -66,6 +66,21 @@ android {
         }
     }
 
+    // 运行时资产：把仓库根的 Resources/ 收作 assets 源目录。
+    //
+    // 这样 APK 里的路径与 Resources/ 下的相对路径一一对应，
+    // 原生侧读 "Scenes/main.json" 就能命中 assets/Scenes/main.json，
+    // 与 macOS 的 .app/Contents/Resources、Windows 的输出目录是同一种布局。
+    //
+    // 不往 src/main/assets 里拷贝：那会出现第二份内容，改了一处忘另一处是迟早的事。
+    // Gradle 本来就支持模块目录之外的源目录；src/main/assets 仍按默认规则保留，
+    // 以后真有 Android 专属资产时不必再改这段
+    sourceSets {
+        getByName("main") {
+            assets.directories.add("../../Resources")
+        }
+    }
+
     buildTypes {
         release {
             // 本工程没有 Java 字节码要压缩，混淆器无从下手。
@@ -74,7 +89,8 @@ android {
         }
     }
 
-    // 纯原生应用，没有 Java/Kotlin 源码目录，不设 sourceSets
+    // 纯原生应用，没有 Java/Kotlin 源码目录，所以不配 java/kotlin 的 sourceSets；
+    // 上面的 assets 源目录是唯一的例外
 }
 
 // 把 AGP 默认带进来的 kotlin-stdlib 剔掉。

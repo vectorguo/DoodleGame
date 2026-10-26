@@ -27,7 +27,7 @@ namespace
      *
      * 相对路径，由 DoodleFileSystem 决定根在哪里：macOS 是工作目录
      * 或 .app/Contents/Resources，Windows 是工作目录或可执行文件所在目录，
-     * Android 将来是 APK assets。
+     * Android 是 APK assets。
      * 修启动内容只改这一处（以及文件本身）
      */
     constexpr std::string_view kStartupScenePath = "Scenes/main.json";

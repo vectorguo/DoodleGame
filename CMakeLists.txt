@@ -96,6 +96,8 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Vulkan/DoodleShaderModule.cpp
     Engine/Runtime/Vulkan/DoodleShaderModule.h
     Engine/Runtime/Vulkan/DoodleVulkanConfig.h
+    Engine/Runtime/Vulkan/DoodleVulkanUtils.cpp
+    Engine/Runtime/Vulkan/DoodleVulkanUtils.h
     Engine/Runtime/Vulkan/DoodleVertex.h
     Engine/Runtime/Vulkan/QueueFamilySelection.h
     Engine/Runtime/Vulkan/SwapChainSupportDetails.h

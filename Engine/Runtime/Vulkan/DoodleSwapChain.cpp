@@ -9,6 +9,7 @@
 #include <stdexcept>
 
 #include "DoodleVulkanDevice.h"
+#include "DoodleVulkanUtils.h"
 #include "SwapChainSupportDetails.h"
 #include "../Platform/DoodleWindow.h"
 
@@ -40,7 +41,13 @@ namespace Doodle
         const auto surfaceFormat = SelectSurfaceFormat(supportDetails.surfaceFormats);
         const auto presentMode = SelectSurfacePresentMode(supportDetails.surfacePresentModes);
         const auto compositeAlpha = SelectCompositeAlpha(supportDetails.surfaceCapabilities);
-        const auto extent = SelectSurfaceExtent(supportDetails.surfaceCapabilities, window);
+
+        //预旋转：本工程自己把画面转到图像朝向上（见 DoodleVulkanManager::UpdateUniformBuffer），
+        //所以这里如实填 currentTransform，声明"已经转好了"。
+        //这意味着后面所有跟着图像尺寸走的东西（extent、视口、深度图）拿到的都是
+        //面板自然方向的尺寸，不是用户看到的那个 —— 必须成对处理
+        const auto preTransform = supportDetails.surfaceCapabilities.currentTransform;
+        const auto extent = SelectImageExtent(supportDetails.surfaceCapabilities, window, preTransform);
 
         //决定交换链里想放多少张图像。实现会规定它能正常工作所需的最小数量
         //但仅仅贴着这个最小值，意味着我们有时不得不等待驱动完成内部操作， 才能获取下一张图像来渲染。因此建议至少比最小值多申请一张
@@ -77,9 +84,12 @@ namespace Doodle
             createInfo.pQueueFamilyIndices = queueFamilyIndices;
         }
 
-        //取系统当前给这个表面的变换。Android 上经常是 90/270 度（横竖屏），
-        //这里照填即可 —— 让系统在合成时做旋转，比自己处理省事且不会出错
-        createInfo.preTransform = supportDetails.surfaceCapabilities.currentTransform;
+        //填 currentTransform 是**承诺**，不是请求：它的意思是"图像内容已经按这个变换转好了"，
+        //合成器因此不会再转一次。真正要转的那一步在投影里补（见 UpdateUniformBuffer）。
+        //
+        //桌面（macOS / Windows）上 currentTransform 恒为 IDENTITY，这里什么都不做；
+        //Android 手机的自然方向是竖屏，横屏 Activity 拿到的是 90/270 —— 这条路径只在那时生效
+        createInfo.preTransform = preTransform;
         createInfo.compositeAlpha = compositeAlpha;
         createInfo.presentMode = presentMode;
         createInfo.clipped = VK_TRUE;
@@ -95,6 +105,7 @@ namespace Doodle
         //记录交换链图像数据
         m_swapChainImageFormat = surfaceFormat.format;
         m_swapChainImageExtent = extent;
+        m_preTransform = preTransform;
         vkGetSwapchainImagesKHR(m_pDevice->GetLogicalDevice(), m_swapChain, &imageCount, nullptr);
         m_swapChainImages.resize(imageCount);
         vkGetSwapchainImagesKHR(m_pDevice->GetLogicalDevice(), m_swapChain, &imageCount, m_swapChainImages.data());
@@ -112,6 +123,7 @@ namespace Doodle
         m_swapChainImages.clear();
         m_swapChainImageFormat = VK_FORMAT_UNDEFINED;
         m_swapChainImageExtent = {};
+        m_preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
     }
 
     VkSurfaceFormatKHR DoodleSwapChain::SelectSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableSurfaceFormats)
@@ -175,19 +187,35 @@ namespace Doodle
         return VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
     }
 
-    VkExtent2D DoodleSwapChain::SelectSurfaceExtent(const VkSurfaceCapabilitiesKHR& surfaceCapabilities, const DoodleWindow& window)
+    VkExtent2D DoodleSwapChain::SelectImageExtent(const VkSurfaceCapabilitiesKHR& surfaceCapabilities,
+                                                  const DoodleWindow& window,
+                                                  VkSurfaceTransformFlagBitsKHR preTransform)
     {
         //currentExtent 不是 uint32_t 的最大值，说明驱动已经把尺寸定死了，
-        //直接用它 —— 这种情况在 Android 上是常态，桌面也常见
+        //直接用它 —— 这种情况在 Android 上是常态，桌面也常见。
+        //注意它描述的是**显示方向**的尺寸，也就是用户看到的那一组
+        VkExtent2D imageExtent;
         if (surfaceCapabilities.currentExtent.width != std::numeric_limits<uint32_t>::max())
         {
-            return surfaceCapabilities.currentExtent;
+            imageExtent = surfaceCapabilities.currentExtent;
+        }
+        else
+        {
+            imageExtent = window.GetSurfaceSize();
         }
 
-        VkExtent2D surfaceExtent = window.GetSurfaceSize();
-        surfaceExtent.width = std::clamp(surfaceExtent.width, surfaceCapabilities.minImageExtent.width, surfaceCapabilities.maxImageExtent.width);
-        surfaceExtent.height = std::clamp(surfaceExtent.height, surfaceCapabilities.minImageExtent.height, surfaceCapabilities.maxImageExtent.height);
-        return surfaceExtent;
+        //声明了 preTransform 的交换链要在面板自然方向上分配图像：90/270 时宽高正好是对调的。
+        //不对调就等于把横图塞进竖框 —— 合成器按对调后的尺寸去读，画面被转置并拉伸。
+        //窗口兜底那条路也一样：GetSurfaceSize 给的同样是显示方向的尺寸
+        if (DoodleVulkanUtils::SwapsExtent(preTransform))
+        {
+            std::swap(imageExtent.width, imageExtent.height);
+        }
+
+        //夹在驱动给的范围里。对调之后才是图像的真实尺寸，所以这一步必须排在交换之后
+        imageExtent.width = std::clamp(imageExtent.width, surfaceCapabilities.minImageExtent.width, surfaceCapabilities.maxImageExtent.width);
+        imageExtent.height = std::clamp(imageExtent.height, surfaceCapabilities.minImageExtent.height, surfaceCapabilities.maxImageExtent.height);
+        return imageExtent;
     }
 
     void DoodleSwapChain::CreateImageViews()

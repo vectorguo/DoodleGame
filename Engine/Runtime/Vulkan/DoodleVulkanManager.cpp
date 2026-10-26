@@ -7,6 +7,7 @@
 #include "../Platform/DoodleWindow.h"
 #include "DoodleDrawItem.h"
 #include "DoodleUniformBufferObject.h"
+#include "DoodleVulkanUtils.h"
 
 #include <cstdint>
 #include <stdexcept>
@@ -375,16 +376,26 @@ namespace Doodle
         //每帧重新读交换链尺寸：窗口缩放后宽高比自动正确，
         //描述符集与 UBO 对象本身都不需要重建
         const auto extent = m_swapChain.GetImageExtent();
+        const auto preTransform = m_swapChain.GetPreTransform();
+
+        //宽高比要用**用户看到的那一组**。交换链做了预旋转时，图像宽高和显示方向是对调的，
+        //所以这里再对调回来 —— 透视必须按显示方向算，算完再转，才是同一份画面
         ubo.proj = glm::perspective(
             glm::radians(45.0f),
-            static_cast<float>(extent.width) / static_cast<float>(extent.height),
+            DoodleVulkanUtils::GetDisplayAspect(extent, preTransform),
             0.1f,
             10.0f);
 
         //GLM 默认按 OpenGL 的裁剪空间生成投影；Vulkan 的 Y 轴方向相反。
         //Z 轴方向已经由 CMake 里的 GLM_FORCE_DEPTH_ZERO_TO_ONE 处理，
-        //这里只剩 Y 需要翻转
+        //这里只剩 Y 需要翻转。
+        //
+        //这一步必须在下面的预旋转之前：它负责"换成 Vulkan 的 NDC"，
+        //而预旋转是在 Vulkan 的 NDC 里做的
         ubo.proj[1][1] *= -1.0f;
+
+        //最后把整幅画面转到图像自己的朝向上。桌面拿到的是 IDENTITY，这一乘是单位阵
+        ubo.proj = DoodleVulkanUtils::MakePreRotation(preTransform) * ubo.proj;
 
         //HOST_COHERENT 保证不需要手动 flush；下一次 vkQueueSubmit 之后再读取时，
         //这份写入对 GPU 可见。写入位置已在调用处保证：栅栏之后、录制之前。

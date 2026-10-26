@@ -52,10 +52,25 @@ namespace Doodle
 
         /**
          * 获取交换链图像尺寸
+         *
+         * 注意这是**图像**的尺寸，不是用户看到的那个尺寸。声明了 preTransform 之后，
+         * 90/270 时两者宽高是对调的（见 DoodleVulkanUtils::SwapsExtent）
          */
         [[nodiscard]] VkExtent2D GetImageExtent() const
         {
             return m_swapChainImageExtent;
+        }
+
+        /**
+         * 获取交换链图像相对显示方向的朝向
+         *
+         * 本层如实声明了"画面已经转好"（preTransform = currentTransform），
+         * 所以合成器不会再替我们转。投影要把这最后一转补上，
+         * 否则整个画面会横躺在屏幕上，并且被按对调的宽高拉伸
+         */
+        [[nodiscard]] VkSurfaceTransformFlagBitsKHR GetPreTransform() const
+        {
+            return m_preTransform;
         }
 
         /**
@@ -113,11 +128,20 @@ namespace Doodle
 
         /**
          * 选择交换链图像的尺寸
+         *
+         * 不是简单地把 currentExtent 拿回来：那个值是**显示方向**的尺寸，
+         * 而声明了 preTransform 的交换链要在面板自然方向上分配图像，
+         * 90/270 时宽高要对调。只对调 preTransform 不对调尺寸，
+         * 合成器会按对调后的尺寸去读这张图，结果是转置 + 拉伸
+         *
          * @param surfaceCapabilities 可用的SurfaceCapability
          * @param window 窗口，currentExtent 无效时用它兜底
+         * @param preTransform 交换链将要声明的变换，决定要不要对调宽高
          * @return 交换链图像的尺寸
          */
-        [[nodiscard]] static VkExtent2D SelectSurfaceExtent(const VkSurfaceCapabilitiesKHR& surfaceCapabilities, const DoodleWindow& window);
+        [[nodiscard]] static VkExtent2D SelectImageExtent(const VkSurfaceCapabilitiesKHR& surfaceCapabilities,
+                                                          const DoodleWindow& window,
+                                                          VkSurfaceTransformFlagBitsKHR preTransform);
 
         /**
          * 创建图像视图，每个交换链图像一个
@@ -152,6 +176,14 @@ namespace Doodle
          * 交换链图像尺寸
          */
         VkExtent2D m_swapChainImageExtent{};
+
+        /**
+         * 交换链图像的朝向
+         *
+         * 存下来而不是每次回查表面：它描述的是**这一张**交换链，
+         * 重建之后可能变（旋转屏幕），那时会重新填
+         */
+        VkSurfaceTransformFlagBitsKHR m_preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 
         /**
          * 交换链图像

@@ -9,6 +9,7 @@
 
 #include <exception>
 #include <memory>
+#include <stdexcept>
 
 #include <android_native_app_glue.h>
 
@@ -32,9 +33,15 @@ namespace Doodle
 
     std::unique_ptr<DoodleFileSystem> DoodleAndroidApplication::CreateFileSystem()
     {
-        // APK assets 的来源需要 android_app（AAssetManager）—— 第 5 步接进
-        // DoodleAndroidFileSystem。现在返回的对象只支持文件系统路径
-        return std::make_unique<DoodleAndroidFileSystem>();
+        // assetManager 由 NativeActivity 在 android_main 之前挂到 activity 上，
+        // 与窗口无关，所以 Initialize 阶段就能建好。这里只做防御性检查：
+        // 空指针若放过去，第一次读资产时才会以一段和根因对不上的崩溃出现
+        if (m_pApp == nullptr || m_pApp->activity == nullptr || m_pApp->activity->assetManager == nullptr)
+        {
+            throw std::runtime_error("DoodleAndroidApplication: asset manager is unavailable");
+        }
+
+        return std::make_unique<DoodleAndroidFileSystem>(m_pApp->activity->assetManager);
     }
 
     void DoodleAndroidApplication::Initialize()
