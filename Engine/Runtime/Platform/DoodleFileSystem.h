@@ -17,8 +17,9 @@ namespace Doodle
     /**
      * 文件来源：把「字节从哪来」与「字节是什么格式」分开
      *
-     * 资产加载只认这个接口，不再各自拼路径。桌面实现是工作目录 + .app 包内
-     * Resources，Android 实现是 APK assets + 文件系统 —— 平台差异关在实现里，
+     * 资产加载只认这个接口，不再各自拼路径。macOS 实现是工作目录 + .app 包内
+     * Resources，Windows 实现是工作目录 + 可执行文件所在目录，
+     * Android 实现是 APK assets + 文件系统 —— 平台差异关在实现里，
      * 上层的场景 / 网格 / 纹理 loader 看到的都是同一个相对路径。
      *
      * 生命周期挂在 DoodleApplication 上，不跟着 Vulkan 设备走：Android 切到后台

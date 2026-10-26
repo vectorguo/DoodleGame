@@ -1,0 +1,13 @@
+# 脚本的换行符按文件类型钉死，不随各人机器上的 core.autocrlf 走。
+#
+# Windows 上装 Git 默认 core.autocrlf=true，检出时把 LF 换成 CRLF：
+#   - shell 脚本在 CRLF 下交给别的 bash（WSL、自己装的 MSYS2）会报 $'\r': command not found。
+#     构建用的 Git for Windows 自带的 bash 实测能容忍，但不该指望它
+#   - 批处理反过来要 CRLF：cmd 对 LF 结尾的 .bat 有已知的解析毛病（goto / call 找不到标签）。
+#     钉住之后，即使在 macOS 上改过再提交，Windows 上检出的仍是 CRLF
+#
+# 批处理只管 windows/ 下自己写的那份。android/gradlew.bat 是 Gradle 生成的，库里本来就按
+# CRLF 原样存着；给它也套上 text，git 会把它整份改存成 LF，平白多出一次全文件的改动
+*.sh            text eol=lf
+gradlew         text eol=lf
+/windows/*.bat  text eol=crlf

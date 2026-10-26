@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  DoodleGame 的应用程序清单。列在 CMakeLists.txt 的 Windows 源文件里，链接时由 MSVC 嵌进 exe，
+  与链接器自己生成的那份（UAC 级别之类）合并。
+
+  两件事放在这里而不是代码里，是因为它们都得在进程起来的那一刻就生效，
+  晚于任何窗口或任何一次字符串转换都来不及（微软的建议也是写清单、不调 API）：
+
+  1. DPI 感知：Per-Monitor V2
+     不声明的话系统把进程当成 96 DPI，在 150% 的屏上把整个窗口位图拉大 1.5 倍 ——
+     画面发虚，GetClientRect 报的也是缩放前的逻辑尺寸，交换链按它建就只有物理像素的三分之二。
+     V2 起于 Windows 10 1703；更老的系统认不得，退到后面那个 PerMonitor，再老的认 dpiAware
+
+  2. 活动代码页：UTF-8
+     Win32 的窄字符 API（std::ifstream、std::filesystem 的窄字符串接口最终都落到这里）
+     默认按系统代码页解释字符串，简中是 936。引擎里的 std::string 在另外两个平台上都是 UTF-8，
+     场景文件里写的路径也是 UTF-8 —— 声明之后 Windows 上同样成立。起于 Windows 10 1903
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+</assembly>

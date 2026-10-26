@@ -25,8 +25,9 @@ namespace
     /**
      * 启动场景的路径
      *
-     * 相对路径，由 DoodleFileSystem 决定根在哪里：桌面是工作目录
-     * 或 .app/Contents/Resources，Android 将来是 APK assets。
+     * 相对路径，由 DoodleFileSystem 决定根在哪里：macOS 是工作目录
+     * 或 .app/Contents/Resources，Windows 是工作目录或可执行文件所在目录，
+     * Android 将来是 APK assets。
      * 修启动内容只改这一处（以及文件本身）
      */
     constexpr std::string_view kStartupScenePath = "Scenes/main.json";
@@ -121,8 +122,8 @@ namespace Doodle
             .device = m_vulkanManager.GetDevice(),
             .commandBuffer = m_vulkanManager.GetCommandBuffer()});
 
-        // 内容加载放在这里：macOS 的 Initialize 与 Android 首次
-        // APP_CMD_INIT_WINDOW 都经过 InitializeRuntime，这是两个平台唯一共同的
+        // 内容加载放在这里：macOS / Windows 的 Initialize 与 Android 首次
+        // APP_CMD_INIT_WINDOW 都经过 InitializeRuntime，这是各平台唯一共同的
         // 「Vulkan 已就绪」时点
         LoadStartupScene();
 

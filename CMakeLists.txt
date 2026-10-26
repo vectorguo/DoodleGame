@@ -7,10 +7,12 @@
 # 原先写 4.3（CLion 新建工程时按自带版本号填的），结果 Android SDK 自带的
 # CMake 最高只到 4.1.2，两条 Android 路径全被挡住，反而只能依赖 CLion。
 #
-# 降到 3.22 之后两条链各有各的 CMake，互不干扰：
+# 降到 3.22 之后几条链各有各的 CMake，互不干扰：
 #   Android：SDK 的 3.22.1 + NDK clang，C++23 展开成 -std=gnu++2b（与 gnu++23 同义）
-#   桌面   ：CLion 自带的 4.3.1
-# 别拿 3.22.1 去建桌面 target —— 它的 AppleClang 表只到 C++20，
+#   macOS  ：CLion 自带的 4.3.1
+#   Windows：Visual Studio 2022 自带的那份（实测 3.31），MSVC 上 C++23 展开成 /std:c++latest。
+#            用 windows/generate.bat 生成 sln，它会优先挑这一份
+# 别拿 3.22.1 去建 macOS target —— 它的 AppleClang 表只到 C++20，
 # 会把 C++23 报成「CMake does not know the compile flags」。
 #
 # 另外这一行不只是「声明最低版本」：它把该版本及之前的策略置为 NEW、
@@ -47,17 +49,17 @@ endif()
 # ============================================================================
 # 源文件清单
 #
-# 按「谁能编」分三摞。分开的理由是实的：GLFW 实现里全是 #include <GLFW/glfw3.h>，
+# 按「谁能编」分四摞。分开的理由是实的：GLFW 实现里全是 #include <GLFW/glfw3.h>，
 # Android 侧根本没有这个库；反过来 Android 入口依赖 <android_native_app_glue.h>，
-# 桌面也没有。混在一摞里只能靠 #ifdef 挡，那是把平台判断散到各处，
-# 不如在这里一次说清
+# 桌面也没有；Windows 那摞依赖 <windows.h>，另外两边都没有。
+# 混在一摞里只能靠 #ifdef 挡，那是把平台判断散到各处，不如在这里一次说清
 #
-# 平台专属的那两摞，路径与 Engine/Runtime/Platform/<平台>/ 一一对应：
+# 平台专属的那三摞，路径与 Engine/Runtime/Platform/<平台>/ 一一对应：
 # 一个平台的窗口实现、文件来源和它的入口都在自己那个文件夹里。
-# Platform/ 根目录下的是三摞共用的那部分（接口、驱动层、日志）
+# Platform/ 根目录下的是各摞共用的那部分（接口、驱动层、日志）
 #
 # DoodleApplication 编进了共享那摞而不是 macOS 那摞：它不依赖任何平台 API。
-# 两个平台都要用它 —— 它是「当前应用」这个概念本身（持有 Vulkan 子系统、
+# 各个平台都要用它 —— 它是「当前应用」这个概念本身（持有 Vulkan 子系统、
 # 接收窗口的尺寸通知、被 C 回调经 GetInstance 找到），只是三个生命周期函数
 # 带的那套默认实现以「窗口与程序同寿」为前提，所以 Android 另有一份覆盖它们的
 # DoodleAndroidApplication（在 Android 那摞里）
@@ -151,6 +153,19 @@ set(DOODLE_ANDROID_SOURCES
     Engine/Runtime/Platform/Android/DoodleAndroidWindow.h
 )
 
+# Windows 专属：入口、窗口与文件来源实现，外加应用程序清单（DPI 感知与 UTF-8 代码页，
+# 理由写在清单文件里）。.manifest 列进源文件，MSVC 链接时就会把它嵌进 exe
+set(DOODLE_WINDOWS_SOURCES
+    Engine/Runtime/Platform/Windows/DoodleWindowsMain.cpp
+    Engine/Runtime/Platform/Windows/DoodleWindowsApplication.cpp
+    Engine/Runtime/Platform/Windows/DoodleWindowsApplication.h
+    Engine/Runtime/Platform/Windows/DoodleWindowsFileSystem.cpp
+    Engine/Runtime/Platform/Windows/DoodleWindowsFileSystem.h
+    Engine/Runtime/Platform/Windows/DoodleWindowsWindow.cpp
+    Engine/Runtime/Platform/Windows/DoodleWindowsWindow.h
+    Engine/Runtime/Platform/Windows/DoodleGame.manifest
+)
+
 # ---- 着色器：编译 GLSL 并生成内嵌副本 ----
 #
 # 这是构建的一步，不是手动步骤。
@@ -171,16 +186,65 @@ set(_doodle_embedded_shaders "${_doodle_shader_output_dir}/DoodleEmbeddedShaders
 # 用哪个 glslc：
 #   Android —— NDK 自带一份（shader-tools/<host>/glslc），
 #              这样 Android 构建不依赖机器上装没装 Vulkan SDK
-#   桌面    —— PATH 上的那一份，来自 Vulkan SDK
+#   Windows —— Vulkan SDK 的 Bin 目录，按 VULKAN_SDK 环境变量先找。下面 find_package(Vulkan)
+#              找头文件和库也认这个变量，两边用的是同一份 SDK；PATH 上要是还挂着别的
+#              glslc（旧版 SDK、NDK 自带的），不会被它抢先
+#   macOS   —— PATH 上的那一份，来自 Vulkan SDK
 if(ANDROID)
     set(_doodle_glslc "${ANDROID_NDK}/shader-tools/${ANDROID_HOST_TAG}/glslc")
+elseif(WIN32)
+    find_program(_doodle_glslc NAMES glslc HINTS "$ENV{VULKAN_SDK}/Bin" REQUIRED)
 else()
     find_program(_doodle_glslc NAMES glslc REQUIRED)
+endif()
+
+# 谁来跑 compile.sh。
+#
+# macOS / Linux 上它自己就是可执行文件；Windows 主机没有这个能力，得显式交给 bash ——
+# 用 Git for Windows 自带的那份，脚本要用的 xxd 它也带了。
+#
+# 只认 Git 安装目录下的 bin/bash.exe，不去 PATH 上找：
+#   - C:\Windows\System32\bash.exe 是 WSL 的入口，跑起来是另一个 Linux，
+#     认不得 D:/ 这种路径，也调不动 Windows 上的 glslc.exe
+#   - Git 自己的 usr/bin/bash.exe 不会把 /usr/bin 加进 PATH，脚本里的 sed、xxd 全找不到；
+#     bin/bash.exe 是它的启动器，先把环境搭好再起 bash（两个都实测过）
+#
+# 判据是主机而不是目标平台（CMAKE_HOST_WIN32 而不是 WIN32）：在 Windows 上
+# 构建 Android 时，跑这个脚本的同样是这台 Windows
+set(_doodle_shader_script_launcher "")
+if(CMAKE_HOST_WIN32)
+    # 两条线索：Git for Windows 安装时写进注册表的安装目录；以及 git.exe 的位置 ——
+    # 它可能在 <Git>/cmd、<Git>/bin 或 <Git>/mingw64/bin，往上一到两级就是 <Git>。
+    # 注册表那条只能直接写在 find_program 里：它带着分号，经列表变量转一手会被拆成两截
+    set(_doodle_git_bash_hints "")
+    find_package(Git QUIET)
+    if(GIT_EXECUTABLE)
+        get_filename_component(_doodle_git_executable_dir "${GIT_EXECUTABLE}" DIRECTORY)
+        list(APPEND _doodle_git_bash_hints
+            "${_doodle_git_executable_dir}/../bin"
+            "${_doodle_git_executable_dir}/../../bin"
+        )
+    endif()
+
+    find_program(_doodle_bash NAMES bash
+        HINTS
+            "[HKEY_LOCAL_MACHINE\\SOFTWARE\\GitForWindows;InstallPath]/bin"
+            ${_doodle_git_bash_hints}
+        NO_DEFAULT_PATH
+    )
+    if(NOT _doodle_bash)
+        message(FATAL_ERROR
+            "找不到 Git for Windows 自带的 bash。编译着色器的 Shaders/compile.sh 要用它。\n"
+            "装好 Git for Windows（https://git-scm.com/download/win）之后重新生成工程；"
+            "装在非标准位置时用 -D_doodle_bash=<Git 安装目录>/bin/bash.exe 指定。")
+    endif()
+    set(_doodle_shader_script_launcher "${_doodle_bash}")
 endif()
 
 add_custom_command(
     OUTPUT "${_doodle_embedded_shaders}"
     COMMAND ${CMAKE_COMMAND} -E env "GLSLC=${_doodle_glslc}"
+            ${_doodle_shader_script_launcher}
             "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/compile.sh" "${_doodle_shader_output_dir}"
     DEPENDS ${_doodle_shader_sources}
             "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/compile.sh"
@@ -242,6 +306,139 @@ if(ANDROID)
     # 注意这条要配合 project() 里启用了 C 语言才成立，理由见那里的注释
     target_link_options(DoodleGame PRIVATE
         "-u" "ANativeActivity_onCreate"
+    )
+
+    return()
+endif()
+
+# ============================================================================
+# Windows
+#
+# 产出 Visual Studio 的 sln：windows/generate.bat 用 CMake 的 Visual Studio 生成器生成，
+# 落在 windows/build/ 下。工程的源头仍然只有这一份 CMakeLists.txt —— 与 android/ 下的
+# Gradle 工程是同一个关系，加源文件改的还是上面的清单。sln 是生成物，不入库；
+# 改了本文件之后不用重跑脚本，VS 里一构建，ZERO_CHECK 会先把工程重新生成一遍
+#
+# 依赖只有两样：Visual Studio（带「使用 C++ 的桌面开发」工作负载）与 Vulkan SDK，
+# 编着色器另外借用 Git for Windows 的 bash（见上面的着色器那段）。
+# 窗口直接用 Win32，不需要 GLFW，理由见 DoodleWindowsWindow.h。
+# 最低 Windows 10 1607：GetDpiForWindow / AdjustWindowRectExForDpi 从那一版开始才有
+#
+# generate.bat 通篇只用 ASCII，注释与提示都是英文，这是刻意的：cmd 读含多字节 UTF-8
+# 字符的批处理时会算错下一行的文件偏移，把注释行的后半截当成命令执行。简中控制台（936）
+# 上实测：同一份脚本直接 call 一切正常，经管道调用时就开始乱跑 —— 开头 chcp 65001 也救不了
+# 用法、前置条件都写在那份脚本的开头
+# ============================================================================
+if(WIN32)
+    # Vulkan SDK 安装时设了 VULKAN_SDK 环境变量，FindVulkan 按它找头文件和 vulkan-1.lib。
+    # 运行时的 vulkan-1.dll 由显卡驱动装进系统目录，不用随程序拷贝 ——
+    # 这点和 macOS 要把 libvulkan 拷进 .app 不同
+    find_package(Vulkan REQUIRED)
+
+    # 着色器源码也挂进工程，只为在解决方案资源管理器里能直接打开编辑。
+    # 它们不是 C++ 源文件，VS 不会去编；编它们的是上面那条自定义命令
+    add_executable(DoodleGame
+        ${DOODLE_SHARED_SOURCES}
+        ${DOODLE_WINDOWS_SOURCES}
+        ${_doodle_shader_sources}
+        "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/compile.sh"
+    )
+
+    # 与 Android 那段同一个规矩：不加工程根目录。
+    # Vulkan 的头文件由下面链接的 Vulkan::Vulkan 带进来
+    target_include_directories(DoodleGame PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Engine/ThirdParty
+        ${CMAKE_CURRENT_SOURCE_DIR}/Engine/Runtime
+        ${_doodle_shader_output_dir}
+    )
+
+    # VK_USE_PLATFORM_WIN32_KHR —— 与 Android 的 VK_USE_PLATFORM_ANDROID_KHR 同理：
+    #   VkWin32SurfaceCreateInfoKHR、vkCreateWin32SurfaceKHR 都在这个宏后面
+    # WIN32_LEAN_AND_MEAN —— <windows.h> 不再顺带拉进 winsock、OLE 那一大批用不上的头
+    # NOMINMAX —— <windows.h> 默认定义 min / max 两个宏，会把 std::min 和
+    #   std::numeric_limits<T>::max() 改写坏，共用代码里两处都有
+    # UNICODE / _UNICODE —— Win32 里不带 A / W 后缀的那一套（IDC_ARROW 这类资源宏、
+    #   以及将来顺手写的 MessageBox 之类）一律落到宽字符版本。VS 新建工程默认就是这样，
+    #   CMake 生成的工程却不带；不定义的话它们落到 A 版本，按系统代码页解释字符串
+    #
+    # 前面这几个只能挡住宏的一部分。CreateWindow 这类与函数同名的宏挡不掉，
+    # 靠的是「<windows.h> 只在 .cpp 里、且排在本工程头文件之后」，见 DoodleWindowsWindow.h
+    target_compile_definitions(DoodleGame PRIVATE
+        VK_USE_PLATFORM_WIN32_KHR
+        WIN32_LEAN_AND_MEAN
+        NOMINMAX
+        UNICODE
+        _UNICODE
+    )
+
+    if(MSVC)
+        # 源码是不带 BOM 的 UTF-8，而 MSVC 默认按系统代码页读源文件，简中系统上是 936。
+        # 轻则满屏 C4819；重则 // 注释行尾汉字落单的那个字节被当成双字节字符的前半，
+        # 把后面的换行吞掉，下一行代码跟着成了注释 —— 报出来的错和根因毫不相干。
+        # /utf-8 同时把执行字符集定成 UTF-8，字符串字面量在各平台上是同一份字节
+        target_compile_options(DoodleGame PRIVATE /utf-8)
+    endif()
+
+    if(CMAKE_GENERATOR MATCHES "Visual Studio")
+        # VS 生成器默认在一个工程里逐个编 .cpp，打开 /MP 才会并行
+        target_compile_options(DoodleGame PRIVATE /MP)
+    endif()
+
+    target_link_libraries(DoodleGame PRIVATE Vulkan::Vulkan)
+
+    # ---- Visual Studio 工程的几处设置 ----
+
+    # 启动项目。不设的话 VS 打开 sln 默认选中 ALL_BUILD，按 F5 只会报「无法启动程序」
+    set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT DoodleGame)
+
+    # 调试时的工作目录 = 可执行文件所在目录（默认是 vcxproj 所在的构建目录）。
+    # 下面会把运行时数据拷到那里，于是按 F5、在资源管理器里双击、从命令行别处启动，
+    # 读到的都是同一份（查找顺序见 DoodleWindowsFileSystem.h）
+    set_target_properties(DoodleGame PROPERTIES
+        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:DoodleGame>"
+    )
+
+    # 解决方案资源管理器里按磁盘上的目录分组，与 CLion 看到的工程树一致，
+    # 而不是全堆进「源文件 / 头文件」两个筛选器。
+    # 着色器内嵌副本在构建目录里、不在源码树下，TREE 收不了它，单放一组
+    set(_doodle_source_tree ${DOODLE_SHARED_SOURCES} ${DOODLE_WINDOWS_SOURCES} ${_doodle_shader_sources})
+    list(REMOVE_ITEM _doodle_source_tree "${_doodle_embedded_shaders}")
+    source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
+        ${_doodle_source_tree}
+        "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/compile.sh"
+    )
+    source_group("Generated" FILES "${_doodle_embedded_shaders}")
+
+    # ALL_BUILD、ZERO_CHECK 这些 CMake 自带的工程收进一个文件夹，不和 DoodleGame 并列
+    set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+
+    # ---- 运行时数据：摆到可执行文件旁边 ----
+    #
+    # 对应 macOS 往 .app/Contents/Resources 里拷的那两份。Windows 没有包结构，
+    # 按惯例和可执行文件放在一起：
+    #   <输出目录>/Shaders/*.spv
+    #   <输出目录>/Scenes/
+    #
+    # 着色器只拷 .spv，而且直接从构建目录拷。macOS 那边要先把 .spv 摆进源码树的 Shaders/，
+    # 是因为 CLion 的工作目录是工程根目录；这边调试工作目录就是输出目录，
+    # 不需要往源码树里写东西。从别的目录启动时 DoodleShaderModule 找不到这两个文件，
+    # 会退到编进二进制的内嵌副本，那份同样是本次构建的产物，不会过期
+    #
+    # 和 macOS 同理，两份都先删再拷：copy_directory 只增不删，源码侧删掉的文件
+    # 会在输出目录里活下来，运行时优先命中陈旧副本
+    add_custom_command(TARGET DoodleGame POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:DoodleGame>/Shaders"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:DoodleGame>/Shaders"
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "${_doodle_shader_output_dir}/vert.spv"
+            "${_doodle_shader_output_dir}/frag.spv"
+            "$<TARGET_FILE_DIR:DoodleGame>/Shaders"
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:DoodleGame>/Scenes"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Scenes"
+            "$<TARGET_FILE_DIR:DoodleGame>/Scenes"
+        COMMENT "Copy shaders and scenes next to DoodleGame.exe"
+        VERBATIM
     )
 
     return()

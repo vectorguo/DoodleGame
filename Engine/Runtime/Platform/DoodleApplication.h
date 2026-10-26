@@ -28,7 +28,7 @@ namespace Doodle
     /**
      * 应用对象：驱动帧循环、按顺序起停 Vulkan 与其他应用级服务
      *
-     * 两个平台共用这一个「当前应用」的概念，所以它得同时是两件事：
+     * 各平台共用这一个「当前应用」的概念，所以它得同时是两件事：
      * 平台无关的那半边（持有文件系统、资产管理器、Vulkan 子系统、场景管理器，
      * 接收窗口的尺寸通知、被 C 回调经 GetInstance 找到），以及一套现成的
      * 生命周期默认实现。
@@ -142,7 +142,8 @@ namespace Doodle
         /**
          * 窗口尺寸变了，下一帧重建交换链
          *
-         * 由平台的窗口实现直接调用（macOS 见 DoodleMacWindow::FramebufferSizeCallback），
+         * 由平台的窗口实现直接调用（macOS 见 DoodleMacWindow::FramebufferSizeCallback，
+         * Windows 见 DoodleWindowsWindow 窗口过程里的 WM_SIZE），
          * 本对象不自己监听窗口事件。
          * 只记标志、不在回调里当场重建，理由见 DoodleVulkanManager::NotifyWindowResized
          */
@@ -224,7 +225,7 @@ namespace Doodle
          * 拖窗口或系统卡顿之后单帧过大。首帧的「上一帧」是 Run 进入循环的时刻，
          * 同样走这条钳制，不单独判首帧。
          *
-         * 两个平台的帧循环都调用它，保证「场景先更新、渲染后执行」只有一处。
+         * 各平台的帧循环都调用它，保证「场景先更新、渲染后执行」只有一处。
          */
         void Tick();
 

@@ -58,7 +58,9 @@ namespace Doodle
          *
          * 用来在 .app 包内定位资源：可执行文件在 Contents/MacOS/，
          * 资源在 Contents/Resources/，两者的相对位置是固定的。
-         * Android 上返回空串 —— 那边没有这个概念，也用不上
+         * 其余平台返回空串：Android 没有这个概念，也用不上；Windows 的 .spv 就摆在
+         * 可执行文件旁边，F5 与双击启动时那里就是工作目录，第 1 条已经命中，
+         * 从别处启动时落到编进二进制的副本（与 .spv 出自同一次构建）
          */
         [[nodiscard]] static std::string GetExecutableDirectory();
 

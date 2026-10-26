@@ -212,6 +212,9 @@ namespace Doodle
          * 不放在各调用点，是因为 acquire 提前返回那条路也要求这一刻就兑现它 ——
          * 漏一处就会为同一个尺寸白重建一遍；而会泵事件的 WaitUntilDrawable
          * 正在本函数开头，清零只能排在它后面
+         *
+         * 等待期间有了关闭请求就什么都不做、直接返回：窗口此刻可能仍是 0×0，
+         * 而帧循环马上就要退出了。旧的交换链留给 Destroy
          */
         void RecreateSwapChain();
 

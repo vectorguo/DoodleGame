@@ -44,7 +44,7 @@ namespace Doodle
          * 泵一次事件
          *
          * 会阻塞 —— 这是名字用「泵」而不是「轮询」的原因：有没有活干决定它等不等。
-         * 桌面就是 glfwPollEvents，只是排空队列，不等；
+         * 桌面只是排空队列，不等：macOS 就是 glfwPollEvents，Windows 是 PeekMessage 循环；
          * Android 上没有对应的单一调用：有可画的东西时非阻塞地把事件排干，
          * 没有时阻塞等下一个事件（见实现里的取舍）
          */
@@ -89,7 +89,8 @@ namespace Doodle
         /**
          * 创建表面所需的实例扩展名
          *
-         * 只返回与窗口系统相关的那几个（macOS 走 GLFW 查，Android 是
+         * 只返回与窗口系统相关的那几个（macOS 走 GLFW 查，Windows 是
+         * VK_KHR_surface + VK_KHR_win32_surface，Android 是
          * VK_KHR_surface + VK_KHR_android_surface）。
          * 平台专有的其它实例扩展由 DoodleVulkanDevice 自己按需追加。
          */
