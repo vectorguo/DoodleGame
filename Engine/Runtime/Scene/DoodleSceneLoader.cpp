@@ -186,28 +186,83 @@ namespace
                 ThrowFieldError(sourceName, objectPath, "expected an object");
             }
 
-            CheckUnknownKeys(objectJson, {"name", "mesh", "position", "rotation", "scale"},
+            CheckUnknownKeys(objectJson, {"name", "mesh", "camera", "position", "rotation", "scale"},
                              sourceName, objectPath);
 
             Doodle::DoodleSceneObjectData objectData;
             objectData.name = ReadOptionalNonEmptyString(objectJson, "name", "GameObject",
                                                          sourceName, objectPath);
 
+            // mesh 可选：对象可以只挂相机。给了就必须是合法字符串 ——
+            // 忽略一个拼坏的字段会让画面静默少一个对象
             const auto meshIt = objectJson.find("mesh");
-            if (meshIt == objectJson.end())
+            if (meshIt != objectJson.end())
             {
-                ThrowFieldError(sourceName, objectPath, "missing field 'mesh'");
+                if (!meshIt->is_string())
+                {
+                    ThrowFieldError(sourceName, objectPath + ".mesh", "expected a string");
+                }
+
+                objectData.meshKey = meshIt->get<std::string>();
+                if (objectData.meshKey.empty())
+                {
+                    ThrowFieldError(sourceName, objectPath + ".mesh", "must not be empty");
+                }
             }
 
-            if (!meshIt->is_string())
+            // camera 可以是布尔（只表示挂不挂，投影参数全用默认值），也可以是
+            // 对象（挂载的同时配置投影方式）。对象形式是留给相机配置的扩展位，
+            // 现在只有 "type" 一个字段
+            const auto cameraIt = objectJson.find("camera");
+            if (cameraIt != objectJson.end())
             {
-                ThrowFieldError(sourceName, objectPath + ".mesh", "expected a string");
+                const std::string cameraPath = objectPath + ".camera";
+
+                if (cameraIt->is_boolean())
+                {
+                    objectData.hasCamera = cameraIt->get<bool>();
+                }
+                else if (cameraIt->is_object())
+                {
+                    objectData.hasCamera = true;
+                    CheckUnknownKeys(*cameraIt, {"type"}, sourceName, cameraPath);
+
+                    const auto typeIt = cameraIt->find("type");
+                    if (typeIt != cameraIt->end())
+                    {
+                        const std::string typePath = cameraPath + ".type";
+                        if (!typeIt->is_string())
+                        {
+                            ThrowFieldError(sourceName, typePath, "expected a string");
+                        }
+
+                        const std::string type = typeIt->get<std::string>();
+                        if (type == "perspective")
+                        {
+                            objectData.cameraProjection = Doodle::ECameraProjectionType::Perspective;
+                        }
+                        else if (type == "orthographic")
+                        {
+                            objectData.cameraProjection = Doodle::ECameraProjectionType::Orthographic;
+                        }
+                        else
+                        {
+                            ThrowFieldError(sourceName, typePath,
+                                            "expected 'perspective' or 'orthographic'");
+                        }
+                    }
+                }
+                else
+                {
+                    ThrowFieldError(sourceName, cameraPath, "expected true, false, or an object");
+                }
             }
 
-            objectData.meshKey = meshIt->get<std::string>();
-            if (objectData.meshKey.empty())
+            // 两者都没有的对象在当前模型里什么也不做：没有层级，它连
+            // 「只提供变换的父节点」都当不了。多半是漏了字段，当场报错
+            if (objectData.meshKey.empty() && !objectData.hasCamera)
             {
-                ThrowFieldError(sourceName, objectPath + ".mesh", "must not be empty");
+                ThrowFieldError(sourceName, objectPath, "must have 'mesh' or 'camera'");
             }
 
             objectData.position = ReadOptionalVec3(objectJson, "position", glm::vec3(0.0f),

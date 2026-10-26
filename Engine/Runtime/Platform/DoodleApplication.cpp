@@ -10,9 +10,9 @@
 #include "DoodleWindow.h"
 
 #include "Core/DoodleGameObject.h"
+#include "Rendering/DoodleCamera.h"
 #include "Rendering/DoodleMeshRenderer.h"
 #include "Scene/DoodleScene.h"
-#include "Scene/DoodleSceneBuilder.h"
 #include "Scene/DoodleSceneData.h"
 
 #include <algorithm>
@@ -182,7 +182,14 @@ namespace Doodle
         // Transform，而收集夹在两者之间，拿到的是 Update 之后的一致快照
         m_sceneManager.Update(DoodleUpdateContext{deltaSeconds});
         CollectDrawItems();
-        m_vulkanManager.DrawFrame(m_reusableDrawItems);
+
+        // 没有相机就没有 view / proj。启动场景已经在 LoadStartupScene 里校验过
+        // 必须带相机，这里为空只可能是运行期把相机组件停用或销毁了 —— 跳过
+        // 本帧，而不是拿一个假相机去画
+        if (m_pActiveCamera != nullptr)
+        {
+            m_vulkanManager.DrawFrame(*m_pActiveCamera, m_reusableDrawItems);
+        }
     }
 
     void DoodleApplication::LoadStartupScene()
@@ -194,12 +201,32 @@ namespace Doodle
             throw std::runtime_error("DoodleApplication: startup scene data is null");
         }
 
-        DoodleSceneBuilder::Build(m_sceneManager, m_assetManager, *pSceneData);
+        // 先建空场景再装配内容：数据读不出来时连场景都不会建；初始化在
+        // 校验完全部网格之后才开始创建对象，失败时只会留下一个空场景，
+        // 由异常路径上的管理器析构兜底
+        DoodleScene& scene = m_sceneManager.CreateScene(pSceneData->name);
+        scene.InitializeFromData(*pSceneData);
+
+        // 当前渲染只有一个相机入口：场景里没有相机就没有 view / proj。
+        // 这是启动内容错误，在这里当场报出来，比运行起来后对着一个永远不更新的
+        // 窗口猜原因便宜。相机可以在运行期被停用 / 销毁，所以每帧仍要重新查找，
+        // 这条检查只负责启动那一刻
+        for (const DoodleGameObject* pGameObject : scene.GetGameObjects())
+        {
+            if (pGameObject->GetComponent<DoodleCamera>() != nullptr)
+            {
+                return;
+            }
+        }
+
+        throw std::runtime_error("DoodleApplication: startup scene '" + scene.GetName() +
+                                 "' has no camera");
     }
 
     void DoodleApplication::CollectDrawItems()
     {
         m_reusableDrawItems.clear();
+        m_pActiveCamera = nullptr;
 
         m_sceneManager.GetScenes(m_reusableScenes);
         for (const DoodleScene* pScene : m_reusableScenes)
@@ -207,6 +234,17 @@ namespace Doodle
             pScene->GetGameObjects(m_reusableGameObjects);
             for (const DoodleGameObject* pGameObject : m_reusableGameObjects)
             {
+                // 相机不挂在绘制项上：对象可以只带相机、不带网格。第一个启用的
+                // 相机生效，与「GetComponent 取第一个」的语义一致
+                if (m_pActiveCamera == nullptr)
+                {
+                    const auto* pCamera = pGameObject->GetComponent<DoodleCamera>();
+                    if (pCamera != nullptr && pCamera->IsEnabled())
+                    {
+                        m_pActiveCamera = pCamera;
+                    }
+                }
+
                 // 一个对象只取第一个渲染器：GetComponent 的现有语义。
                 // 需要同一对象画多份网格时，再扩展成遍历全部组件
                 const auto* pRenderer = pGameObject->GetComponent<DoodleMeshRenderer>();

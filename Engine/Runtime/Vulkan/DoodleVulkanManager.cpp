@@ -8,12 +8,11 @@
 #include "DoodleDrawItem.h"
 #include "DoodleUniformBufferObject.h"
 #include "DoodleVulkanUtils.h"
+#include "Rendering/DoodleCamera.h"
 
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
-
-#include <glm/gtc/matrix_transform.hpp>
 
 namespace Doodle
 {
@@ -108,7 +107,7 @@ namespace Doodle
         RecreateSwapChain();
     }
 
-    void DoodleVulkanManager::DrawFrame(const std::vector<DoodleDrawItem>& drawItems)
+    void DoodleVulkanManager::DrawFrame(const DoodleCamera& camera, const std::vector<DoodleDrawItem>& drawItems)
     {
         //表面已被 Suspend 拆掉，没有可呈现的目标。
         //驱动层本就不该在这时调进来，但这个检查比崩溃便宜得多 ——
@@ -186,7 +185,7 @@ namespace Doodle
         //    栅栏已等过，说明 GPU 不再读本槽位上一轮的数据；
         //    命令还没开始录，说明本帧还没有引用它。
         //    用同一块 UBO 给两个在途帧共用，会在这两者之间形成读写竞争
-        UpdateUniformBuffer(frameIndex);
+        UpdateUniformBuffer(frameIndex, camera);
 
         //④ 录制本帧命令。命令缓冲层不缓存任何上游句柄，录制时现取，
         //   所以交换链重建之后重录拿到的自然是新句柄。
@@ -362,16 +361,13 @@ namespace Doodle
         }
     }
 
-    void DoodleVulkanManager::UpdateUniformBuffer(const uint32_t frameIndex)
+    void DoodleVulkanManager::UpdateUniformBuffer(const uint32_t frameIndex, const DoodleCamera& camera)
     {
         UniformBufferObject ubo{};
 
-        //相机放在 (2, 2, 2)，看向原点，以世界 Z 轴为上方向。
-        //上方向不能与视线平行，否则 lookAt 的叉乘退化
-        ubo.view = glm::lookAt(
-            glm::vec3(2.0f, 2.0f, 2.0f),
-            glm::vec3(0.0f, 0.0f, 0.0f),
-            glm::vec3(0.0f, 0.0f, 1.0f));
+        //view 由相机从宿主 Transform 现算：相机不存位置 / 朝向，
+        //移动它所在的对象，画面自然跟着变
+        ubo.view = camera.GetViewMatrix();
 
         //每帧重新读交换链尺寸：窗口缩放后宽高比自动正确，
         //描述符集与 UBO 对象本身都不需要重建
@@ -379,22 +375,17 @@ namespace Doodle
         const auto preTransform = m_swapChain.GetPreTransform();
 
         //宽高比要用**用户看到的那一组**。交换链做了预旋转时，图像宽高和显示方向是对调的，
-        //所以这里再对调回来 —— 透视必须按显示方向算，算完再转，才是同一份画面
-        ubo.proj = glm::perspective(
-            glm::radians(45.0f),
-            DoodleVulkanUtils::GetDisplayAspect(extent, preTransform),
-            0.1f,
-            10.0f);
-
-        //GLM 默认按 OpenGL 的裁剪空间生成投影；Vulkan 的 Y 轴方向相反。
-        //Z 轴方向已经由 CMake 里的 GLM_FORCE_DEPTH_ZERO_TO_ONE 处理，
-        //这里只剩 Y 需要翻转。
+        //所以这里再对调回来 —— 透视必须按显示方向算，算完再转，才是同一份画面。
         //
-        //这一步必须在下面的预旋转之前：它负责"换成 Vulkan 的 NDC"，
-        //而预旋转是在 Vulkan 的 NDC 里做的
-        ubo.proj[1][1] *= -1.0f;
+        //Y 翻转已经在 GetProjectionMatrix 里做完；这里拿到的 proj 是「显示方向 +
+        //Vulkan 裁剪空间」的结果
+        ubo.proj = camera.GetProjectionMatrix(DoodleVulkanUtils::GetDisplayAspect(extent, preTransform));
 
-        //最后把整幅画面转到图像自己的朝向上。桌面拿到的是 IDENTITY，这一乘是单位阵
+        //最后把整幅画面转到图像自己的朝向上。桌面拿到的是 IDENTITY，这一乘是单位阵。
+        //
+        //必须排在 Y 翻转之后、作为投影的最后一步左乘：Y 翻转负责换成 Vulkan 的 NDC，
+        //预旋转是在 Vulkan 的 NDC 里做的。顺序一换，Android 上会静默变形
+        //（Free75 修的就是这条）
         ubo.proj = DoodleVulkanUtils::MakePreRotation(preTransform) * ubo.proj;
 
         //HOST_COHERENT 保证不需要手动 flush；下一次 vkQueueSubmit 之后再读取时，

@@ -24,6 +24,7 @@ namespace Doodle
     //只作为遍历结果的元素出现，完整定义留给源文件
     class DoodleGameObject;
     class DoodleScene;
+    class DoodleCamera;
 
     /**
      * 应用对象：驱动帧循环、按顺序起停 Vulkan 与其他应用级服务
@@ -268,6 +269,10 @@ namespace Doodle
          * 组件停用、网格为空的对象跳过。model 取收集那一刻 Transform 的矩阵，
          * 所以本函数必须排在场景 Update 之后、DrawFrame 之前。
          *
+         * 同一次遍历顺手找到本帧的相机：第一个启用状态的 DoodleCamera 生效，
+         * 结果写进 m_pActiveCamera。多相机切换需要「激活」概念，当前不做；
+         * 找不到时置空，调用方跳过本帧的绘制
+         *
          * 结果写进 m_reusableDrawItems；三个容器都是跨帧重复使用的，
          * 稳态下不再分配。
          * 绘制顺序就是遍历顺序：场景创建顺序 → 对象创建顺序 → 组件添加顺序。
@@ -354,6 +359,15 @@ namespace Doodle
         std::vector<DoodleScene*> m_reusableScenes;
         std::vector<DoodleGameObject*> m_reusableGameObjects;
         std::vector<DoodleDrawItem> m_reusableDrawItems;
+
+        /**
+         * 本帧生效的相机，由 CollectDrawItems 每帧重新查找
+         *
+         * 非拥有指针：相机组件由场景里的 GameObject 持有，场景先于帧循环结束
+         * 销毁，所以这里不能缓存跨帧的相机指针 —— 对象随时可能被销毁，
+         * 每帧现找是唯一不会悬空的写法
+         */
+        const DoodleCamera* m_pActiveCamera = nullptr;
 
         /**
          * 当前实例，由构造置位、析构清空，成对维护

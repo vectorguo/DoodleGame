@@ -125,11 +125,11 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Scene/DoodleSceneData.h
     Engine/Runtime/Scene/DoodleSceneLoader.cpp
     Engine/Runtime/Scene/DoodleSceneLoader.h
-    Engine/Runtime/Scene/DoodleSceneBuilder.cpp
-    Engine/Runtime/Scene/DoodleSceneBuilder.h
     Engine/Runtime/Scene/DoodleSceneManager.h
     Engine/Runtime/Scene/DoodleSceneManager.cpp
     Engine/Runtime/Rendering/DoodleMeshRenderer.h
+    Engine/Runtime/Rendering/DoodleCamera.cpp
+    Engine/Runtime/Rendering/DoodleCamera.h
     Engine/Runtime/Utility/Singleton.h
 )
 
@@ -435,13 +435,31 @@ if(WIN32)
             "${_doodle_shader_output_dir}/vert.spv"
             "${_doodle_shader_output_dir}/frag.spv"
             "$<TARGET_FILE_DIR:DoodleGame>/Shaders"
-        COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:DoodleGame>/Scenes"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/Resources/Scenes"
-            "$<TARGET_FILE_DIR:DoodleGame>/Scenes"
-        COMMENT "Copy shaders and scenes next to DoodleGame.exe"
+        COMMENT "Copy shaders next to DoodleGame.exe"
         VERBATIM
     )
+
+    # 场景文件同样不能只挂 POST_BUILD：改 JSON 不会触发链接，POST_BUILD 不跑，
+    # 输出目录里会一直留着旧场景。这里改成按文件依赖触发，stamp 保证无变化时
+    # 什么都不做。让 DoodleGame 依赖这个目标，单独构建 DoodleGame 时也会执行
+    file(GLOB _doodle_scene_files CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/Resources/Scenes/*")
+    set(_doodle_scene_stamp "${CMAKE_CURRENT_BINARY_DIR}/doodle_scenes_windows.stamp")
+
+    add_custom_command(
+        OUTPUT "${_doodle_scene_stamp}"
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:DoodleGame>/Scenes"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/Resources/Scenes"
+            "$<TARGET_FILE_DIR:DoodleGame>/Scenes"
+        COMMAND ${CMAKE_COMMAND} -E touch "${_doodle_scene_stamp}"
+        DEPENDS ${_doodle_scene_files}
+        COMMENT "Copy Scenes next to DoodleGame.exe"
+        VERBATIM
+    )
+
+    add_custom_target(doodle_stage_scenes DEPENDS "${_doodle_scene_stamp}")
+    add_dependencies(DoodleGame doodle_stage_scenes)
 
     return()
 endif()
@@ -672,13 +690,30 @@ if(APPLE)
     # 里的 Resources/Scenes 只是源文件。
     #
     # 与 Shaders 同理，先删再拷：copy_directory 只增不删，源码侧删掉的旧
-    # 场景文件会在包里活下来，运行时优先命中陈旧副本
-    add_custom_command(TARGET DoodleGame POST_BUILD
+    # 场景文件会在包里活下来，运行时优先命中陈旧副本。
+    #
+    # 但这里不能只挂 POST_BUILD：POST_BUILD 只在目标重新链接时执行，而改
+    # JSON 不会触发链接 —— Ninja 会报 "no work to do"，包里一直留着旧场景。
+    # 所以把场景文件列成依赖，内容变了就重拷；stamp 让没有变化时什么都不做。
+    # 让 DoodleGame 依赖这个目标：无论只构建 DoodleGame 还是构建 all，拷贝
+    # 都在同一条依赖链上。目标里先建目录再拷，干净构建时 .app 不存在也能跑
+    file(GLOB _doodle_scene_files CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/Resources/Scenes/*")
+    set(_doodle_scene_stamp "${CMAKE_CURRENT_BINARY_DIR}/doodle_scenes_macos.stamp")
+
+    add_custom_command(
+        OUTPUT "${_doodle_scene_stamp}"
         COMMAND ${CMAKE_COMMAND} -E rm -rf
             "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Scenes"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_SOURCE_DIR}/Resources/Scenes"
             "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Scenes"
+        COMMAND ${CMAKE_COMMAND} -E touch "${_doodle_scene_stamp}"
+        DEPENDS ${_doodle_scene_files}
         COMMENT "Copy Scenes into DoodleGame.app/Contents/Resources/Scenes"
+        VERBATIM
     )
+
+    add_custom_target(doodle_stage_scenes DEPENDS "${_doodle_scene_stamp}")
+    add_dependencies(DoodleGame doodle_stage_scenes)
 endif()

@@ -10,7 +10,38 @@
 
 #include <cstddef>
 #include <stdexcept>
+#include <string>
 #include <utility>
+#include <vector>
+
+#include <glm/gtc/quaternion.hpp>
+
+#include "Asset/DoodleAssetManager.h"
+#include "DoodleSceneData.h"
+#include "Rendering/DoodleCamera.h"
+#include "Rendering/DoodleMeshRenderer.h"
+#include "Vulkan/DoodleMesh.h"
+
+namespace
+{
+    /**
+     * 文件里的欧拉角 → Transform 用的四元数
+     *
+     * 约定 q = Rz * Ry * Rx：先绕 X、再绕 Y、最后绕 Z，三个轴都是世界轴。
+     * 单轴测试（例如 [0, 0, 45]）与旋转顺序无关，但多轴组合必须有一份
+     * 写死的约定，否则同一份文件在不同实现里会得到不同的朝向。
+     *
+     * 不用 glm::quat(vec3)：它的分量组合顺序没有写在这边的代码里，
+     * 换一个人读时还得去翻 GLM 实现。这里逐个 angleAxis 乘，顺序一目了然。
+     */
+    glm::quat EulerDegreesToQuaternion(const glm::vec3& degrees)
+    {
+        const glm::vec3 radians = glm::radians(degrees);
+        return glm::angleAxis(radians.z, glm::vec3(0.0f, 0.0f, 1.0f))
+             * glm::angleAxis(radians.y, glm::vec3(0.0f, 1.0f, 0.0f))
+             * glm::angleAxis(radians.x, glm::vec3(1.0f, 0.0f, 0.0f));
+    }
+}
 
 namespace Doodle
 {
@@ -101,6 +132,71 @@ namespace Doodle
         DoodleGameObject& gameObject = *pGameObject;
         m_gameObjects.push_back(std::move(pGameObject));
         return gameObject;
+    }
+
+    void DoodleScene::InitializeFromData(const DoodleSceneData& sceneData)
+    {
+        // 与 CreateGameObject 同一个前置条件：进入销毁流程后建不出对象。
+        // 提前拦住，也避免白解析一遍资产
+        if (!IsAlive())
+        {
+            throw std::logic_error("DoodleScene: cannot initialize from data after Destroy");
+        }
+
+        // 阶段一：把全部网格解析完再动场景。
+        //
+        // 网格名写错是最常见的内容错误；如果在循环里边查边建，前面几个对象
+        // 已经进了场景，错误却抛出在第三个。场景创建后没有「撤销」的公开
+        // 入口，所以校验必须排在第一次 CreateGameObject 之前。
+        //
+        // 只挂相机的对象没有网格，槽位留空；下标始终与 gameObjects 对齐，
+        // 阶段二按同一个下标取用
+        std::vector<const DoodleMesh*> meshes(sceneData.gameObjects.size(), nullptr);
+        DoodleAssetManager& assetManager = DoodleAssetManager::GetInstance();
+
+        for (std::size_t i = 0; i < sceneData.gameObjects.size(); ++i)
+        {
+            const DoodleSceneObjectData& objectData = sceneData.gameObjects[i];
+            if (objectData.meshKey.empty())
+            {
+                continue;
+            }
+
+            const DoodleMesh* pMesh = assetManager.Load<DoodleMesh>(objectData.meshKey);
+            if (pMesh == nullptr)
+            {
+                // Loader 的契约是不返回空指针；这里只是防御，报错信息带上对象名
+                throw std::runtime_error("DoodleScene: mesh '" + objectData.meshKey +
+                                         "' for GameObject '" + objectData.name + "' is missing");
+            }
+
+            meshes[i] = pMesh;
+        }
+
+        // 阶段二：数据校验通过，开始建对象
+        for (std::size_t i = 0; i < sceneData.gameObjects.size(); ++i)
+        {
+            const DoodleSceneObjectData& objectData = sceneData.gameObjects[i];
+
+            DoodleGameObject& gameObject = CreateGameObject(objectData.name);
+
+            DoodleTransform& transform = gameObject.GetTransform();
+            transform.position = objectData.position;
+            transform.rotation = EulerDegreesToQuaternion(objectData.rotationDegrees);
+            transform.scale = objectData.scale;
+
+            if (meshes[i] != nullptr)
+            {
+                gameObject.AddComponent<DoodleMeshRenderer>().SetMesh(meshes[i]);
+            }
+
+            // 相机是普通组件：它的位姿就是上面写进 Transform 的那一份，
+            // 组件本身不存位置 / 朝向。投影方式来自场景数据
+            if (objectData.hasCamera)
+            {
+                gameObject.AddComponent<DoodleCamera>().SetProjectionType(objectData.cameraProjection);
+            }
+        }
     }
 
     void DoodleScene::DestroyGameObject(DoodleGameObject& gameObject)

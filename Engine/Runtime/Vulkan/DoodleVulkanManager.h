@@ -22,6 +22,9 @@ namespace Doodle
     //本层只按引用 / 指针持有窗口，完整定义留给源文件去取
     class DoodleWindow;
 
+    //相机同样只按引用使用：门面不拥有相机组件，也不依赖对象模型
+    class DoodleCamera;
+
     /**
      * Vulkan子系统门面：按依赖顺序持有各层，对外提供统一的Vulkan入口
      */
@@ -75,6 +78,10 @@ namespace Doodle
          * 只负责把这一组数据录进命令缓冲；空列表合法，表示本帧只清屏 ——
          * 场景为空、对象全被隐藏时都会走到这里，不是错误。
          *
+         * camera 由调用方每帧从场景里找到后借进来：view 由它从宿主 Transform
+         * 现算，proj 由它按显示方向的宽高比生成。本层不保存相机指针，也不
+         * 关心它挂在哪个 GameObject 上；调用期间必须保持有效
+         *
          * 只读引用而不是 span：当前唯一调用方传的就是 vector，换成视图
          * 类型没有收益。等出现第二种容器 / 只取一段子区间时再泛化
          *
@@ -94,7 +101,7 @@ namespace Doodle
          *
          * @note 里面的 Vulkan 调用大多是异步的，返回不代表 GPU 已完成
          */
-        void DrawFrame(const std::vector<DoodleDrawItem>& drawItems);
+        void DrawFrame(const DoodleCamera& camera, const std::vector<DoodleDrawItem>& drawItems);
 
         /**
          * 通知窗口尺寸发生了变化，下一帧需要重建交换链
@@ -239,12 +246,18 @@ namespace Doodle
          * 调用位置在等完本槽位栅栏之后、录制命令之前：此时 GPU 不会再读写
          * 这块缓冲的上一轮内容，而本帧命令还没开始引用它
          *
+         * view / proj 都来自相机组件：view 由它从宿主 Transform 现算，proj 由它
+         * 按显示方向的宽高比生成（其中已含 Vulkan 的 Y 翻转）。本函数在
+         * proj 之上再做最后一步交换链预旋转 —— 顺序不能换，预旋转必须排在
+         * Y 翻转之后、作为投影的最后一步左乘，否则 Android 上会静默变形
+         *
          * 这里不写 model：它每个对象都不一样，改由 Record 逐个 draw item
          * 推进 push constant。本块缓冲只装整帧共享的相机数据
          *
          * @param frameIndex 在途帧索引，与描述符集、命令缓冲使用同一个索引
+         * @param camera 本帧的相机，只在本次调用期间使用
          */
-        void UpdateUniformBuffer(uint32_t frameIndex);
+        void UpdateUniformBuffer(const uint32_t frameIndex, const DoodleCamera& camera);
 
         /**
          * 创建描述符池

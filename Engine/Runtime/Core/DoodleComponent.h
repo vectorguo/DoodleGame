@@ -118,13 +118,17 @@ namespace Doodle
          */
         DoodleComponent() = default;
 
-    private:
-        friend class DoodleGameObject;
-
         /**
          * 宿主，由 AddComponent 在入容器之前设置
+         *
+         * 放在 protected 而不是只留 GetGameObject()：组件读宿主是派生类的
+         * 正常需要（相机读 Transform），直接成员访问比多一层转发直白。
+         * 非空由 AddComponent 保证 —— 只有它能把组件放进宿主的容器
          */
         DoodleGameObject* m_pGameObject = nullptr;
+
+    private:
+        friend class DoodleGameObject;
 
         /**
          * 生命周期状态

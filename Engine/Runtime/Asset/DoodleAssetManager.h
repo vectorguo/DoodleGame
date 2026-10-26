@@ -86,8 +86,10 @@ namespace Doodle
          * 当前资产管理器实例
          *
          * 存在的理由：GamePlay 代码在组件回调这类地方拿不到应用对象，而资产
-         * 系统本来就是进程里唯一的那份。引擎内部仍以显式传引用为准（见
-         * DoodleSceneBuilder::Build），这里给拿不到上下文的地方留出口。
+         * 系统本来就是进程里唯一的那份。场景加载（DoodleScene::
+         * InitializeFromData）也从这里取 —— 场景本身不保存资产管理器的引用；
+         * 其余运行时路径仍以显式传引用为准（见 DoodleApplication::
+         * InitializeRuntime）。
          *
          * 有效期就是资产管理器对象的存活期：构造时登记、析构时清空，成对维护。
          * 实例仍由 DoodleApplication 独占持有 —— 这里只是访问出口，不是

@@ -26,8 +26,8 @@ namespace Doodle
      * 同一个指针。
      *
      * 解析是纯函数（Parse），不碰场景、不碰 Vulkan；实例化 GameObject 是
-     * DoodleSceneBuilder 的事。这个分界让解析可以脱离设备测试，也让将来把
-     * 解析放到工作线程时不需要改接口。
+     * DoodleScene::InitializeFromData 的事。这个分界让解析可以脱离设备测试，
+     * 也让将来把解析放到工作线程时不需要改接口。
      */
     class DoodleSceneLoader final : public DoodleAssetLoader<DoodleSceneData>
     {

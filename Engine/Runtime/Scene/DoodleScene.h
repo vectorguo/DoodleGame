@@ -19,12 +19,15 @@ namespace Doodle
 {
     //只以引用 / 指针与 unique_ptr 成员出现，析构在源文件定义，这里不需要完整类型
     class DoodleGameObject;
+    struct DoodleSceneData;
 
     /**
      * 场景：GameObject 的独占容器与生命周期驱动
      *
-     * 只负责 CPU 侧的对象所有权、active、Update 驱动和延迟销毁；相机、
-     * MeshRenderer、渲染收集都不在这里。
+     * 负责 CPU 侧的对象所有权、active、Update 驱动、延迟销毁，以及把
+     * DoodleSceneData 装配成对象；渲染收集不在这里。装配入口是
+     * InitializeFromData —— 本类唯一按名字向资产管理器取资产的地方，
+     * 场景实例本身不保存资产引用，相机 / MeshRenderer 也只是被创建出来的组件。
      *
      * GameObject 用 unique_ptr 独占持有，并通过 GetScene() 反指本场景。
      * 生命周期是 Alive → PendingDestroy → Destroying → Destroyed：
@@ -94,6 +97,24 @@ namespace Doodle
          * 出来的对象没有下一次 sweep，只会拖到容器析构时才跑回调。
          */
         DoodleGameObject& CreateGameObject(std::string name = "NewGameObject");
+
+        /**
+         * 按数据建出本场景的全部对象
+         *
+         * 只做「数据 → 对象」：名字、位姿、网格与相机的装配；文件读取与
+         * JSON 解析属于 DoodleSceneLoader，不在本方法里。网格按 meshKey 向
+         * 当前 DoodleAssetManager 取。场景名不在这里设置，仍由创建时传入。
+         *
+         * 先解析所有网格、再创建对象：资产缺失时一个对象也不会建出来，
+         * 场景保持为空，不会留下半个内容。重复调用会把内容再建一遍，不做
+         * 拦截；要替换内容请销毁场景后重建新的。
+         *
+         * 只能在主线程调用（会创建 GameObject 与组件）。
+         *
+         * @throw std::logic_error 场景已请求销毁
+         * @throw std::runtime_error 引用的资产不存在时抛出，此时场景仍为空
+         */
+        void InitializeFromData(const DoodleSceneData& sceneData);
 
         /**
          * 请求销毁对象；只推进到 PendingDestroy，sweep 时统一执行
