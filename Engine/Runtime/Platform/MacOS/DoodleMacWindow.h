@@ -59,6 +59,10 @@ namespace Doodle
 
         [[nodiscard]] bool IsCloseRequested() const override;
 
+        [[nodiscard]] DoodleInput::RawState GetRawInputState() const override;
+
+        void SetCursorCaptured(const bool captured) override;
+
         [[nodiscard]] VkExtent2D GetSurfaceSize() const override;
 
         [[nodiscard]] std::vector<const char*> GetSurfaceExtensions() const override;
@@ -90,5 +94,24 @@ namespace Doodle
     private:
         /** GLFW 窗口句柄 */
         GLFWwindow* m_pWindow = nullptr;
+
+        /**
+         * 本帧输入快照，由 PumpEvents 刷新
+         */
+        DoodleInput::RawState m_input;
+
+        /**
+         * 光标是否处于捕获状态
+         */
+        bool m_cursorCaptured = false;
+
+        /**
+         * 上一次光标位置，用来求每帧位移
+         *
+         * GLFW 用 double 给坐标；只有捕获时才参与求差。
+         * 切换捕获时会被重设成当前光标位置
+         */
+        double m_lastCursorX = 0.0;
+        double m_lastCursorY = 0.0;
     };
 }

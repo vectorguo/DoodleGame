@@ -77,6 +77,10 @@ namespace Doodle
 
         void WaitUntilDrawable() override;
 
+        [[nodiscard]] DoodleInput::RawState GetRawInputState() const override;
+
+        void SetCursorCaptured(const bool captured) override;
+
         [[nodiscard]] VkExtent2D GetSurfaceSize() const override;
 
         [[nodiscard]] std::vector<const char*> GetSurfaceExtensions() const override;
@@ -114,5 +118,13 @@ namespace Doodle
          * 这里不会因此卡死 —— 焦点变化本身就是一条命令，会唤醒 Looper
          */
         bool m_focused = false;
+
+        /**
+         * 本帧输入快照
+         *
+         * A4 不做触屏，当前恒为空。将来接触摸时，由 onInputEvent 写进这里
+         * （窗口已经接管了 pApp->userData，加回调不用改共享接口）
+         */
+        DoodleInput::RawState m_input;
     };
 }

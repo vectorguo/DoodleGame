@@ -10,6 +10,8 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
+#include "DoodleInput.h"
+
 namespace Doodle
 {
     /**
@@ -68,6 +70,31 @@ namespace Doodle
          *       所以问的不是窗口，是本轮循环还要不要转下去）
          */
         [[nodiscard]] virtual bool IsCloseRequested() const = 0;
+
+        #pragma endregion
+
+        #pragma region 输入
+
+        /**
+         * 本帧的原始输入状态
+         *
+         * 由 PumpEvents 刷新；应用层在 PumpEvents 之后取一次，喂给 DoodleInput。
+         * 游戏层不要直接用这个结构 —— 查询入口是 DoodleInput 的静态方法。
+         *
+         * 各平台在这里只做「原生 API → 平台无关数据」的映射：
+         * macOS 用 GLFW，Windows 用 Win32，Android 当前返回空状态
+         */
+        [[nodiscard]] virtual DoodleInput::RawState GetRawInputState() const = 0;
+
+        /**
+         * 捕获 / 释放光标
+         *
+         * 幂等。切换时以当前光标位置为新基准，并把本帧鼠标位移清零，
+         * 避免第一次按下右键那一帧视角猛甩。
+         *
+         * 桌面：捕获期间隐藏并锁定光标；Android：没有桌面光标，空实现
+         */
+        virtual void SetCursorCaptured(const bool captured) = 0;
 
         #pragma endregion
 

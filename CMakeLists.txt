@@ -102,6 +102,8 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Vulkan/QueueFamilySelection.h
     Engine/Runtime/Vulkan/SwapChainSupportDetails.h
     Engine/Runtime/Platform/DoodleWindow.h
+    Engine/Runtime/Platform/DoodleInput.cpp
+    Engine/Runtime/Platform/DoodleInput.h
     Engine/Runtime/Platform/DoodleFileSystem.cpp
     Engine/Runtime/Platform/DoodleFileSystem.h
     Engine/Runtime/Platform/DoodleApplication.cpp

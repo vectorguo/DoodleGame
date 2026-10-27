@@ -75,6 +75,18 @@ namespace Doodle
         //根本不会带着一个 0×0 的窗口走到这里来
     }
 
+    DoodleInput::RawState DoodleAndroidWindow::GetRawInputState() const
+    {
+        //A4 不做触屏，返回空快照。游戏层仍然通过 DoodleInput 查询，
+        //所以「这个平台没有输入」不需要在调用方分平台判断
+        return m_input;
+    }
+
+    void DoodleAndroidWindow::SetCursorCaptured(const bool /*captured*/)
+    {
+        //Android 没有桌面光标捕获。保留接口是为了三端实现同一份 DoodleWindow 契约
+    }
+
     VkExtent2D DoodleAndroidWindow::GetSurfaceSize() const
     {
         //前置条件：此刻有窗口。调用方只会在已经有交换链的情况下问尺寸，
@@ -129,6 +141,8 @@ namespace Doodle
 
         case APP_CMD_LOST_FOCUS:
             m_focused = false;
+            //失焦清空快照，切后台回来不会带着旧按键
+            m_input = {};
             break;
 
         default:

@@ -62,6 +62,82 @@ namespace Doodle
     void DoodleMacWindow::PumpEvents()
     {
         glfwPollEvents();
+
+        //失焦：清空输入并释放捕获。Cmd+Tab 走的就是这条路，
+        //少了它，回来时按键会卡在按下状态、光标也不会恢复
+        if (glfwGetWindowAttrib(m_pWindow, GLFW_FOCUSED) == 0)
+        {
+            if (m_cursorCaptured)
+            {
+                SetCursorCaptured(false);
+            }
+
+            m_input = {};
+            return;
+        }
+
+        //键位：逐帧轮询，正好对应「本帧快照」。GLFW 的键位是逻辑键，
+        //非 QWERTY 布局下与 Win32 的 VK 映射会有物理位置差异，
+        //要按物理位置统一时再引入 scancode
+        m_input.SetKey(DoodleKey::W, glfwGetKey(m_pWindow, GLFW_KEY_W) == GLFW_PRESS);
+        m_input.SetKey(DoodleKey::A, glfwGetKey(m_pWindow, GLFW_KEY_A) == GLFW_PRESS);
+        m_input.SetKey(DoodleKey::S, glfwGetKey(m_pWindow, GLFW_KEY_S) == GLFW_PRESS);
+        m_input.SetKey(DoodleKey::D, glfwGetKey(m_pWindow, GLFW_KEY_D) == GLFW_PRESS);
+        m_input.SetKey(DoodleKey::Q, glfwGetKey(m_pWindow, GLFW_KEY_Q) == GLFW_PRESS);
+        m_input.SetKey(DoodleKey::E, glfwGetKey(m_pWindow, GLFW_KEY_E) == GLFW_PRESS);
+        m_input.SetKey(DoodleKey::LeftShift, glfwGetKey(m_pWindow, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS);
+
+        m_input.SetMouseButton(DoodleMouseButton::Left,
+                               glfwGetMouseButton(m_pWindow, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS);
+        m_input.SetMouseButton(DoodleMouseButton::Right,
+                               glfwGetMouseButton(m_pWindow, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS);
+        m_input.SetMouseButton(DoodleMouseButton::Middle,
+                               glfwGetMouseButton(m_pWindow, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS);
+
+        //光标位移只在捕获时累计。GLFW_CURSOR_DISABLED 下坐标是虚拟的、
+        //可以越过窗口边界，所以能一直转下去
+        double cursorX = 0.0;
+        double cursorY = 0.0;
+        glfwGetCursorPos(m_pWindow, &cursorX, &cursorY);
+
+        if (m_cursorCaptured)
+        {
+            m_input.mouseDeltaX = static_cast<float>(cursorX - m_lastCursorX);
+            m_input.mouseDeltaY = static_cast<float>(cursorY - m_lastCursorY);
+        }
+        else
+        {
+            m_input.mouseDeltaX = 0.0f;
+            m_input.mouseDeltaY = 0.0f;
+        }
+
+        m_lastCursorX = cursorX;
+        m_lastCursorY = cursorY;
+        m_input.cursorCaptured = m_cursorCaptured;
+    }
+
+    DoodleInput::RawState DoodleMacWindow::GetRawInputState() const
+    {
+        return m_input;
+    }
+
+    void DoodleMacWindow::SetCursorCaptured(const bool captured)
+    {
+        if (captured == m_cursorCaptured)
+        {
+            return;
+        }
+
+        m_cursorCaptured = captured;
+        glfwSetInputMode(m_pWindow, GLFW_CURSOR,
+                         captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+
+        //切换时以当前光标为新基准：不重置的话，第一次按下右键那一帧会按
+        //「光标从上一个位置跳过来」算出一大段位移，视角猛甩
+        glfwGetCursorPos(m_pWindow, &m_lastCursorX, &m_lastCursorY);
+        m_input.mouseDeltaX = 0.0f;
+        m_input.mouseDeltaY = 0.0f;
+        m_input.cursorCaptured = captured;
     }
 
     void DoodleMacWindow::WaitUntilDrawable()

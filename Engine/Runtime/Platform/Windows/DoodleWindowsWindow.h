@@ -71,6 +71,10 @@ namespace Doodle
 
         [[nodiscard]] bool IsCloseRequested() const override;
 
+        [[nodiscard]] DoodleInput::RawState GetRawInputState() const override;
+
+        void SetCursorCaptured(const bool captured) override;
+
         [[nodiscard]] VkExtent2D GetSurfaceSize() const override;
 
         [[nodiscard]] std::vector<const char*> GetSurfaceExtensions() const override;
@@ -102,5 +106,23 @@ namespace Doodle
          * 销毁收在析构里（与 glfwWindowShouldClose 是同一个分工）
          */
         bool m_closeRequested = false;
+
+        /**
+         * 本帧输入快照，由 PumpEvents 刷新
+         */
+        DoodleInput::RawState m_input;
+
+        /**
+         * 窗口是否拥有键盘焦点
+         *
+         * 由 WM_SETFOCUS / WM_KILLFOCUS 维护。GetAsyncKeyState 是全局的，
+         * 必须靠它把别的窗口按下的键挡在外面
+         */
+        bool m_focused = false;
+
+        /**
+         * 光标是否处于捕获状态
+         */
+        bool m_cursorCaptured = false;
     };
 }

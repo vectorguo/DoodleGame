@@ -7,6 +7,7 @@
 
 #include "DoodleApplication.h"
 #include "DoodleFileSystem.h"
+#include "DoodleInput.h"
 #include "DoodleWindow.h"
 
 #include "Core/DoodleGameObject.h"
@@ -111,6 +112,10 @@ namespace Doodle
 
     void DoodleApplication::InitializeRuntime()
     {
+        // 输入快照从零开始：桌面 Initialize 与 Android 首次 INIT_WINDOW 都经过这里。
+        // Android 从后台回来不走本函数，那一半由窗口在失焦时清空
+        DoodleInput::Reset();
+
         // 前置：窗口与文件系统已经就绪。传给 Vulkan 各层的是引用：
         // 它们只借不放，窗口的持有者仍在本类
         m_vulkanManager.Initialize(*m_pWindow);
@@ -136,6 +141,15 @@ namespace Doodle
 
     void DoodleApplication::DestroyRuntime()
     {
+        // 退出时可能还按着右键：先恢复光标，再清空全局输入快照。
+        // 放在这里而不是某个平台分支里，桌面与 Android 走同一条收尾路径；
+        // 窗口此刻仍然有效，Vulkan 与场景都还没拆
+        if (m_pWindow != nullptr)
+        {
+            m_pWindow->SetCursorCaptured(false);
+        }
+        DoodleInput::Reset();
+
         // 场景先于资产：组件里的 MeshRenderer 引用着网格，OnDestroy 必须在
         // 资产还活着时跑完。销毁是显式的，不把回调留给成员析构
         m_sceneManager.DestroyReally();
@@ -177,6 +191,23 @@ namespace Doodle
         deltaSeconds = std::min(deltaSeconds, 0.1f);
 
         m_lastFrameTime = now;
+
+        // 输入快照每帧刷新一次，位置在场景更新之前：同一帧内所有组件看到的
+        // 是同一份状态。平台层在 PumpEvents 里已经把原始状态轮询好
+        DoodleInput::RawState rawInput = m_pWindow->GetRawInputState();
+
+        // 右键控制光标捕获。这是窗口级策略，留在应用层；FreeLook 之类的组件
+        // 只查询 DoodleInput，不碰窗口
+        if (rawInput.IsMouseButtonDown(DoodleMouseButton::Right) != rawInput.cursorCaptured)
+        {
+            m_pWindow->SetCursorCaptured(rawInput.IsMouseButtonDown(DoodleMouseButton::Right));
+
+            // 切换捕获时窗口已经把位移清零。重新取一次，避免这一帧把切换前的
+            // 旧位移算进视角
+            rawInput = m_pWindow->GetRawInputState();
+        }
+
+        DoodleInput::Update(rawInput);
 
         // 先更新场景，再收集本帧要画的东西，最后画：渲染读到的是本帧最新的
         // Transform，而收集夹在两者之间，拿到的是 Update 之后的一致快照

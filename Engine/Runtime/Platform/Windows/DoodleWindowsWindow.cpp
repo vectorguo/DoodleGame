@@ -90,6 +90,23 @@ namespace
                      windowWidth, windowHeight,
                      SWP_NOZORDER | SWP_NOACTIVATE);
     }
+
+    /**
+     * 客户区中心，换算到屏幕坐标
+     *
+     * 捕获鼠标时用它做回中：每轮把光标放回这里，下一次就从中点算位移，
+     * 光标永远不会撞到屏幕边缘
+     */
+    POINT ClientCenterInScreen(HWND hWnd)
+    {
+        RECT clientRect{};
+        GetClientRect(hWnd, &clientRect);
+
+        POINT center{(clientRect.left + clientRect.right) / 2,
+                     (clientRect.top + clientRect.bottom) / 2};
+        ClientToScreen(hWnd, &center);
+        return center;
+    }
 }
 
 namespace Doodle
@@ -114,6 +131,27 @@ namespace Doodle
                 pWindow->m_closeRequested = true;
                 return 0;
 
+            case WM_SETFOCUS:
+                pWindow->m_focused = true;
+                return 0;
+
+            case WM_KILLFOCUS:
+                //失焦就释放捕获并清空快照：Alt+Tab 回来后不带着卡住的按键，
+                //光标也不会一直被锁在客户区里
+                pWindow->m_focused = false;
+                pWindow->SetCursorCaptured(false);
+                pWindow->m_input = {};
+                return 0;
+
+            case WM_SETCURSOR:
+                //捕获期间不显示光标；释放后交给 DefWindowProc 恢复窗口类光标
+                if (pWindow->m_cursorCaptured)
+                {
+                    ::SetCursor(nullptr);
+                    return TRUE;
+                }
+                break;
+
             case WM_SIZE:
                 //与 macOS 的尺寸回调同一个分工：尺寸参数不在这里用，真正的尺寸等重建交换链时
                 //现查；这里只让驱动层记下「变过了」。拖动窗口边缘时系统会甩出一连串 WM_SIZE，
@@ -124,6 +162,13 @@ namespace Doodle
                 //
                 //取实例不判空：窗口过程只在泵事件（或泵事件引出的同步调用）时被调，那时驱动层
                 //必然活着。契约写在 DoodleApplication::GetInstance 那边
+                if (wParam == SIZE_MINIMIZED)
+                {
+                    //光标锁在一个 0×0 的客户区里没有意义，顺手也清掉按键快照
+                    pWindow->SetCursorCaptured(false);
+                    pWindow->m_input = {};
+                }
+
                 DoodleApplication::GetInstance().NotifyWindowResized();
                 return 0;
 
@@ -211,10 +256,18 @@ namespace Doodle
         //最后一步才把本对象挂到窗口上，此后的消息才会转给驱动层（见 WindowProcedure::Handle）。
         //与 macOS 那份的「先建窗、再注册尺寸回调」是同一个时序
         SetWindowLongPtrW(m_hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+
+        //ShowWindow 期间可能已经发过 WM_SETFOCUS，那时 USERDATA 还没挂上，
+        //窗口过程没有转给本对象。这里补一次当前焦点状态，否则要等到下一次
+        //焦点变化才会从 false 变 true，期间的按键全被当成「未聚焦」丢掉
+        m_focused = GetFocus() == m_hWnd;
     }
 
     DoodleWindowsWindow::~DoodleWindowsWindow()
     {
+        //退出时可能还捕获着光标：先恢复，再销毁窗口
+        SetCursorCaptured(false);
+
         if (m_hWnd != nullptr)
         {
             //先把对象指针摘下来：DestroyWindow 会同步发来 WM_DESTROY 等消息，
@@ -244,6 +297,112 @@ namespace Doodle
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
+
+        //消息处理完之后焦点状态是本轮最终值。失焦时清空，避免把别的窗口
+        //按下的键读进来
+        if (!m_focused)
+        {
+            if (m_cursorCaptured)
+            {
+                SetCursorCaptured(false);
+            }
+
+            m_input = {};
+            return;
+        }
+
+        //GetAsyncKeyState 是全局按键状态，上面的 m_focused 门控是必需的。
+        //字母用虚拟键码，按逻辑键映射（与 macOS GLFW 的口径一致）
+        m_input.SetKey(DoodleKey::W, (GetAsyncKeyState('W') & 0x8000) != 0);
+        m_input.SetKey(DoodleKey::A, (GetAsyncKeyState('A') & 0x8000) != 0);
+        m_input.SetKey(DoodleKey::S, (GetAsyncKeyState('S') & 0x8000) != 0);
+        m_input.SetKey(DoodleKey::D, (GetAsyncKeyState('D') & 0x8000) != 0);
+        m_input.SetKey(DoodleKey::Q, (GetAsyncKeyState('Q') & 0x8000) != 0);
+        m_input.SetKey(DoodleKey::E, (GetAsyncKeyState('E') & 0x8000) != 0);
+        m_input.SetKey(DoodleKey::LeftShift, (GetAsyncKeyState(VK_LSHIFT) & 0x8000) != 0);
+
+        m_input.SetMouseButton(DoodleMouseButton::Left, (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0);
+        m_input.SetMouseButton(DoodleMouseButton::Right, (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0);
+        m_input.SetMouseButton(DoodleMouseButton::Middle, (GetAsyncKeyState(VK_MBUTTON) & 0x8000) != 0);
+
+        m_input.mouseDeltaX = 0.0f;
+        m_input.mouseDeltaY = 0.0f;
+
+        if (m_cursorCaptured)
+        {
+            //捕获时每轮把光标回中，位移永远相对客户区中心。
+            //这样光标不会撞到屏幕边缘，能一直转视角
+            const POINT center = ClientCenterInScreen(m_hWnd);
+
+            POINT cursor{};
+            GetCursorPos(&cursor);
+            ScreenToClient(m_hWnd, &cursor);
+
+            RECT clientRect{};
+            GetClientRect(m_hWnd, &clientRect);
+
+            const float centerX = static_cast<float>(clientRect.left + clientRect.right) * 0.5f;
+            const float centerY = static_cast<float>(clientRect.top + clientRect.bottom) * 0.5f;
+
+            //客户区坐标是物理像素；换算成 96 DPI 的逻辑像素，
+            //和高 DPI 下 macOS 的点坐标手感对齐
+            const float dpiScale = std::max(
+                1.0f,
+                static_cast<float>(GetDpiForWindow(m_hWnd)) /
+                static_cast<float>(USER_DEFAULT_SCREEN_DPI));
+
+            m_input.mouseDeltaX = (static_cast<float>(cursor.x) - centerX) / dpiScale;
+            m_input.mouseDeltaY = (static_cast<float>(cursor.y) - centerY) / dpiScale;
+
+            SetCursorPos(center.x, center.y);
+        }
+
+        m_input.cursorCaptured = m_cursorCaptured;
+    }
+
+    DoodleInput::RawState DoodleWindowsWindow::GetRawInputState() const
+    {
+        return m_input;
+    }
+
+    void DoodleWindowsWindow::SetCursorCaptured(const bool captured)
+    {
+        if (captured == m_cursorCaptured)
+        {
+            return;
+        }
+
+        m_cursorCaptured = captured;
+
+        if (captured)
+        {
+            //把光标限制在客户区，隐藏，并回中
+            RECT clientRect{};
+            GetClientRect(m_hWnd, &clientRect);
+
+            POINT topLeft{clientRect.left, clientRect.top};
+            POINT bottomRight{clientRect.right, clientRect.bottom};
+            ClientToScreen(m_hWnd, &topLeft);
+            ClientToScreen(m_hWnd, &bottomRight);
+
+            const RECT clipRect{topLeft.x, topLeft.y, bottomRight.x, bottomRight.y};
+            ClipCursor(&clipRect);
+
+            const POINT center = ClientCenterInScreen(m_hWnd);
+            SetCursorPos(center.x, center.y);
+            ::SetCursor(nullptr);
+        }
+        else
+        {
+            ClipCursor(nullptr);
+            ::SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        }
+
+        //切换时清零位移：第一次按下右键那一帧不能把「光标从旧位置跳过来」
+        //算进视角
+        m_input.mouseDeltaX = 0.0f;
+        m_input.mouseDeltaY = 0.0f;
+        m_input.cursorCaptured = captured;
     }
 
     void DoodleWindowsWindow::WaitUntilDrawable()
