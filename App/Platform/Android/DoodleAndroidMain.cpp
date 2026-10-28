@@ -7,8 +7,9 @@
 
 #include <android_native_app_glue.h>
 
-#include "DoodleAndroidApplication.h"
-#include "../DoodleLog.h"
+#include "Platform/Android/DoodleAndroidApplication.h"
+#include "DoodleGame.h"
+#include "Platform/DoodleLog.h"
 
 using namespace Doodle;
 
@@ -19,13 +20,17 @@ using namespace Doodle;
  * 里），胶水层开一个线程、架好 Looper 与事件队列，最后回调到这里。
  * 所以本函数返回 = 那个线程结束 = 进程退出
  *
- * 形状与桌面那份（Runtime/Platform/MacOS/DoodleMacMain.cpp）现在是一样的：
+ * 形状与桌面那份（App/Platform/MacOS/DoodleMacMain.cpp）现在是一样的：
  * 建对象、按顺序调 Initialize / Run / Destroy。差别在内容而不在骨架 ——
  * 窗口会消失又回来，得靠 APP_CMD_INIT_WINDOW / TERM_WINDOW 驱动 Vulkan 子系统的
  * 拆建，那套时刻表在 DoodleAndroidApplication 里（见那边的类注释）
  */
 void android_main(struct android_app* pApp)
 {
+    // 场景组件类型必须在场景加载之前登记。Android 的运行时初始化要等
+    // 第一次 APP_CMD_INIT_WINDOW，这里一定更早
+    DoodleGame::RegisterComponents();
+
     DoodleAndroidApplication application(pApp);
 
     Log::Info("Doodle: android_main entered");

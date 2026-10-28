@@ -10,6 +10,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -118,6 +119,21 @@ namespace Doodle
          */
         template <typename T>
         T& AddComponent();
+
+        /**
+         * 添加组件，并在 OnAwake 之前用场景配置反序列化
+         *
+         * 内容装配用（当前是场景加载）：构造 T → 设置 owner →
+         * component.Deserialize(config) → 入容器 → OnAwake / OnEnable。
+         * 所以 OnAwake 看到的是已经反序列化好的字段。
+         *
+         * 配置非法时 Deserialize 抛异常，组件还没进容器，直接析构，
+         * 不会留下半初始化状态。
+         *
+         * 场景里用什么类型创建组件由注册表决定；组件实例不保存类型信息。
+         */
+        template <typename T>
+        T& AddComponentFromConfig(const DoodleComponentConfig& config);
 
         /**
          * 请求删除组件；重复调用幂等
@@ -308,12 +324,39 @@ namespace Doodle
         }
 
         auto pComponent = std::make_unique<T>();
-        T& component = *pComponent;
 
-        // 先设置 owner 再入容器：容器里的组件一定已经有宿主。push_back 可能
-        // 让 vector 扩容，但组件对象在堆上，引用和地址都不受影响。接下来
-        // OnAwake 里即使再 AddComponent 也安全
+        T& component = *pComponent;
         component.m_pGameObject = this;
+
+        m_components.push_back(std::move(pComponent));
+
+        // 调用OnAwake和OnEnable
+        component.OnAwake();
+        if (component.m_enabled)
+        {
+            component.OnEnable();
+        }
+        return component;
+    }
+
+    template <typename T>
+    T& DoodleGameObject::AddComponentFromConfig(const DoodleComponentConfig& config)
+    {
+        static_assert(std::is_base_of_v<DoodleComponent, T>, "AddComponent<T> 的 T 必须派生自 DoodleComponent");
+        static_assert(std::is_default_constructible_v<T>, "组件必须提供可访问的无参构造函数");
+
+        // 进入销毁流程后新增的组件没有下一次 sweep，只会在容器清空时被丢掉。
+        if (!IsAlive())
+        {
+            throw std::logic_error("DoodleGameObject: cannot add component after Destroy");
+        }
+
+        auto pComponent = std::make_unique<T>();
+
+        T& component = *pComponent;
+        component.m_pGameObject = this;
+        component.Deserialize(config);
+
         m_components.push_back(std::move(pComponent));
 
         // 调用OnAwake和OnEnable

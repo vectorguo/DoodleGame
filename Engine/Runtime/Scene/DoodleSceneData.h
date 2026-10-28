@@ -12,15 +12,41 @@
 
 #include <glm/glm.hpp>
 
-#include "Rendering/DoodleCamera.h"
+#include "Core/DoodleComponentConfig.h"
 
 namespace Doodle
 {
     /**
+     * 场景文件里的一个组件条目
+     *
+     * typeName 是注册表里的稳定类型名（例如 "Engine.Camera"）；config 是
+     * 组件自己的配置，由组件解释。引擎不展开具体字段，也不认识 typeName
+     * 对应的 C++ 类型。
+     */
+    struct DoodleComponentData
+    {
+        /**
+         * 组件类型名，对应 DoodleComponentRegistry 的 name
+         */
+        std::string typeName;
+
+        /**
+         * 错误消息用的路径，例如
+         * "Scenes/main.json: gameObjects[2].components[0]"
+         */
+        std::string path;
+
+        /**
+         * 组件配置，路径为 path + ".settings"
+         */
+        DoodleComponentConfig config;
+    };
+
+    /**
      * 场景文件里的一个对象实例
      *
-     * 只存实例数据：名字、网格资产键、位姿。顶点数据属于 DoodleMesh，
-     * 材质 / 贴图将来同样是按名字引用，不在这里展开。
+     * 只存实例数据：名字、位姿与组件列表。顶点、材质等属于组件 / 资产，
+     * 不在这里展开；对象挂什么组件完全由 componentDataList 决定。
      */
     struct DoodleSceneObjectData
     {
@@ -30,27 +56,9 @@ namespace Doodle
         std::string name{"GameObject"};
 
         /**
-         * 网格资产的键，交给 DoodleAssetManager::Load<DoodleMesh>
-         *
-         * 现在是内建名（"builtin:cube"）；将来读外部网格时这里就是相对路径。
-         * 可以为空：对象可以只挂相机，不带网格
+         * 场景里的组件数据列表，按文件里的顺序创建
          */
-        std::string meshKey;
-
-        /**
-         * 是否挂 DoodleCamera 组件
-         *
-         * 相机是普通组件，位姿与其它对象一样来自本结构的 position / rotation。
-         * 一个对象可以既有网格又有相机，也可以只有其中之一
-         */
-        bool hasCamera = false;
-
-        /**
-         * 相机的投影方式；只有 hasCamera 为 true 时有意义
-         *
-         * 默认透视。场景文件里通过 "camera" 对象的 "type" 字段选择
-         */
-        ECameraProjectionType cameraProjection = ECameraProjectionType::Perspective;
+        std::vector<DoodleComponentData> componentDataList;
 
         /**
          * 世界空间位置
@@ -89,8 +97,8 @@ namespace Doodle
         std::string name{"Scene"};
 
         /**
-         * 对象实例，按文件里的顺序创建；可以为空
+         * 场景里的对象数据列表，按文件里的顺序创建；可以为空
          */
-        std::vector<DoodleSceneObjectData> gameObjects;
+        std::vector<DoodleSceneObjectData> gameObjectDataList;
     };
 }

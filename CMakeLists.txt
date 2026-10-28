@@ -19,7 +19,8 @@
 # 之后的保持 OLD，动这个数字等于动了 CMake 的策略基线。
 cmake_minimum_required(VERSION 3.22)
 
-# 工程名 / 主 target 名。后面 add_executable(DoodleGame ...) 必须和这里一致。
+# 工程名 / 主 target 名。桌面是 add_executable(DoodleGame ...)，Android 是
+# add_library(DoodleGame SHARED ...)，名字必须和这里一致。
 #
 # 不带 LANGUAGES 参数 = 启用默认语言，即 C 和 CXX。这个默认值不能少 ——
 # Android 侧要把 NDK 的 native_app_glue.c 编进来，那是个 .c 文件：
@@ -49,13 +50,15 @@ endif()
 # ============================================================================
 # 源文件清单
 #
-# 按「谁能编」分四摞。分开的理由是实的：GLFW 实现里全是 #include <GLFW/glfw3.h>，
-# Android 侧根本没有这个库；反过来 Android 入口依赖 <android_native_app_glue.h>，
-# 桌面也没有；Windows 那摞依赖 <windows.h>，另外两边都没有。
+# 按「谁能编」和「属于哪一层」分几摞。分开的理由是实的：GLFW 实现里全是
+# #include <GLFW/glfw3.h>，Android 侧根本没有这个库；反过来 Android 入口依赖
+# <android_native_app_glue.h>，桌面也没有；Windows 那摞依赖 <windows.h>，另外两边都没有。
 # 混在一摞里只能靠 #ifdef 挡，那是把平台判断散到各处，不如在这里一次说清
 #
 # 平台专属的那三摞，路径与 Engine/Runtime/Platform/<平台>/ 一一对应：
-# 一个平台的窗口实现、文件来源和它的入口都在自己那个文件夹里。
+# 一个平台的窗口实现、文件来源和 Application 都在自己那个文件夹里。
+# 平台入口（main / android_main）不在 Engine —— 它们属于 App 组合根，
+# 单独列在下面的 DOODLE_APP_*_SOURCES 里。
 # Platform/ 根目录下的是各摞共用的那部分（接口、驱动层、日志）
 #
 # DoodleApplication 编进了共享那摞而不是 macOS 那摞：它不依赖任何平台 API。
@@ -124,22 +127,28 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Asset/DoodleAssetManager.h
     Engine/Runtime/Asset/DoodleMeshAssetLoader.cpp
     Engine/Runtime/Asset/DoodleMeshAssetLoader.h
+    Engine/Runtime/Asset/DoodleSceneLoader.cpp
+    Engine/Runtime/Asset/DoodleSceneLoader.h
     Engine/Runtime/Scene/DoodleScene.h
     Engine/Runtime/Scene/DoodleScene.cpp
+    Engine/Runtime/Core/DoodleComponentConfig.h
+    Engine/Runtime/Core/DoodleComponentConfig.cpp
+    Engine/Runtime/Core/DoodleComponentRegistry.h
+    Engine/Runtime/Core/DoodleComponentRegistry.cpp
     Engine/Runtime/Scene/DoodleSceneData.h
-    Engine/Runtime/Scene/DoodleSceneLoader.cpp
-    Engine/Runtime/Scene/DoodleSceneLoader.h
     Engine/Runtime/Scene/DoodleSceneManager.h
     Engine/Runtime/Scene/DoodleSceneManager.cpp
     Engine/Runtime/Rendering/DoodleMeshRenderer.h
+    Engine/Runtime/Rendering/DoodleMeshRenderer.cpp
     Engine/Runtime/Rendering/DoodleCamera.cpp
     Engine/Runtime/Rendering/DoodleCamera.h
+    Engine/Runtime/Core/DoodleBuiltinComponentRegistration.h
+    Engine/Runtime/Core/DoodleBuiltinComponentRegistration.cpp
     Engine/Runtime/Utility/Singleton.h
 )
 
-# macOS 专属：入口、窗口与文件来源实现
+# macOS 专属：窗口与文件来源实现
 set(DOODLE_MACOS_SOURCES
-        Engine/Runtime/Platform/MacOS/DoodleMacMain.cpp
         Engine/Runtime/Platform/MacOS/DoodleMacWindow.cpp
         Engine/Runtime/Platform/MacOS/DoodleMacWindow.h
         Engine/Runtime/Platform/MacOS/DoodleMacFileSystem.cpp
@@ -148,9 +157,8 @@ set(DOODLE_MACOS_SOURCES
         Engine/Runtime/Platform/MacOS/DoodleMacApplication.h
 )
 
-# Android 专属：入口、驱动层实现、窗口与文件来源实现
+# Android 专属：驱动层、窗口与文件来源实现
 set(DOODLE_ANDROID_SOURCES
-    Engine/Runtime/Platform/Android/DoodleAndroidMain.cpp
     Engine/Runtime/Platform/Android/DoodleAndroidApplication.cpp
     Engine/Runtime/Platform/Android/DoodleAndroidApplication.h
     Engine/Runtime/Platform/Android/DoodleAndroidFileSystem.cpp
@@ -159,17 +167,52 @@ set(DOODLE_ANDROID_SOURCES
     Engine/Runtime/Platform/Android/DoodleAndroidWindow.h
 )
 
-# Windows 专属：入口、窗口与文件来源实现，外加应用程序清单（DPI 感知与 UTF-8 代码页，
-# 理由写在清单文件里）。.manifest 列进源文件，MSVC 链接时就会把它嵌进 exe
+# Windows 专属：窗口与文件来源实现
 set(DOODLE_WINDOWS_SOURCES
-    Engine/Runtime/Platform/Windows/DoodleWindowsMain.cpp
     Engine/Runtime/Platform/Windows/DoodleWindowsApplication.cpp
     Engine/Runtime/Platform/Windows/DoodleWindowsApplication.h
     Engine/Runtime/Platform/Windows/DoodleWindowsFileSystem.cpp
     Engine/Runtime/Platform/Windows/DoodleWindowsFileSystem.h
     Engine/Runtime/Platform/Windows/DoodleWindowsWindow.cpp
     Engine/Runtime/Platform/Windows/DoodleWindowsWindow.h
-    Engine/Runtime/Platform/Windows/DoodleGame.manifest
+)
+
+# 引擎自带的可选功能包。CameraDirector 只依赖 Engine，不依赖 GamePlay
+set(DOODLE_PACKAGE_SOURCES
+    Engine/Package/CameraDirector/DoodleCameraDirectorTypes.h
+    Engine/Package/CameraDirector/DoodleCameraDirector.h
+    Engine/Package/CameraDirector/DoodleCameraDirector.cpp
+    Engine/Package/CameraDirector/DoodleVirtualCamera.h
+    Engine/Package/CameraDirector/DoodleVirtualCamera.cpp
+    Engine/Package/CameraDirector/DoodleCameraOffset.h
+    Engine/Package/CameraDirector/DoodleCameraOffset.cpp
+    Engine/Package/DoodlePackageRegistration.h
+    Engine/Package/DoodlePackageRegistration.cpp
+)
+
+# 游戏层：只依赖 Engine，Engine 不反向依赖它。
+# 平台入口在 App/Platform，负责在场景加载前调用 DoodleGame::RegisterComponents
+set(DOODLE_GAMEPLAY_SOURCES
+    GamePlay/DoodleGame.h
+    GamePlay/DoodleGame.cpp
+    GamePlay/DoodleFreeLookController.h
+    GamePlay/DoodleFreeLookController.cpp
+)
+
+# 组合根：平台入口只属于可执行文件，不属于 Engine。
+# App 是唯一同时认识 Engine 与 GamePlay 的层；各平台 main 在这里直接
+# 调用 DoodleGame::RegisterComponents，把游戏接进引擎。
+# Windows 的应用程序清单（DPI 感知与 UTF-8 代码页）也属于可执行文件：
+# .manifest 列进源文件，MSVC 链接时就会把它嵌进 exe
+set(DOODLE_APP_MACOS_SOURCES
+    App/Platform/MacOS/DoodleMacMain.cpp
+)
+set(DOODLE_APP_WINDOWS_SOURCES
+    App/Platform/Windows/DoodleWindowsMain.cpp
+    App/Platform/Windows/DoodleGame.manifest
+)
+set(DOODLE_APP_ANDROID_SOURCES
+    App/Platform/Android/DoodleAndroidMain.cpp
 )
 
 # ---- 着色器：编译 GLSL 并生成内嵌副本 ----
@@ -271,11 +314,20 @@ if(ANDROID)
     # Looper、事件队列、窗口命令（APP_CMD_INIT_WINDOW 之类）都出自这里
     set(_doodle_native_app_glue_dir "${ANDROID_NDK}/sources/android/native_app_glue")
 
-    # Android 侧出的是 .so 而不是可执行文件：进程由系统 fork 出来，
-    # 入口是 ANativeActivity_onCreate，android_main 由胶水层回调
-    add_library(DoodleGame SHARED
+    # 引擎静态库：Vulkan、资产、场景、平台适配器。
+    # 这里没有 GamePlay，也没有 android_main —— 依赖方向是单向的
+    add_library(DoodleEngine STATIC
         ${DOODLE_SHARED_SOURCES}
         ${DOODLE_ANDROID_SOURCES}
+        ${DOODLE_PACKAGE_SOURCES}
+    )
+
+    # Android 侧出的是 .so 而不是可执行文件：进程由系统 fork 出来，
+    # 入口是 ANativeActivity_onCreate，android_main 由胶水层回调。
+    # App + GamePlay 编进这个 .so，再链接引擎
+    add_library(DoodleGame SHARED
+        ${DOODLE_APP_ANDROID_SOURCES}
+        ${DOODLE_GAMEPLAY_SOURCES}
         "${_doodle_native_app_glue_dir}/android_native_app_glue.c"
     )
 
@@ -285,26 +337,46 @@ if(ANDROID)
     # Engine/ThirdParty 里是仓库自带的第三方库（目前只有 glm/）。Android 侧没有 brew、
     # 也没有包管理器，系统路径上不会有它们 —— 收进仓库才有得用，
     # 这也是两个平台能共用同一版本的原因
-    target_include_directories(DoodleGame PRIVATE
+    #
+    # 这些路径放在 PUBLIC：游戏层和 App 的 main 要 include Engine 的公开头文件。
+    # GamePlay 的路径只加给 DoodleGame，引擎拿不到 —— 反向依赖在编译期就失败
+    target_include_directories(DoodleEngine PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/Engine/ThirdParty
         ${CMAKE_CURRENT_SOURCE_DIR}/Engine/Runtime
-        ${_doodle_shader_output_dir}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Engine/Package
         ${_doodle_native_app_glue_dir}
+    )
+    target_include_directories(DoodleEngine PRIVATE
+        ${_doodle_shader_output_dir}
+    )
+    target_include_directories(DoodleGame PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/App
+        ${CMAKE_CURRENT_SOURCE_DIR}/GamePlay
     )
 
     # Vulkan 头文件里那些平台类型（VkAndroidSurfaceCreateInfoKHR、
     # vkCreateAndroidSurfaceKHR）都在 #ifdef VK_USE_PLATFORM_ANDROID_KHR 里，
     # 而 NDK 的 vk_platform.h 不会自动开这个宏 —— 不定义就是编译错误。
-    # 桌面端的对应物是 GLFW 的 GLFW_INCLUDE_VULKAN，同样得有人定义
-    target_compile_definitions(DoodleGame PRIVATE VK_USE_PLATFORM_ANDROID_KHR)
+    # 桌面端的对应物是 GLFW 的 GLFW_INCLUDE_VULKAN，同样得有人定义。
+    # 引擎的公开头文件里会出现 Vulkan 类型，所以这个定义要传给使用方
+    target_compile_definitions(DoodleEngine PUBLIC VK_USE_PLATFORM_ANDROID_KHR)
 
     # libvulkan.so 由 NDK 的 sysroot 提供（Android 上 Vulkan 是系统库）。
     # android / log 是 NDK 的 platform 库
-    target_link_libraries(DoodleGame PRIVATE
+    target_link_libraries(DoodleEngine PRIVATE
         vulkan
         android
         log
     )
+    target_link_libraries(DoodleGame PRIVATE
+        DoodleEngine
+        vulkan
+        android
+        log
+    )
+
+    # 静态库最终要进 .so，必须按位置无关代码编
+    set_target_properties(DoodleEngine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     # ANativeActivity_onCreate 定义在胶水里，但没有任何地方引用它 ——
     # 框架是在运行时 dlopen + dlsym 按名字找的。不把它钉住的话，
@@ -341,21 +413,37 @@ if(WIN32)
     # 这点和 macOS 要把 libvulkan 拷进 .app 不同
     find_package(Vulkan REQUIRED)
 
+    # 引擎静态库：Vulkan、资产、场景、平台适配器。
+    # 这里没有 GamePlay —— 引擎的 include 路径里也没有 GamePlay，
+    # 反向依赖在编译期就会失败
+    add_library(DoodleEngine STATIC
+        ${DOODLE_SHARED_SOURCES}
+        ${DOODLE_WINDOWS_SOURCES}
+        ${DOODLE_PACKAGE_SOURCES}
+    )
+
     # 着色器源码也挂进工程，只为在解决方案资源管理器里能直接打开编辑。
     # 它们不是 C++ 源文件，VS 不会去编；编它们的是上面那条自定义命令
     add_executable(DoodleGame
-        ${DOODLE_SHARED_SOURCES}
-        ${DOODLE_WINDOWS_SOURCES}
+        ${DOODLE_APP_WINDOWS_SOURCES}
+        ${DOODLE_GAMEPLAY_SOURCES}
         ${_doodle_shader_sources}
         "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/compile.sh"
     )
 
     # 与 Android 那段同一个规矩：不加工程根目录。
     # Vulkan 的头文件由下面链接的 Vulkan::Vulkan 带进来
-    target_include_directories(DoodleGame PRIVATE
+    target_include_directories(DoodleEngine PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/Engine/ThirdParty
         ${CMAKE_CURRENT_SOURCE_DIR}/Engine/Runtime
+        ${CMAKE_CURRENT_SOURCE_DIR}/Engine/Package
+    )
+    target_include_directories(DoodleEngine PRIVATE
         ${_doodle_shader_output_dir}
+    )
+    target_include_directories(DoodleGame PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/App
+        ${CMAKE_CURRENT_SOURCE_DIR}/GamePlay
     )
 
     # VK_USE_PLATFORM_WIN32_KHR —— 与 Android 的 VK_USE_PLATFORM_ANDROID_KHR 同理：
@@ -369,7 +457,10 @@ if(WIN32)
     #
     # 前面这几个只能挡住宏的一部分。CreateWindow 这类与函数同名的宏挡不掉，
     # 靠的是「<windows.h> 只在 .cpp 里、且排在本工程头文件之后」，见 DoodleWindowsWindow.h
-    target_compile_definitions(DoodleGame PRIVATE
+    #
+    # 放在引擎的 PUBLIC：App 的 main 也要包含 <windows.h>（控制台代码页），
+    # GamePlay 又包含引擎的公开头文件，定义必须一致
+    target_compile_definitions(DoodleEngine PUBLIC
         VK_USE_PLATFORM_WIN32_KHR
         WIN32_LEAN_AND_MEAN
         NOMINMAX
@@ -382,15 +473,19 @@ if(WIN32)
         # 轻则满屏 C4819；重则 // 注释行尾汉字落单的那个字节被当成双字节字符的前半，
         # 把后面的换行吞掉，下一行代码跟着成了注释 —— 报出来的错和根因毫不相干。
         # /utf-8 同时把执行字符集定成 UTF-8，字符串字面量在各平台上是同一份字节
+        target_compile_options(DoodleEngine PRIVATE /utf-8)
         target_compile_options(DoodleGame PRIVATE /utf-8)
     endif()
 
     if(CMAKE_GENERATOR MATCHES "Visual Studio")
         # VS 生成器默认在一个工程里逐个编 .cpp，打开 /MP 才会并行
+        target_compile_options(DoodleEngine PRIVATE /MP)
         target_compile_options(DoodleGame PRIVATE /MP)
     endif()
 
-    target_link_libraries(DoodleGame PRIVATE Vulkan::Vulkan)
+    # Vulkan 的头文件与库都通过引擎的公开依赖传给游戏目标
+    target_link_libraries(DoodleEngine PUBLIC Vulkan::Vulkan)
+    target_link_libraries(DoodleGame PRIVATE DoodleEngine)
 
     # ---- Visual Studio 工程的几处设置 ----
 
@@ -407,7 +502,7 @@ if(WIN32)
     # 解决方案资源管理器里按磁盘上的目录分组，与 CLion 看到的工程树一致，
     # 而不是全堆进「源文件 / 头文件」两个筛选器。
     # 着色器内嵌副本在构建目录里、不在源码树下，TREE 收不了它，单放一组
-    set(_doodle_source_tree ${DOODLE_SHARED_SOURCES} ${DOODLE_WINDOWS_SOURCES} ${_doodle_shader_sources})
+    set(_doodle_source_tree ${DOODLE_SHARED_SOURCES} ${DOODLE_WINDOWS_SOURCES} ${DOODLE_PACKAGE_SOURCES} ${DOODLE_GAMEPLAY_SOURCES} ${DOODLE_APP_WINDOWS_SOURCES} ${_doodle_shader_sources})
     list(REMOVE_ITEM _doodle_source_tree "${_doodle_embedded_shaders}")
     source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES
         ${_doodle_source_tree}
@@ -538,6 +633,15 @@ find_library(VULKAN_LIBRARY
 #     REQUIRED
 # )
 
+# 引擎静态库：Vulkan、资产、场景、平台适配器。
+# 这里没有 GamePlay —— 引擎的 include 路径里也没有 GamePlay，
+# 反向依赖在编译期就会失败
+add_library(DoodleEngine STATIC
+    ${DOODLE_SHARED_SOURCES}
+    ${DOODLE_MACOS_SOURCES}
+    ${DOODLE_PACKAGE_SOURCES}
+)
+
 # 创建一个叫 DoodleGame 的可执行文件 target，并列出源文件。
 # MACOSX_BUNDLE = 在 macOS 上打成 DoodleGame.app，而不是裸的可执行文件。
 #   产物结构：DoodleGame.app/Contents/MacOS/DoodleGame
@@ -546,11 +650,11 @@ find_library(VULKAN_LIBRARY
 # .cpp 会真正编译；.h 写进来是让 CLion 显示在工程树里、改头文件时能触发重编。
 # 路径相对本 CMakeLists.txt 所在目录。以后加新 .cpp，改的就是上面的清单变量。
 add_executable(DoodleGame MACOSX_BUNDLE
-    ${DOODLE_SHARED_SOURCES}
-    ${DOODLE_MACOS_SOURCES}
+    ${DOODLE_APP_MACOS_SOURCES}
+    ${DOODLE_GAMEPLAY_SOURCES}
 )
 
-# 把头文件搜索路径接到这个 target 上（只给 DoodleGame 自己用，所以是 PRIVATE）。
+# 把头文件搜索路径接到引擎上（PUBLIC：游戏层和 App 的 main 要 include 引擎头文件）。
 # 第三方头文件直接用上面的搜索目录，不再走 find_path；
 # Engine/Runtime/ 也在那里面，所以 #include "Vulkan/xxx.h"、"Platform/xxx.h" 这类能解析
 # （平台文件夹内部之间的引用走 "../xxx.h" 相对路径，不经过这条）。
@@ -562,14 +666,28 @@ add_executable(DoodleGame MACOSX_BUNDLE
 # 它的实际效果是把根目录下所有东西都当成头文件搜索路径，
 # Android Studio 的工程视图会把 .git、.idea、cmake-build-debug 这些
 # 一并当成「构建相关目录」列进 includes 分组里，一屏全是噪声
-target_include_directories(DoodleGame PRIVATE
+#
+# GamePlay 的路径只加给 DoodleGame，引擎拿不到
+target_include_directories(DoodleEngine PUBLIC
     ${DOODLE_HEADER_SEARCH_PATHS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/Engine/Package
+)
+target_include_directories(DoodleEngine PRIVATE
     ${_doodle_shader_output_dir}
+)
+target_include_directories(DoodleGame PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/App
+    ${CMAKE_CURRENT_SOURCE_DIR}/GamePlay
 )
 
 # 把找到的两个 dylib 链进可执行文件。
 # 链接器会记下 GLFW 的绝对路径，以及 Vulkan 的 @rpath/libvulkan.1.dylib（运行时再按 rpath 找）。
+target_link_libraries(DoodleEngine PRIVATE
+    ${GLFW_LIBRARY}
+    ${VULKAN_LIBRARY}
+)
 target_link_libraries(DoodleGame PRIVATE
+    DoodleEngine
     ${GLFW_LIBRARY}
     ${VULKAN_LIBRARY}
 )

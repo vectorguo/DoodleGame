@@ -8,7 +8,7 @@
 #include "DoodleAssetManager.h"
 
 #include "DoodleMeshAssetLoader.h"
-#include "Scene/DoodleSceneLoader.h"
+#include "DoodleSceneLoader.h"
 
 #include <stdexcept>
 #include <utility>

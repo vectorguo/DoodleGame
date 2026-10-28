@@ -7,6 +7,8 @@
 
 #include "DoodleInput.h"
 
+#include <stdexcept>
+
 namespace Doodle
 {
     DoodleInput::RawState DoodleInput::s_current{};
@@ -50,6 +52,26 @@ namespace Doodle
     bool DoodleInput::IsCursorCaptured()
     {
         return s_current.cursorCaptured;
+    }
+
+    int DoodleInput::GetTouchCount()
+    {
+        return s_current.touchCount;
+    }
+
+    DoodleTouch DoodleInput::GetTouch(const int index)
+    {
+        if (index < 0 || index >= s_current.touchCount)
+        {
+            throw std::out_of_range("DoodleInput::GetTouch: index out of range");
+        }
+
+        return s_current.touches[static_cast<std::size_t>(index)];
+    }
+
+    bool DoodleInput::IsTouchSupported()
+    {
+        return s_current.touchSupported;
     }
 
     void DoodleInput::Update(const RawState& rawState)

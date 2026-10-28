@@ -8,9 +8,12 @@
 #include "DoodleApplication.h"
 #include "DoodleFileSystem.h"
 #include "DoodleInput.h"
+#include "DoodlePackageRegistration.h"
 #include "DoodleWindow.h"
 
 #include "Core/DoodleGameObject.h"
+#include "Core/DoodleComponentRegistry.h"
+#include "Core/DoodleBuiltinComponentRegistration.h"
 #include "Rendering/DoodleCamera.h"
 #include "Rendering/DoodleMeshRenderer.h"
 #include "Scene/DoodleScene.h"
@@ -112,6 +115,14 @@ namespace Doodle
 
     void DoodleApplication::InitializeRuntime()
     {
+        // 引擎内置组件先注册；包和 GamePlay 再往上叠
+        RegisterBuiltinComponents();
+
+        // Engine/Package 的组件类型在内容加载之前统一注册。
+        // 放在这里而不是平台入口：桌面 Initialize 与 Android 首次 INIT_WINDOW
+        // 都经过本函数，平台与 GamePlay 都不需要关心有哪些包
+        RegisterPackageComponents();
+
         // 输入快照从零开始：桌面 Initialize 与 Android 首次 INIT_WINDOW 都经过这里。
         // Android 从后台回来不走本函数，那一半由窗口在失焦时清空
         DoodleInput::Reset();

@@ -14,12 +14,9 @@
 #include <utility>
 #include <vector>
 
-#include "Asset/DoodleAssetManager.h"
+#include "Core/DoodleComponentRegistry.h"
 #include "DoodleSceneData.h"
 #include "Math/DoodleMath.h"
-#include "Rendering/DoodleCamera.h"
-#include "Rendering/DoodleMeshRenderer.h"
-#include "Vulkan/DoodleMesh.h"
 
 namespace Doodle
 {
@@ -37,6 +34,85 @@ namespace Doodle
             m_lifecycleState == ELifecycleState::PendingDestroy)
         {
             DestroyReally();
+        }
+    }
+
+    void DoodleScene::InitializeFromData(const DoodleSceneData& sceneData)
+    {
+        // 与 CreateGameObject 同一个前置条件：进入销毁流程后建不出对象。
+        // 提前拦住，也避免白解析一遍资产
+        if (!IsAlive())
+        {
+            throw std::logic_error("DoodleScene: cannot initialize from data after Destroy");
+        }
+
+        // 阶段一：解析每个组件的类型，并在 Debug 下做参数预校验。
+        //
+        // 类型解析必须排在创建对象之前：未知类型属于内容错误，不能等到对象
+        // 建了一半才发现。Debug 下还会在无宿主的临时组件上跑一遍 Deserialize，
+        // 配置 / 资产错误（例如 MeshRenderer 的 mesh key）也在这一步暴露；
+        // Release 下跳过参数校验，只保留类型解析（create 需要它）。
+        const auto& componentRegistry = DoodleComponentRegistry::GetInstance();
+
+        std::vector<std::vector<const DoodleComponentRegistration*>> registrations(sceneData.gameObjectDataList.size());
+        for (std::size_t i = 0; i < sceneData.gameObjectDataList.size(); ++i)
+        {
+            const std::vector<DoodleComponentData>& componentDataList = sceneData.gameObjectDataList[i].componentDataList;
+            registrations[i].resize(componentDataList.size(), nullptr);
+
+            for (std::size_t j = 0; j < componentDataList.size(); ++j)
+            {
+                const DoodleComponentData& componentData = componentDataList[j];
+                const DoodleComponentRegistration* pRegistration = componentRegistry.Find(componentData.typeName);
+                if (pRegistration == nullptr)
+                {
+                    throw std::runtime_error(componentData.path + ": unknown component type '" + componentData.typeName + "'");
+                }
+
+#ifndef NDEBUG
+                if (pRegistration->validate != nullptr)
+                {
+                    pRegistration->validate(componentData.config);
+                }
+#endif
+
+                registrations[i][j] = pRegistration;
+            }
+        }
+
+        // 阶段二：建出全部 GameObject 与 Transform。
+        //
+        // 先把所有对象建完，再建组件：Follow / LookAt 这类按名字引用只需要
+        // 目标 GameObject 存在，不要求它的组件已经创建。
+        std::vector<DoodleGameObject*> gameObjects;
+        gameObjects.reserve(sceneData.gameObjectDataList.size());
+
+        for (const DoodleSceneObjectData& objectData : sceneData.gameObjectDataList)
+        {
+            DoodleGameObject& gameObject = CreateGameObject(objectData.name);
+            gameObjects.push_back(&gameObject);
+
+            DoodleTransform& transform = gameObject.GetTransform();
+            transform.position = objectData.position;
+            transform.rotation = DoodleMath::EulerDegreesToQuaternion(objectData.rotationDegrees);
+            transform.scale = objectData.scale;
+        }
+
+        // 阶段三：按场景顺序创建全部组件 —— MeshRenderer、Camera、Package
+        // 组件和 GamePlay 组件走同一条注册表路径。
+        //
+        // OnAwake 里能看到所有 GameObject 与排在它前面的组件；排在后面的
+        // 组件这时还没创建。确实需要互相依赖时，把依赖方排在后面，或者以后
+        // 再加一个场景就绪回调。
+        for (std::size_t i = 0; i < sceneData.gameObjectDataList.size(); ++i)
+        {
+            const std::vector<DoodleComponentData>& componentDataList = sceneData.gameObjectDataList[i].componentDataList;
+            for (std::size_t j = 0; j < componentDataList.size(); ++j)
+            {
+                const DoodleComponentData& componentData = componentDataList[j];
+                const DoodleComponentRegistration* pRegistration = registrations[i][j];
+                pRegistration->create(*gameObjects[i], componentData.config);
+            }
         }
     }
 
@@ -110,71 +186,6 @@ namespace Doodle
         DoodleGameObject& gameObject = *pGameObject;
         m_gameObjects.push_back(std::move(pGameObject));
         return gameObject;
-    }
-
-    void DoodleScene::InitializeFromData(const DoodleSceneData& sceneData)
-    {
-        // 与 CreateGameObject 同一个前置条件：进入销毁流程后建不出对象。
-        // 提前拦住，也避免白解析一遍资产
-        if (!IsAlive())
-        {
-            throw std::logic_error("DoodleScene: cannot initialize from data after Destroy");
-        }
-
-        // 阶段一：把全部网格解析完再动场景。
-        //
-        // 网格名写错是最常见的内容错误；如果在循环里边查边建，前面几个对象
-        // 已经进了场景，错误却抛出在第三个。场景创建后没有「撤销」的公开
-        // 入口，所以校验必须排在第一次 CreateGameObject 之前。
-        //
-        // 只挂相机的对象没有网格，槽位留空；下标始终与 gameObjects 对齐，
-        // 阶段二按同一个下标取用
-        std::vector<const DoodleMesh*> meshes(sceneData.gameObjects.size(), nullptr);
-        DoodleAssetManager& assetManager = DoodleAssetManager::GetInstance();
-
-        for (std::size_t i = 0; i < sceneData.gameObjects.size(); ++i)
-        {
-            const DoodleSceneObjectData& objectData = sceneData.gameObjects[i];
-            if (objectData.meshKey.empty())
-            {
-                continue;
-            }
-
-            const DoodleMesh* pMesh = assetManager.Load<DoodleMesh>(objectData.meshKey);
-            if (pMesh == nullptr)
-            {
-                // Loader 的契约是不返回空指针；这里只是防御，报错信息带上对象名
-                throw std::runtime_error("DoodleScene: mesh '" + objectData.meshKey +
-                                         "' for GameObject '" + objectData.name + "' is missing");
-            }
-
-            meshes[i] = pMesh;
-        }
-
-        // 阶段二：数据校验通过，开始建对象
-        for (std::size_t i = 0; i < sceneData.gameObjects.size(); ++i)
-        {
-            const DoodleSceneObjectData& objectData = sceneData.gameObjects[i];
-
-            DoodleGameObject& gameObject = CreateGameObject(objectData.name);
-
-            DoodleTransform& transform = gameObject.GetTransform();
-            transform.position = objectData.position;
-            transform.rotation = DoodleMath::EulerDegreesToQuaternion(objectData.rotationDegrees);
-            transform.scale = objectData.scale;
-
-            if (meshes[i] != nullptr)
-            {
-                gameObject.AddComponent<DoodleMeshRenderer>().SetMesh(meshes[i]);
-            }
-
-            // 相机是普通组件：它的位姿就是上面写进 Transform 的那一份，
-            // 组件本身不存位置 / 朝向。投影方式来自场景数据
-            if (objectData.hasCamera)
-            {
-                gameObject.AddComponent<DoodleCamera>().SetProjectionType(objectData.cameraProjection);
-            }
-        }
     }
 
     void DoodleScene::DestroyGameObject(DoodleGameObject& gameObject)

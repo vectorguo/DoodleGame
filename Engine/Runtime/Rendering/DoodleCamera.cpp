@@ -7,13 +7,73 @@
 
 #include "DoodleCamera.h"
 
+#include <cmath>
+#include <stdexcept>
+
 #include <glm/gtc/matrix_transform.hpp>
 
+#include "Core/DoodleComponentConfig.h"
 #include "Core/DoodleGameObject.h"
 #include "Core/DoodleTransform.h"
 
 namespace Doodle
 {
+    void DoodleCamera::Serialize(DoodleComponentConfig& config) const
+    {
+        //与 Deserialize 同一组 key；projection 存枚举整数，fov 写回角度制
+        config.SetInt("projection", static_cast<int>(m_projectionType));
+        config.SetFloat("fov", glm::degrees(m_fovY));
+        config.SetFloat("near", m_near);
+        config.SetFloat("far", m_far);
+        config.SetFloat("orthoHalfHeight", m_orthoHalfHeight);
+    }
+
+    void DoodleCamera::Deserialize(const DoodleComponentConfig& config)
+    {
+#ifndef NDEBUG
+        config.ExpectOnlyKeys({"projection", "fov", "near", "far", "orthoHalfHeight"});
+#endif
+
+        const int projection = config.GetInt("projection", static_cast<int>(ECameraProjectionType::Perspective));
+        if (projection == static_cast<int>(ECameraProjectionType::Perspective))
+        {
+            m_projectionType = ECameraProjectionType::Perspective;
+        }
+        else if (projection == static_cast<int>(ECameraProjectionType::Orthographic))
+        {
+            m_projectionType = ECameraProjectionType::Orthographic;
+        }
+        else
+        {
+            throw std::runtime_error(config.GetPath() + ".projection: expected 0 (perspective) or 1 (orthographic)");
+        }
+
+        m_fovY = glm::radians(config.GetFloat("fov", 45.0f));
+        m_near = config.GetFloat("near", 0.1f);
+        m_far = config.GetFloat("far", 100.0f);
+        m_orthoHalfHeight = config.GetFloat("orthoHalfHeight", 2.0f);
+
+        if (!(m_fovY > 0.0f && m_fovY < glm::radians(180.0f)))
+        {
+            throw std::runtime_error(config.GetPath() + ".fov: must be in (0, 180)");
+        }
+
+        if (!(m_near > 0.0f))
+        {
+            throw std::runtime_error(config.GetPath() + ".near: must be greater than 0");
+        }
+
+        if (!(m_far > m_near))
+        {
+            throw std::runtime_error(config.GetPath() + ".far: must be greater than near");
+        }
+
+        if (!(m_orthoHalfHeight > 0.0f))
+        {
+            throw std::runtime_error(config.GetPath() + ".orthoHalfHeight: must be greater than 0");
+        }
+    }
+
     glm::mat4 DoodleCamera::GetViewMatrix() const
     {
         // 宿主由 AddComponent 保证非空；脱离宿主构造的相机是错误用法

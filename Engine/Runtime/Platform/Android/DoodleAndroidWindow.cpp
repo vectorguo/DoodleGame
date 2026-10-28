@@ -7,9 +7,15 @@
 
 #include "DoodleAndroidWindow.h"
 
+#include <android/configuration.h>
+#include <android/input.h>
 #include <android_native_app_glue.h>
 
 #include <vulkan/vulkan.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cstddef>
 
 #include "DoodleAndroidApplication.h"
 
@@ -22,6 +28,9 @@ namespace Doodle
         //接管事件回调。userData 归本类所有，理由见头文件
         m_pApp->userData = this;
         m_pApp->onAppCmd = &DoodleAndroidWindow::HandleAppCmd;
+        m_pApp->onInputEvent = &DoodleAndroidWindow::HandleInputEvent;
+
+        m_lastTouchFrameTime = std::chrono::steady_clock::now();
     }
 
     bool DoodleAndroidWindow::IsRenderable() const
@@ -36,6 +45,20 @@ namespace Doodle
 
     void DoodleAndroidWindow::PumpEvents()
     {
+        //每轮输入帧先算时间间隔，并把所有活动手指的阶段恢复成 Stationary；
+        //随后处理到的事件会把阶段改成 Began / Moved / Ended / Canceled
+        const auto touchFrameTime = std::chrono::steady_clock::now();
+        m_touchFrameDeltaSeconds = std::chrono::duration<float>(
+            touchFrameTime - m_lastTouchFrameTime).count();
+        m_lastTouchFrameTime = touchFrameTime;
+
+        for (TouchState& touch : m_activeTouches)
+        {
+            touch.phase = DoodleTouchPhase::Stationary;
+            touch.deltaX = 0.0f;
+            touch.deltaY = 0.0f;
+        }
+
         int32_t events = 0;
         android_poll_source* pSource = nullptr;
 
@@ -63,6 +86,9 @@ namespace Doodle
                 return;
             }
         }
+
+        //事件处理完了，整理成本帧快照
+        BuildTouchFrame();
     }
 
     void DoodleAndroidWindow::WaitUntilDrawable()
@@ -77,14 +103,209 @@ namespace Doodle
 
     DoodleInput::RawState DoodleAndroidWindow::GetRawInputState() const
     {
-        //A4 不做触屏，返回空快照。游戏层仍然通过 DoodleInput 查询，
-        //所以「这个平台没有输入」不需要在调用方分平台判断
-        return m_input;
+        //键鼠快照在 Android 上恒为空；触摸能力是平台属性，失焦清空快照后
+        //也必须保持 true，所以在返回的副本上补
+        DoodleInput::RawState state = m_input;
+        state.touchSupported = true;
+        return state;
     }
 
     void DoodleAndroidWindow::SetCursorCaptured(const bool /*captured*/)
     {
         //Android 没有桌面光标捕获。保留接口是为了三端实现同一份 DoodleWindow 契约
+    }
+
+    int32_t DoodleAndroidWindow::HandleInputEvent(android_app* pApp, AInputEvent* pEvent)
+    {
+        const auto pWindow = static_cast<DoodleAndroidWindow*>(pApp->userData);
+        if (pWindow == nullptr)
+        {
+            return 0;
+        }
+
+        return pWindow->OnInputEvent(pEvent) ? 1 : 0;
+    }
+
+    bool DoodleAndroidWindow::OnInputEvent(const AInputEvent* pEvent)
+    {
+        //只消费触摸；按键（返回键、音量键等）交给系统
+        if (AInputEvent_getType(pEvent) != AINPUT_EVENT_TYPE_MOTION)
+        {
+            return false;
+        }
+
+        const int32_t action = AMotionEvent_getAction(pEvent);
+        const int32_t actionMasked = action & AMOTION_EVENT_ACTION_MASK;
+        const std::size_t pointerIndex = static_cast<std::size_t>(
+            (action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
+            AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT);
+        const std::size_t pointerCount = AMotionEvent_getPointerCount(pEvent);
+        const float densityScale = GetTouchDensityScale();
+
+        switch (actionMasked)
+        {
+        case AMOTION_EVENT_ACTION_DOWN:
+        case AMOTION_EVENT_ACTION_POINTER_DOWN:
+            AddTouch(pEvent, pointerIndex, densityScale);
+            return true;
+
+        case AMOTION_EVENT_ACTION_MOVE:
+            for (std::size_t i = 0; i < pointerCount; ++i)
+            {
+                UpdateTouch(pEvent, i, densityScale, false);
+            }
+            return true;
+
+        case AMOTION_EVENT_ACTION_UP:
+        case AMOTION_EVENT_ACTION_POINTER_UP:
+            UpdateTouch(pEvent, pointerIndex, densityScale, true);
+            return true;
+
+        case AMOTION_EVENT_ACTION_CANCEL:
+            for (TouchState& touch : m_activeTouches)
+            {
+                touch.phase = DoodleTouchPhase::Canceled;
+                touch.removeAfterFrame = true;
+            }
+            return true;
+
+        default:
+            return false;
+        }
+    }
+
+    void DoodleAndroidWindow::AddTouch(const AInputEvent* pEvent,
+                                       const std::size_t pointerIndex,
+                                       const float densityScale)
+    {
+        if (m_activeTouches.size() >= DoodleInput::kMaxTouches)
+        {
+            return;
+        }
+
+        const int32_t fingerId = AMotionEvent_getPointerId(pEvent, pointerIndex);
+
+        //极端情况下同一根手指的 DOWN 重复到达；已经在跟踪就不再新增
+        for (const TouchState& touch : m_activeTouches)
+        {
+            if (touch.fingerId == fingerId)
+            {
+                return;
+            }
+        }
+
+        const float x = AMotionEvent_getX(pEvent, pointerIndex) / densityScale;
+        const float y = AMotionEvent_getY(pEvent, pointerIndex) / densityScale;
+
+        TouchState touch;
+        touch.fingerId = fingerId;
+        touch.x = x;
+        touch.y = y;
+        touch.lastFrameX = x;
+        touch.lastFrameY = y;
+        touch.pressure = std::clamp(
+            AMotionEvent_getPressure(pEvent, pointerIndex), 0.0f, 1.0f);
+        touch.phase = DoodleTouchPhase::Began;
+        m_activeTouches.push_back(touch);
+    }
+
+    void DoodleAndroidWindow::UpdateTouch(const AInputEvent* pEvent,
+                                          const std::size_t pointerIndex,
+                                          const float densityScale,
+                                          const bool ending)
+    {
+        const int32_t fingerId = AMotionEvent_getPointerId(pEvent, pointerIndex);
+        const float x = AMotionEvent_getX(pEvent, pointerIndex) / densityScale;
+        const float y = AMotionEvent_getY(pEvent, pointerIndex) / densityScale;
+
+        for (TouchState& touch : m_activeTouches)
+        {
+            if (touch.fingerId != fingerId)
+            {
+                continue;
+            }
+
+            //位移相对上一帧快照的位置，同一帧里多条 MOVE 也只累计到「本帧总位移」
+            touch.deltaX = x - touch.lastFrameX;
+            touch.deltaY = y - touch.lastFrameY;
+            touch.x = x;
+            touch.y = y;
+            touch.pressure = std::clamp(
+                AMotionEvent_getPressure(pEvent, pointerIndex), 0.0f, 1.0f);
+
+            if (ending)
+            {
+                touch.phase = DoodleTouchPhase::Ended;
+                touch.removeAfterFrame = true;
+            }
+            else if (touch.phase != DoodleTouchPhase::Began)
+            {
+                //刚开始的那一帧保持 Began；之后按是否移动区分 Moved / Stationary
+                touch.phase = (touch.deltaX != 0.0f || touch.deltaY != 0.0f)
+                                  ? DoodleTouchPhase::Moved
+                                  : DoodleTouchPhase::Stationary;
+            }
+
+            return;
+        }
+
+        //没收到 DOWN 就收到 MOVE：补记一根手指，避免整段触摸丢失
+        if (!ending)
+        {
+            AddTouch(pEvent, pointerIndex, densityScale);
+        }
+    }
+
+    void DoodleAndroidWindow::BuildTouchFrame()
+    {
+        m_input.touchCount = 0;
+
+        for (const TouchState& touch : m_activeTouches)
+        {
+            if (m_input.touchCount >= static_cast<int32_t>(DoodleInput::kMaxTouches))
+            {
+                break;
+            }
+
+            DoodleTouch& output = m_input.touches[static_cast<std::size_t>(m_input.touchCount)];
+            ++m_input.touchCount;
+
+            output.fingerId = touch.fingerId;
+            output.position = glm::vec2(touch.x, touch.y);
+            output.deltaPosition = glm::vec2(touch.deltaX, touch.deltaY);
+            output.deltaTime = m_touchFrameDeltaSeconds;
+            output.pressure = touch.pressure;
+            output.phase = touch.phase;
+        }
+
+        //本帧快照写完再推进「上一帧位置」，然后移除已经结束的手指
+        for (TouchState& touch : m_activeTouches)
+        {
+            touch.lastFrameX = touch.x;
+            touch.lastFrameY = touch.y;
+        }
+
+        std::erase_if(m_activeTouches,
+                      [](const TouchState& touch) { return touch.removeAfterFrame; });
+    }
+
+    float DoodleAndroidWindow::GetTouchDensityScale() const
+    {
+        //android_app::config 由胶水层按当前 Configuration 维护；
+        //ANativeActivity 本身没有 config 成员
+        if (m_pApp == nullptr || m_pApp->config == nullptr)
+        {
+            return 1.0f;
+        }
+
+        const int32_t density = AConfiguration_getDensity(m_pApp->config);
+        if (density <= 0)
+        {
+            return 1.0f;
+        }
+
+        //160 dpi 是 Android 的 mdpi 基准；结果就是 dp / 逻辑窗口单位
+        return static_cast<float>(density) / 160.0f;
     }
 
     VkExtent2D DoodleAndroidWindow::GetSurfaceSize() const
@@ -141,17 +362,27 @@ namespace Doodle
 
         case APP_CMD_LOST_FOCUS:
             m_focused = false;
-            //失焦清空快照，切后台回来不会带着旧按键
+            //失焦清空键鼠与触摸快照；手指在切后台时不可能还按着，
+            //留着会变成永远不会结束的 Ended 触摸
             m_input = {};
+            m_input.touchSupported = true;
+            m_activeTouches.clear();
+            break;
+
+        case APP_CMD_TERM_WINDOW:
+            //窗口没了，触摸的坐标基准也失效，直接丢弃活动手指
+            m_activeTouches.clear();
+            m_input.touches = {};
+            m_input.touchCount = 0;
             break;
 
         default:
             break;
         }
 
-        //其余命令全部交给驱动层。窗口的来去（INIT_WINDOW / TERM_WINDOW）本层不做处理：
-        //那要连带拆建交换链、帧缓冲和同步对象，是 Vulkan 子系统的事，
-        //本层只该管窗口自己的状态
+        //其余命令全部交给驱动层。窗口的来去（INIT_WINDOW / TERM_WINDOW）中，
+        //交换链 / 帧缓冲 / 同步对象由 Vulkan 子系统处理；本层只清理自己的
+        //输入状态，然后把命令照样转下去
         m_application.OnAppCommand(command);
     }
 }

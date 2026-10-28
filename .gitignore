@@ -6,6 +6,8 @@
 !/.gitattributes
 !/CMakeLists.txt
 !/Engine/
+!/GamePlay/
+!/App/
 !/Shaders/
 !/Resources/
 !/android/

@@ -68,6 +68,27 @@ namespace Doodle
         DoodleScene& operator=(DoodleScene&&) = delete;
 
         /**
+         * 按数据建出本场景的全部对象与组件
+         *
+         * 只做「数据 → 对象」：名字、位姿与组件的装配；文件读取与 JSON 解析
+         * 属于 DoodleSceneLoader，不在本方法里。所有组件（MeshRenderer、
+         * DoodleCamera、Package / GamePlay 组件）都通过组件注册表按类型创建，
+         * 没有专用字段。
+         *
+         * 先解析全部组件类型、Debug 下预校验参数，再创建对象，最后按场景顺序
+         * 创建组件：类型或 Debug 配置错误时一个对象也不会建出来。Release 下
+         * 参数预校验被去掉，配置 / 资产错误可能在创建组件时才暴露。
+         *
+         * 重复调用会把内容再建一遍，不做拦截；要替换内容请销毁场景后重建新的。
+         *
+         * 只能在主线程调用（会创建 GameObject 与组件）。
+         *
+         * @throw std::logic_error 场景已请求销毁
+         * @throw std::runtime_error 组件类型未注册 / 资产不存在 / Debug 配置校验失败
+         */
+        void InitializeFromData(const DoodleSceneData& sceneData);
+
+        /**
          * 驱动本场景的 GameObject 更新，并回收本轮被标记销毁的对象
          *
          * inactive 时不更新对象，但 sweep 仍然执行；生命周期不是 Alive 的
@@ -97,24 +118,6 @@ namespace Doodle
          * 出来的对象没有下一次 sweep，只会拖到容器析构时才跑回调。
          */
         DoodleGameObject& CreateGameObject(std::string name = "NewGameObject");
-
-        /**
-         * 按数据建出本场景的全部对象
-         *
-         * 只做「数据 → 对象」：名字、位姿、网格与相机的装配；文件读取与
-         * JSON 解析属于 DoodleSceneLoader，不在本方法里。网格按 meshKey 向
-         * 当前 DoodleAssetManager 取。场景名不在这里设置，仍由创建时传入。
-         *
-         * 先解析所有网格、再创建对象：资产缺失时一个对象也不会建出来，
-         * 场景保持为空，不会留下半个内容。重复调用会把内容再建一遍，不做
-         * 拦截；要替换内容请销毁场景后重建新的。
-         *
-         * 只能在主线程调用（会创建 GameObject 与组件）。
-         *
-         * @throw std::logic_error 场景已请求销毁
-         * @throw std::runtime_error 引用的资产不存在时抛出，此时场景仍为空
-         */
-        void InitializeFromData(const DoodleSceneData& sceneData);
 
         /**
          * 请求销毁对象；只推进到 PendingDestroy，sweep 时统一执行

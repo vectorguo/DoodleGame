@@ -151,6 +151,58 @@ namespace
         return value;
     }
 
+    Doodle::DoodleComponentData ParseComponent(const Json& componentJson,
+                                               const std::string_view sourceName,
+                                               const std::string& path)
+    {
+        if (!componentJson.is_object())
+        {
+            ThrowFieldError(sourceName, path, "expected an object");
+        }
+
+        // type / settings 是组件条目的全部顶层字段；参数内部由组件自己校验
+        CheckUnknownKeys(componentJson, {"type", "settings"}, sourceName, path);
+
+        const auto typeIt = componentJson.find("type");
+        if (typeIt == componentJson.end())
+        {
+            ThrowFieldError(sourceName, path, "missing field 'type'");
+        }
+
+        if (!typeIt->is_string())
+        {
+            ThrowFieldError(sourceName, path + ".type", "expected a string");
+        }
+
+        std::string type = typeIt->get<std::string>();
+        if (type.empty())
+        {
+            ThrowFieldError(sourceName, path + ".type", "must not be empty");
+        }
+
+        Json settingsJson = Json::object();
+        const auto settingsIt = componentJson.find("settings");
+        if (settingsIt != componentJson.end())
+        {
+            if (!settingsIt->is_object())
+            {
+                ThrowFieldError(sourceName, path + ".settings", "expected an object");
+            }
+            settingsJson = *settingsIt;
+        }
+
+        //路径带上文件名：这些路径会被 DoodleSceneData 带到装配阶段，
+        //组件参数错误 / 未知类型的报错必须能指回是哪个场景文件
+        const std::string sourcePath = std::string(sourceName) + ": " + path;
+
+        Doodle::DoodleComponentData componentData;
+        componentData.typeName = std::move(type);
+        componentData.path = sourcePath;
+        componentData.config = Doodle::DoodleComponentConfig(
+            std::move(settingsJson), sourcePath + ".settings");
+        return componentData;
+    }
+
     Doodle::DoodleSceneData ParseRoot(const Json& root, const std::string_view sourceName)
     {
         if (!root.is_object())
@@ -174,7 +226,7 @@ namespace
             ThrowFieldError(sourceName, "gameObjects", "expected an array");
         }
 
-        sceneData.gameObjects.reserve(gameObjectsIt->size());
+        sceneData.gameObjectDataList.reserve(gameObjectsIt->size());
 
         for (std::size_t i = 0; i < gameObjectsIt->size(); ++i)
         {
@@ -186,83 +238,40 @@ namespace
                 ThrowFieldError(sourceName, objectPath, "expected an object");
             }
 
-            CheckUnknownKeys(objectJson, {"name", "mesh", "camera", "position", "rotation", "scale"},
+            CheckUnknownKeys(objectJson,
+                             {"name", "position", "rotation", "scale", "components"},
                              sourceName, objectPath);
 
             Doodle::DoodleSceneObjectData objectData;
             objectData.name = ReadOptionalNonEmptyString(objectJson, "name", "GameObject",
                                                          sourceName, objectPath);
 
-            // mesh 可选：对象可以只挂相机。给了就必须是合法字符串 ——
-            // 忽略一个拼坏的字段会让画面静默少一个对象
-            const auto meshIt = objectJson.find("mesh");
-            if (meshIt != objectJson.end())
+            // 组件列表是对象内容的唯一来源：mesh、camera 等引擎组件也走这里。
+            // 只校验条目的形状，具体字段留给组件自己的 Deserialize；type 是否注册、
+            // 参数是否合法由 DoodleScene::InitializeFromData 在创建对象之前检查
+            const auto componentsIt = objectJson.find("components");
+            if (componentsIt != objectJson.end())
             {
-                if (!meshIt->is_string())
+                if (!componentsIt->is_array())
                 {
-                    ThrowFieldError(sourceName, objectPath + ".mesh", "expected a string");
+                    ThrowFieldError(sourceName, objectPath + ".components", "expected an array");
                 }
 
-                objectData.meshKey = meshIt->get<std::string>();
-                if (objectData.meshKey.empty())
+                objectData.componentDataList.reserve(componentsIt->size());
+                for (std::size_t j = 0; j < componentsIt->size(); ++j)
                 {
-                    ThrowFieldError(sourceName, objectPath + ".mesh", "must not be empty");
+                    const std::string componentPath =
+                        IndexedPath(objectPath + ".components", j);
+                    objectData.componentDataList.push_back(
+                        ParseComponent((*componentsIt)[j], sourceName, componentPath));
                 }
             }
 
-            // camera 可以是布尔（只表示挂不挂，投影参数全用默认值），也可以是
-            // 对象（挂载的同时配置投影方式）。对象形式是留给相机配置的扩展位，
-            // 现在只有 "type" 一个字段
-            const auto cameraIt = objectJson.find("camera");
-            if (cameraIt != objectJson.end())
-            {
-                const std::string cameraPath = objectPath + ".camera";
-
-                if (cameraIt->is_boolean())
-                {
-                    objectData.hasCamera = cameraIt->get<bool>();
-                }
-                else if (cameraIt->is_object())
-                {
-                    objectData.hasCamera = true;
-                    CheckUnknownKeys(*cameraIt, {"type"}, sourceName, cameraPath);
-
-                    const auto typeIt = cameraIt->find("type");
-                    if (typeIt != cameraIt->end())
-                    {
-                        const std::string typePath = cameraPath + ".type";
-                        if (!typeIt->is_string())
-                        {
-                            ThrowFieldError(sourceName, typePath, "expected a string");
-                        }
-
-                        const std::string type = typeIt->get<std::string>();
-                        if (type == "perspective")
-                        {
-                            objectData.cameraProjection = Doodle::ECameraProjectionType::Perspective;
-                        }
-                        else if (type == "orthographic")
-                        {
-                            objectData.cameraProjection = Doodle::ECameraProjectionType::Orthographic;
-                        }
-                        else
-                        {
-                            ThrowFieldError(sourceName, typePath,
-                                            "expected 'perspective' or 'orthographic'");
-                        }
-                    }
-                }
-                else
-                {
-                    ThrowFieldError(sourceName, cameraPath, "expected true, false, or an object");
-                }
-            }
-
-            // 两者都没有的对象在当前模型里什么也不做：没有层级，它连
+            // 没有组件的对象在当前模型里什么也不做：没有层级，它连
             // 「只提供变换的父节点」都当不了。多半是漏了字段，当场报错
-            if (objectData.meshKey.empty() && !objectData.hasCamera)
+            if (objectData.componentDataList.empty())
             {
-                ThrowFieldError(sourceName, objectPath, "must have 'mesh' or 'camera'");
+                ThrowFieldError(sourceName, objectPath, "must have at least one component");
             }
 
             objectData.position = ReadOptionalVec3(objectJson, "position", glm::vec3(0.0f),
@@ -272,7 +281,7 @@ namespace
             objectData.scale = ReadOptionalVec3(objectJson, "scale", glm::vec3(1.0f),
                                                 sourceName, objectPath);
 
-            sceneData.gameObjects.push_back(std::move(objectData));
+            sceneData.gameObjectDataList.push_back(std::move(objectData));
         }
 
         return sceneData;

@@ -7,7 +7,10 @@
 
 #pragma once
 
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "../DoodleWindow.h"
 
@@ -15,6 +18,7 @@
 //头文件里不引入 <android_native_app_glue.h>：本类的使用者只该看见
 //DoodleWindow 那套接口加下面两个自有方法，胶水层是这一层的实现细节
 struct android_app;
+struct AInputEvent;
 
 namespace Doodle
 {
@@ -104,6 +108,72 @@ namespace Doodle
          */
         void OnAppCmd(const int32_t command);
 
+        /**
+         * 胶水层的输入入口
+         *
+         * 必须是这个签名：onInputEvent 是 C 函数指针。返回值表示事件是否被消费；
+         * 我们只消费触摸事件，按键等交给系统
+         */
+        static int32_t HandleInputEvent(android_app* pApp, AInputEvent* pEvent);
+
+        /**
+         * 处理一条输入事件；返回是否消费
+         */
+        bool OnInputEvent(const AInputEvent* pEvent);
+
+        /**
+         * 新增一个触摸点（DOWN / POINTER_DOWN）
+         */
+        void AddTouch(const AInputEvent* pEvent, std::size_t pointerIndex, float densityScale);
+
+        /**
+         * 更新一个触摸点（MOVE / UP / POINTER_UP）
+         *
+         * @param ending true 表示这根手指在本事件里抬起
+         */
+        void UpdateTouch(const AInputEvent* pEvent,
+                         std::size_t pointerIndex,
+                         float densityScale,
+                         bool ending);
+
+        /**
+         * 把当前活动触摸点整理成本帧快照，并移除已经结束的手指
+         */
+        void BuildTouchFrame();
+
+        /**
+         * 物理像素 → 逻辑窗口单位的缩放
+         *
+         * Android 以 160 dpi 为 mdpi 基准；返回 1.0 表示不缩放
+         */
+        [[nodiscard]] float GetTouchDensityScale() const;
+
+        /**
+         * 一个活动触摸点的跨帧状态
+         */
+        struct TouchState
+        {
+            int32_t fingerId = -1;
+
+            /** 当前位置（逻辑窗口单位） */
+            float x = 0.0f;
+            float y = 0.0f;
+
+            /** 上一帧快照时的位置，用来算本帧位移 */
+            float lastFrameX = 0.0f;
+            float lastFrameY = 0.0f;
+
+            /** 本帧累计位移 */
+            float deltaX = 0.0f;
+            float deltaY = 0.0f;
+
+            float pressure = 0.0f;
+            DoodleTouchPhase phase = DoodleTouchPhase::Stationary;
+
+            /** 本帧快照之后从活动列表移除 */
+            bool removeAfterFrame = false;
+        };
+
     private:
         /** 胶水层的应用对象，只借不放，生命周期由系统保证 */
         android_app* m_pApp = nullptr;
@@ -120,11 +190,23 @@ namespace Doodle
         bool m_focused = false;
 
         /**
-         * 本帧输入快照
-         *
-         * A4 不做触屏，当前恒为空。将来接触摸时，由 onInputEvent 写进这里
-         * （窗口已经接管了 pApp->userData，加回调不用改共享接口）
+         * 本帧输入快照：Android 没有键鼠，触摸点在 PumpEvents 里填充
          */
         DoodleInput::RawState m_input;
+
+        /**
+         * 当前按住的手指，跨帧保留；BuildTouchFrame 生成每帧快照
+         */
+        std::vector<TouchState> m_activeTouches;
+
+        /**
+         * 上一输入帧的时间，用来填 DoodleTouch::deltaTime
+         */
+        std::chrono::steady_clock::time_point m_lastTouchFrameTime;
+
+        /**
+         * 本输入帧与上一帧的间隔，秒
+         */
+        float m_touchFrameDeltaSeconds = 0.0f;
     };
 }

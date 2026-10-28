@@ -9,7 +9,8 @@
 #include <exception>
 #include <iostream>
 
-#include "DoodleWindowsApplication.h"
+#include "Platform/Windows/DoodleWindowsApplication.h"
+#include "DoodleGame.h"
 
 //<windows.h> 排在本工程的头文件之后，理由见 DoodleWindowsWindow.cpp。这里只为控制台代码页
 #include <windows.h>
@@ -19,7 +20,7 @@ using namespace Doodle;
 /**
  * Windows 侧的进程入口
  *
- * 形状与 macOS 那份（Runtime/Platform/MacOS/DoodleMacMain.cpp）一样：建对象、
+ * 形状与 macOS 那份（App/Platform/MacOS/DoodleMacMain.cpp）一样：建对象、
  * 按顺序调 Initialize / Run / Destroy、把异常翻成退出码，连窗口都不用它建
  * （见 DoodleWindowsApplication::CreateWindow）
  *
@@ -42,6 +43,9 @@ int main()
     int exitCode = EXIT_SUCCESS;
     try
     {
+        // 场景组件类型必须在场景加载之前登记
+        DoodleGame::RegisterComponents();
+
         DoodleWindowsApplication app;
         app.Initialize();
         app.Run();

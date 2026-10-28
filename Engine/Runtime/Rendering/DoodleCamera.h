@@ -19,19 +19,21 @@ namespace Doodle
      * 相机的投影方式
      *
      * 场景数据（DoodleSceneData）也用这个类型描述相机配置，所以它跟着
-     * DoodleCamera 走，不单独成头文件
+     * DoodleCamera 走，不单独成头文件。
+     *
+     * 枚举值直接作为序列化值：0 = 透视，1 = 正交。
      */
     enum class ECameraProjectionType : std::uint8_t
     {
         /**
          * 透视投影：近大远小，由垂直 FOV 决定可见范围
          */
-        Perspective,
+        Perspective = 0,
 
         /**
          * 平行投影（正交投影）：没有近大远小，由正交半高决定可见范围
          */
-        Orthographic,
+        Orthographic = 1,
     };
 
     /**
@@ -57,6 +59,22 @@ namespace Doodle
     class DoodleCamera final : public DoodleComponent
     {
     public:
+        /**
+         * 把投影参数写回序列化配置
+         *
+         * projection 存整数（0 = 透视，1 = 正交）；fov 内部存弧度，
+         * 写回时转成度；near / far / orthoHalfHeight 原样写。
+         */
+        void Serialize(DoodleComponentConfig& config) const override;
+
+        /**
+         * 从序列化配置读取投影参数
+         *
+         * 字段：projection（0 = perspective，1 = orthographic）、fov（度）、
+         * near、far、orthoHalfHeight。不依赖宿主，Debug 校验探针也可以调用。
+         */
+        void Deserialize(const DoodleComponentConfig& config) override;
+
         /**
          * 从宿主 Transform 生成 view 矩阵
          *

@@ -9,7 +9,6 @@
 
 #include <array>
 #include <cstddef>
-#include <cstdint>
 
 #include <glm/glm.hpp>
 
@@ -47,6 +46,65 @@ namespace Doodle
     };
 
     /**
+     * 触摸阶段，命名对齐 Unity 的 TouchPhase
+     */
+    enum class DoodleTouchPhase : std::uint8_t
+    {
+        Began,
+        Moved,
+        Stationary,
+        Ended,
+        Canceled,
+    };
+
+    /**
+     * 一个触摸点，字段参考 Unity 的 Touch
+     *
+     * 坐标单位是**逻辑窗口单位**（Android 已按屏幕密度换算），不是物理像素；
+     * 原点在窗口左上角，+Y 向下。和 DoodleInput 的鼠标位移同一套单位/方向，
+     * 与 Unity 的「左下角原点、+Y 向上」不同。
+     *
+     * 坐标是窗口（显示方向）的，不是交换链图像自己的；Android 的预旋转
+     * 不影响这里。
+     *
+     * 这是本帧快照：phase / deltaPosition / deltaTime 都是相对上一帧的状态。
+     * 手指在两帧之间按下又抬起这种极短触摸，可能只留下最后的 Ended，不会
+     * 单独出现 Began —— 输入层按帧聚合事件，不逐事件回调。
+     */
+    struct DoodleTouch
+    {
+        /**
+         * 手指 ID，同一根手指按下到抬起期间保持不变
+         */
+        int32_t fingerId = -1;
+
+        /**
+         * 当前位置，逻辑窗口单位
+         */
+        glm::vec2 position{0.0f};
+
+        /**
+         * 相对上一帧的位移，逻辑窗口单位
+         */
+        glm::vec2 deltaPosition{0.0f};
+
+        /**
+         * 本输入帧的时间，秒
+         */
+        float deltaTime = 0.0f;
+
+        /**
+         * 压力，0..1
+         */
+        float pressure = 0.0f;
+
+        /**
+         * 本帧阶段
+         */
+        DoodleTouchPhase phase = DoodleTouchPhase::Canceled;
+    };
+
+    /**
      * 全局输入查询，用法对齐 Unity 的 Input
      *
      *     DoodleInput::GetKey(DoodleKey::W)
@@ -70,6 +128,13 @@ namespace Doodle
     {
     public:
         DoodleInput() = delete;
+
+        /**
+         * 单帧最多同时报告的触摸点数量
+         *
+         * Android 设备常见上限就是 10；超出的事件会被忽略
+         */
+        static constexpr std::size_t kMaxTouches = 10;
 
         /**
          * 本帧是否按住
@@ -118,6 +183,30 @@ namespace Doodle
         [[nodiscard]] static bool IsCursorCaptured();
 
         /**
+         * 本帧触摸点数量，命名对齐 Unity 的 Input.touchCount
+         *
+         * 包含本帧刚结束（Ended / Canceled）的触摸点；下一帧不再出现。
+         * 桌面平台恒为 0。
+         */
+        [[nodiscard]] static int GetTouchCount();
+
+        /**
+         * 取第 index 个触摸点，命名对齐 Unity 的 Input.GetTouch
+         *
+         * index 必须在 [0, GetTouchCount()) 内，越界抛 std::out_of_range。
+         * 返回的是本帧快照的副本。
+         */
+        [[nodiscard]] static DoodleTouch GetTouch(int index);
+
+        /**
+         * 当前平台是否支持触摸输入
+         *
+         * Android 为 true；桌面为 false。注意「支持」不等于本帧有触摸点，
+         * 本帧是否有触摸仍然看 GetTouchCount。
+         */
+        [[nodiscard]] static bool IsTouchSupported();
+
+        /**
          * 平台层每帧填写的原始状态
          *
          * 这是 DoodleWindow → DoodleApplication → DoodleInput 的内部数据形状，
@@ -131,6 +220,17 @@ namespace Doodle
             float mouseDeltaX = 0.0f;
             float mouseDeltaY = 0.0f;
             bool cursorCaptured = false;
+
+            /**
+             * 本帧触摸点，只有前 touchCount 个有效
+             */
+            std::array<DoodleTouch, kMaxTouches> touches{};
+            int32_t touchCount = 0;
+
+            /**
+             * 平台是否有触摸能力；Android 为 true
+             */
+            bool touchSupported = false;
 
             void SetKey(const DoodleKey key, const bool down)
             {

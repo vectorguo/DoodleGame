@@ -2,24 +2,83 @@
   "name": "Main",
   "gameObjects": [
     {
-      "name": "MainCamera",
-      "camera": true,
-      "position": [2.0, 2.0, 2.0],
-      "rotation": [0.0, 35.264389682754654, -135.0]
-    },
-    {
       "name": "Cube",
-      "mesh": "builtin:cube",
       "position": [0.0, 0.0, 0.0],
       "rotation": [0.0, 0.0, 0.0],
-      "scale": [1.0, 1.0, 1.0]
+      "scale": [1.0, 1.0, 1.0],
+      "components": [
+        {
+          "type": "Engine.MeshRenderer",
+          "settings": {
+            "mesh": "builtin:cube"
+          }
+        }
+      ]
     },
     {
       "name": "Cube",
-      "mesh": "builtin:cube",
       "position": [1.0, 0.0, 0.0],
       "rotation": [0.0, 0.0, 0.0],
-      "scale": [0.5, 0.5, 0.5]
+      "scale": [0.5, 0.5, 0.5],
+      "components": [
+        {
+          "type": "Engine.MeshRenderer",
+          "settings": {
+            "mesh": "builtin:cube"
+          }
+        }
+      ]
+    },
+    {
+      "name": "CameraRig",
+      "position": [2.0, 2.0, 2.0],
+      "rotation": [0.0, 35.264389682754654, -135.0],
+      "components": [
+        {
+          "type": "CameraDirector.VirtualCamera",
+          "settings": {
+            "priority": 10,
+            "standbyUpdate": 2,
+            "fov": 60.0,
+            "near": 0.3,
+            "far": 2500.0,
+            "dutch": 0.0
+          }
+        },
+        {
+          "type": "CameraDirector.CameraOffset",
+          "settings": {
+            "offset": [0.0, 0.0, 0.0],
+            "applyAfter": 1,
+            "preserveComposition": false
+          }
+        },
+        {
+          "type": "GamePlay.FreeLookController",
+          "settings": {
+            "moveSpeed": 2.5,
+            "boostMultiplier": 4.0,
+            "lookSensitivity": 0.12,
+            "pitchLimit": 89.0
+          }
+        }
+      ]
+    },
+    {
+      "name": "MainCamera",
+      "position": [2.0, 2.0, 2.0],
+      "rotation": [0.0, 35.264389682754654, -135.0],
+      "components": [
+        {
+          "type": "Engine.Camera",
+          "settings": {
+            "projection": 0
+          }
+        },
+        {
+          "type": "CameraDirector.Brain"
+        }
+      ]
     }
   ]
 }

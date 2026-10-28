@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <string>
+
 #include "Core/DoodleComponent.h"
 
 namespace Doodle
@@ -32,9 +34,27 @@ namespace Doodle
     {
     public:
         /**
+         * 把 mesh key 写回序列化配置
+         *
+         * 只写 Deserialize 保存下来的 key；运行时通过 SetMesh 替换的网格
+         * 没有对应的内容 key，不会更新这里。
+         */
+        void Serialize(DoodleComponentConfig& config) const override;
+
+        /**
+         * 从序列化配置读取 mesh key，并向资产管理器取网格
+         *
+         * key 会保存下来供 Serialize 使用；取不到资产时抛异常。
+         * 这个方法只做字段/资产解析，不依赖宿主，所以 Debug 校验探针也能调用。
+         */
+        void Deserialize(const DoodleComponentConfig& config) override;
+
+        /**
          * 设置要画的网格；传 nullptr 表示暂时不画
          *
-         * 指针非拥有，寿命必须由网格库覆盖到本组件销毁为止
+         * 指针非拥有，寿命必须由网格库覆盖到本组件销毁为止。
+         * 这个入口不更新 mesh key —— 反序列化出来的组件才带可写回的 key，
+         * 运行时直接替换网格属于运行时状态，不当作场景内容序列化。
          */
         void SetMesh(const DoodleMesh* pMesh)
         {
@@ -49,10 +69,23 @@ namespace Doodle
             return m_pMesh;
         }
 
+        /**
+         * 反序列化时保存的 mesh key；运行时添加的组件为空
+         */
+        [[nodiscard]] const std::string& GetMeshKey() const
+        {
+            return m_meshKey;
+        }
+
     private:
         /**
          * 网格资产，非拥有；寿命由 DoodleMeshLibrary 保证
          */
         const DoodleMesh* m_pMesh = nullptr;
+
+        /**
+         * 场景里引用的 mesh key，Serialize 用
+         */
+        std::string m_meshKey;
     };
 }

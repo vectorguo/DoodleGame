@@ -35,7 +35,7 @@ namespace Doodle
      * Android 的生命周期不是另起一套，只是把 InitializeRuntime 按另一个
      * 时刻表调用；销毁时用 DestroyRuntime() / DestroyFileSystem()
      *
-     * 本类由 Runtime/Platform/Android/DoodleAndroidMain.cpp 构造并驱动
+     * 本类由 App/Platform/Android/DoodleAndroidMain.cpp 构造并驱动
      */
     class DoodleAndroidApplication final : public DoodleApplication
     {

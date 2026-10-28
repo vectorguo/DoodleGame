@@ -13,6 +13,7 @@
 namespace Doodle
 {
     class DoodleGameObject;
+    class DoodleComponentConfig;
 
     /**
      * 组件基类：挂在 GameObject 上、随宿主生命周期走的最小单元
@@ -55,6 +56,32 @@ namespace Doodle
         virtual void OnUpdate(const DoodleUpdateContext& context) {}
         virtual void OnDisable() {}
         virtual void OnDestroy() {}
+
+        /**
+         * 把自身字段写回序列化配置
+         *
+         * 和 Deserialize 使用同一组 key、同一组类型；默认空实现表示没有参数。
+         * 参数是 DoodleComponentConfig&（非 const），只能写不能读；反过来
+         * Deserialize 收 const&，只能读不能写，方向由 const 强制。
+         *
+         * 目前注册项不保存序列化回调，所以场景写入器落地前没有调用方；
+         * 先保留这个契约，让组件的读写逻辑写在一起。
+         */
+        virtual void Serialize(DoodleComponentConfig& /*config*/) const {}
+
+        /**
+         * 从序列化配置反序列化自身字段
+         *
+         * 只由内容装配调用（当前是场景加载），位置在 OnAwake 之前；运行时
+         * AddComponent<T>() 不会调用它。实现里只读 config、写自己的成员。
+         *
+         * 装配前的 Debug 校验会在一个**没有宿主**的临时实例上调用同一个函数，
+         * 所以这里不要访问 GetGameObject()、不要查场景。需要宿主或场景引用的
+         * 初始化放到 OnAwake —— 那时所有 GameObject 都已经存在。
+         *
+         * 可以抛异常；抛出来就是配置错误。Debug 下会在创建任何对象之前抛出。
+         */
+        virtual void Deserialize(const DoodleComponentConfig& /*config*/) {}
 
         /**
          * 获取宿主，AddComponent 保证非空

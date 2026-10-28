@@ -13,8 +13,8 @@
 #include <string>
 #include <string_view>
 
-#include "Asset/DoodleAssetLoader.h"
-#include "DoodleSceneData.h"
+#include "DoodleAssetLoader.h"
+#include "Scene/DoodleSceneData.h"
 
 namespace Doodle
 {
