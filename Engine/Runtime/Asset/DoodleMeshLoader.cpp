@@ -1,17 +1,26 @@
 //
-//  DoodleMeshLibrary.cpp
+//  DoodleMeshLoader.cpp
 //  Doodle
 //
-//  Created by 郭智 on 2026/10/24.
+//  Created by 郭智 on 2026/10/25.
 //
 
-#include "DoodleMeshLibrary.h"
+#include "DoodleMeshLoader.h"
 
 #include <array>
-#include <utility>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+
+#include "Vulkan/DoodleVulkanDevice.h"
 
 namespace
 {
+    /**
+     * 内建正方体的名字，场景文件里引用的就是它
+     */
+    constexpr std::string_view kBuiltinCubeName = "builtin:cube";
+
     /**
      * 内建正方体：一个以原点为中心、边长为 1 的正方体
      *
@@ -98,35 +107,28 @@ namespace
 
 namespace Doodle
 {
-    void DoodleMeshLibrary::Initialize(const DoodleVulkanDevice& device)
+    DoodleMeshLoader::DoodleMeshLoader(const DoodleVulkanDevice& device)
+        : m_pDevice(&device)
     {
-        CreateBuiltinMeshes(device);
+        // 这里不做任何上传：内建网格也要等到第一次 Load 才建。
+        // loader 注册是初始化链上最不该失败的一步，真正的资源错误
+        // 留给 Create，报错时还能带上具体 key
     }
 
-    void DoodleMeshLibrary::Destroy()
+    std::unique_ptr<DoodleMesh> DoodleMeshLoader::Create(const DoodleAssetLoadContext&,
+                                                              const std::string_view key)
     {
-        //逐个显式销毁：缓冲句柄归网格所有，clear 只释放对象内存，
-        //不会替它们调 Destroy
-        for (auto& entry : m_meshes)
+        if (key != kBuiltinCubeName)
         {
-            entry.second->Destroy();
+            // 网格名写错是内容错误，必须在建场景之前暴露出来。
+            // 将来的文件网格在这里补「按路径导入」
+            throw std::runtime_error("mesh asset not found: " + std::string(key));
         }
 
-        m_meshes.clear();
-    }
-
-    const DoodleMesh* DoodleMeshLibrary::Find(const std::string_view name) const
-    {
-        const auto it = m_meshes.find(name);
-        return it == m_meshes.end() ? nullptr : it->second.get();
-    }
-
-    void DoodleMeshLibrary::CreateBuiltinMeshes(const DoodleVulkanDevice& device)
-    {
-        //内建正方体走的是和将来外部网格同一条路：建 DoodleMesh、上传、
-        //按名字登记。没有任何「内建专用」的旁路
-        auto pCube = std::make_unique<DoodleMesh>();
-        pCube->Initialize(device, kCubeVertices, kCubeIndices);
-        m_meshes.emplace(std::string(BuiltinCubeName), std::move(pCube));
+        // 内建网格走的是和将来外部网格同一条路：建 DoodleMesh、上传，
+        // 由基类登记进缓存。没有任何「内建专用」的旁路
+        auto pMesh = std::make_unique<DoodleMesh>();
+        pMesh->Initialize(*m_pDevice, kCubeVertices, kCubeIndices);
+        return pMesh;
     }
 }

@@ -7,7 +7,7 @@
 
 #include "DoodleAssetManager.h"
 
-#include "DoodleMeshAssetLoader.h"
+#include "DoodleMeshLoader.h"
 #include "DoodleSceneLoader.h"
 
 #include <stdexcept>
@@ -50,9 +50,9 @@ namespace Doodle
 
         try
         {
-            // 网格 loader 内部持有 DoodleMeshLibrary：内建正方体在这里上传。
+            // 网格 loader 只记下设备；内建正方体在第一次 Load 时才上传。
             // 场景 loader 是纯 CPU 的，只需要通过上下文拿文件来源
-            RegisterLoader<DoodleMesh>(std::make_unique<DoodleMeshAssetLoader>(context.device));
+            RegisterLoader<DoodleMesh>(std::make_unique<DoodleMeshLoader>(context.device));
             RegisterLoader<DoodleSceneData>(std::make_unique<DoodleSceneLoader>());
         }
         catch (...)

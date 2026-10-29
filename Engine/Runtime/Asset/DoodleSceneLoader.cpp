@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <initializer_list>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -290,31 +291,7 @@ namespace
 
 namespace Doodle
 {
-    const DoodleSceneData* DoodleSceneLoader::Load(const DoodleAssetLoadContext& context,
-                                                   const std::string_view key)
-    {
-        const auto it = m_sceneData.find(key);
-        if (it != m_sceneData.end())
-        {
-            return &it->second;
-        }
-
-        const std::vector<std::byte> bytes = context.fileSystem.ReadBinary(key);
-        DoodleSceneData sceneData = Parse(bytes, key);
-
-        // map 的节点地址稳定：这里返回的指针不会因为后续插入而失效
-        const auto [insertedIt, inserted] = m_sceneData.emplace(std::string(key), std::move(sceneData));
-        (void)inserted;
-        return &insertedIt->second;
-    }
-
-    void DoodleSceneLoader::Destroy()
-    {
-        m_sceneData.clear();
-    }
-
-    DoodleSceneData DoodleSceneLoader::Parse(const std::span<const std::byte> bytes,
-                                             const std::string_view sourceName)
+    DoodleSceneData DoodleSceneLoader::Parse(const std::span<const std::byte> bytes, const std::string_view sourceName)
     {
         if (bytes.empty())
         {
@@ -331,8 +308,7 @@ namespace Doodle
         }
         catch (const nlohmann::json::parse_error& error)
         {
-            throw std::runtime_error(std::string(sourceName) + ": JSON parse error at byte " +
-                                     std::to_string(error.byte) + ": " + error.what());
+            throw std::runtime_error(std::string(sourceName) + ": JSON parse error at byte " + std::to_string(error.byte) + ": " + error.what());
         }
         catch (const std::exception& error)
         {
@@ -340,5 +316,14 @@ namespace Doodle
         }
 
         return ParseRoot(root, sourceName);
+    }
+
+    std::unique_ptr<DoodleSceneData> DoodleSceneLoader::Create(const DoodleAssetLoadContext& context, const std::string_view key)
+    {
+        const std::vector<std::byte> bytes = context.fileSystem.ReadBinary(key);
+
+        // 先解析成功再交给基类入缓存：解析失败时缓存里不会留下半份场景数据。
+        // 返回指针的地址稳定性由基类的 unique_ptr + map 保证
+        return std::make_unique<DoodleSceneData>(Parse(bytes, key));
     }
 }

@@ -84,8 +84,6 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Vulkan/DoodleGraphicsBuffer.h
     Engine/Runtime/Vulkan/DoodleMesh.cpp
     Engine/Runtime/Vulkan/DoodleMesh.h
-    Engine/Runtime/Vulkan/DoodleMeshLibrary.cpp
-    Engine/Runtime/Vulkan/DoodleMeshLibrary.h
     Engine/Runtime/Vulkan/DoodleDrawItem.h
     Engine/Runtime/Vulkan/DoodleUniformBufferObject.h
     Engine/Runtime/Vulkan/DoodleDepthImages.cpp
@@ -125,8 +123,8 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Asset/DoodleAssetLoader.h
     Engine/Runtime/Asset/DoodleAssetManager.cpp
     Engine/Runtime/Asset/DoodleAssetManager.h
-    Engine/Runtime/Asset/DoodleMeshAssetLoader.cpp
-    Engine/Runtime/Asset/DoodleMeshAssetLoader.h
+    Engine/Runtime/Asset/DoodleMeshLoader.cpp
+    Engine/Runtime/Asset/DoodleMeshLoader.h
     Engine/Runtime/Asset/DoodleSceneLoader.cpp
     Engine/Runtime/Asset/DoodleSceneLoader.h
     Engine/Runtime/Scene/DoodleScene.h

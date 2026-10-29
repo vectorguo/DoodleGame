@@ -51,8 +51,8 @@ namespace Doodle
      * 加新资源类型只改本类 .cpp 的 RegisterBuiltinLoaders 和新增 loader，
      * 调用点与 DoodleApplication 都不动。
      *
-     * 资产归具体 loader 所有并缓存；本类只负责分发和生命周期。
-     * 返回的 const T* 在 Destroy 之前有效。
+     * 资产的缓存与所有权在 DoodleAssetLoader<T> 基类里（key → unique_ptr<T>），
+     * 本类只负责分发与生命周期。返回的 const T* 在 Destroy 之前有效。
      *
      * 运行时只有一份，GamePlay 层通过 GetInstance() 取用；所有权和生命周期
      * 仍在 DoodleApplication 手里，本类不自己创建实例。
