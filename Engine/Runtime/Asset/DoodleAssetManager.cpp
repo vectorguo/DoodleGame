@@ -50,10 +50,13 @@ namespace Doodle
 
         try
         {
-            // 网格 loader 只记下设备；内建正方体在第一次 Load 时才上传。
-            // 场景 loader 是纯 CPU 的，只需要通过上下文拿文件来源
-            RegisterLoader<DoodleMesh>(std::make_unique<DoodleMeshLoader>(context.device));
-            RegisterLoader<DoodleSceneData>(std::make_unique<DoodleSceneLoader>());
+            // fileSystem 在 Initialize 后固定不变：在这里传给 loader，由基类
+            // 保存非拥有指针，之后 Load 只带 key。网格 loader 另外记下设备；
+            // 内建正方体在第一次 Load 时才上传
+            RegisterLoader<DoodleMesh>(
+                std::make_unique<DoodleMeshLoader>(context.device, *m_pFileSystem));
+            RegisterLoader<DoodleSceneData>(
+                std::make_unique<DoodleSceneLoader>(*m_pFileSystem));
         }
         catch (...)
         {

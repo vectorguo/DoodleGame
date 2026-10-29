@@ -131,13 +131,14 @@ namespace Doodle
         // 它们只借不放，窗口的持有者仍在本类
         m_vulkanManager.Initialize(*m_pWindow);
 
-        // 资产管理器的内建 loader 需要设备与命令缓冲层，必须排在 Vulkan 之后。
+        // 资产管理器的内建 loader 只需要文件来源与设备。上传用的传输池由
+        // DoodleGraphicsBuffer / DoodleTexture 自己通过 DoodleCommandBuffer
+        // 的单例取，不需要从这里把命令缓冲层传下去。
         // 文件来源归应用持有，资产管理器只借引用
         m_assetManager.Initialize(
      {
             .fileSystem = *m_pFileSystem,
-            .device = m_vulkanManager.GetDevice(),
-            .commandBuffer = m_vulkanManager.GetCommandBuffer()
+            .device = m_vulkanManager.GetDevice()
         });
 
         // 内容加载放在这里：macOS / Windows 的 Initialize 与 Android 首次

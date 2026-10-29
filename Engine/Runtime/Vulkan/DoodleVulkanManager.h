@@ -175,22 +175,6 @@ namespace Doodle
         }
 
         /**
-         * 获取命令缓冲层
-         */
-        [[nodiscard]] DoodleCommandBuffer& GetCommandBuffer()
-        {
-            return m_commandBuffer;
-        }
-
-        /**
-         * 获取命令缓冲层
-         */
-        [[nodiscard]] const DoodleCommandBuffer& GetCommandBuffer() const
-        {
-            return m_commandBuffer;
-        }
-
-        /**
          * 获取同步对象层
          */
         [[nodiscard]] DoodleSyncObjects& GetSyncObjects()

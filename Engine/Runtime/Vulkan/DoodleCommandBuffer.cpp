@@ -301,10 +301,11 @@ namespace Doodle
             //③ 这里那个 0 是缓冲内的**字节偏移**，不是索引下标。要让绘制从第几个索引
             //   开始，那是下面 firstIndex 的事，两者别混
             //
-            //索引类型写死成 UINT16 而不做成参数：本项目的索引数组就是 uint16_t，
-            //做成参数只是把一个常量串过每一层。代价是它与 DoodleMesh 的 uint16_t 索引绑在一起 ——
-            //将来顶点数越过 65535 换成 uint32_t 时，两处要一起改
-            vkCmdBindIndexBuffer(commandBuffer, mesh.GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT16);
+            //索引类型写死成 UINT32：DoodleMesh 的索引数组就是 uint32_t。
+            //项目里所有网格（内建立方体与 FBX 拍平结果）共用这一种索引类型，
+            //不做「小模型用 16 位、大模型用 32 位」的分叉 —— 那会让
+            //DoodleMesh 与这里各带一份分支状态
+            vkCmdBindIndexBuffer(commandBuffer, mesh.GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
 
             //按索引绘制。参数从「画几个顶点」变成「按几个索引去取顶点」——
             //顶点数不再需要：索引指向哪个顶点就抓哪个，同一个顶点被两个三角形

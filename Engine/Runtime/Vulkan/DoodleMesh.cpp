@@ -13,7 +13,7 @@ namespace Doodle
 {
     void DoodleMesh::Initialize(const DoodleVulkanDevice& device,
                                 std::span<const Vertex> vertices,
-                                std::span<const uint16_t> indices)
+                                std::span<const uint32_t> indices)
     {
         m_vertexBuffer.Initialize(device,
                                   vertices.size_bytes(),

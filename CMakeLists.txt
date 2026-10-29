@@ -119,7 +119,6 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Core/DoodleComponent.h
     Engine/Runtime/Core/DoodleGameObject.h
     Engine/Runtime/Core/DoodleGameObject.cpp
-    Engine/Runtime/Asset/DoodleAssetLoadContext.h
     Engine/Runtime/Asset/DoodleAssetLoader.h
     Engine/Runtime/Asset/DoodleAssetManager.cpp
     Engine/Runtime/Asset/DoodleAssetManager.h
@@ -127,6 +126,12 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Asset/DoodleMeshLoader.h
     Engine/Runtime/Asset/DoodleSceneLoader.cpp
     Engine/Runtime/Asset/DoodleSceneLoader.h
+    Engine/Runtime/Asset/DoodleFbxImporter.cpp
+    Engine/Runtime/Asset/DoodleFbxImporter.h
+    Engine/Runtime/Asset/DoodleSceneImporter.cpp
+    Engine/Runtime/Asset/DoodleSceneImporter.h
+    Engine/ThirdParty/ufbx/ufbx.c
+    Engine/ThirdParty/ufbx/ufbx.h
     Engine/Runtime/Scene/DoodleScene.h
     Engine/Runtime/Scene/DoodleScene.cpp
     Engine/Runtime/Core/DoodleComponentConfig.h
@@ -558,6 +563,28 @@ if(WIN32)
     add_custom_target(doodle_stage_scenes DEPENDS "${_doodle_scene_stamp}")
     add_dependencies(DoodleGame doodle_stage_scenes)
 
+    # Art 运行数据（FBX 等）与场景同理：改模型不会触发链接，必须按文件依赖
+    # 拷贝。输出目录布局与 macOS 的包内 Resources 对齐，代码里的相对路径
+    # 仍是 "Art/..."
+    file(GLOB_RECURSE _doodle_art_files CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/Resources/Art/*")
+    set(_doodle_art_stamp "${CMAKE_CURRENT_BINARY_DIR}/doodle_art_windows.stamp")
+
+    add_custom_command(
+        OUTPUT "${_doodle_art_stamp}"
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:DoodleGame>/Art"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/Resources/Art"
+            "$<TARGET_FILE_DIR:DoodleGame>/Art"
+        COMMAND ${CMAKE_COMMAND} -E touch "${_doodle_art_stamp}"
+        DEPENDS ${_doodle_art_files}
+        COMMENT "Copy Art next to DoodleGame.exe"
+        VERBATIM
+    )
+
+    add_custom_target(doodle_stage_art DEPENDS "${_doodle_art_stamp}")
+    add_dependencies(DoodleGame doodle_stage_art)
+
     return()
 endif()
 
@@ -836,4 +863,27 @@ if(APPLE)
 
     add_custom_target(doodle_stage_scenes DEPENDS "${_doodle_scene_stamp}")
     add_dependencies(DoodleGame doodle_stage_scenes)
+
+    # Art 运行数据与场景同理：GLFW 把工作目录切到包内 Resources，代码里的
+    # "Art/..." 必须能在 .app/Contents/Resources/Art 下找到。
+    # 同样按源文件依赖触发，避免改模型后包里还是旧文件。
+    file(GLOB_RECURSE _doodle_art_files CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/Resources/Art/*")
+    set(_doodle_art_stamp "${CMAKE_CURRENT_BINARY_DIR}/doodle_art_macos.stamp")
+
+    add_custom_command(
+        OUTPUT "${_doodle_art_stamp}"
+        COMMAND ${CMAKE_COMMAND} -E rm -rf
+            "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Art"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/Resources/Art"
+            "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Art"
+        COMMAND ${CMAKE_COMMAND} -E touch "${_doodle_art_stamp}"
+        DEPENDS ${_doodle_art_files}
+        COMMENT "Copy Art into DoodleGame.app/Contents/Resources/Art"
+        VERBATIM
+    )
+
+    add_custom_target(doodle_stage_art DEPENDS "${_doodle_art_stamp}")
+    add_dependencies(DoodleGame doodle_stage_art)
 endif()

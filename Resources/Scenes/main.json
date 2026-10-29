@@ -2,7 +2,7 @@
   "name": "Main",
   "gameObjects": [
     {
-      "name": "Cube",
+      "name": "BaoShipu",
       "position": [0.0, 0.0, 0.0],
       "rotation": [0.0, 0.0, 0.0],
       "scale": [1.0, 1.0, 1.0],
@@ -10,29 +10,15 @@
         {
           "type": "Engine.MeshRenderer",
           "settings": {
-            "mesh": "builtin:cube"
-          }
-        }
-      ]
-    },
-    {
-      "name": "Cube",
-      "position": [1.0, 0.0, 0.0],
-      "rotation": [0.0, 0.0, 0.0],
-      "scale": [0.5, 0.5, 0.5],
-      "components": [
-        {
-          "type": "Engine.MeshRenderer",
-          "settings": {
-            "mesh": "builtin:cube"
+            "mesh": "Art/SceneRes/Building/baoshipu.fbx"
           }
         }
       ]
     },
     {
       "name": "CameraRig",
-      "position": [2.0, 2.0, 2.0],
-      "rotation": [0.0, 35.264389682754654, -135.0],
+      "position": [14.0, 14.0, 12.0],
+      "rotation": [0.0, 18.75, -135.0],
       "components": [
         {
           "type": "CameraDirector.VirtualCamera",
@@ -56,7 +42,7 @@
         {
           "type": "GamePlay.FreeLookController",
           "settings": {
-            "moveSpeed": 2.5,
+            "moveSpeed": 8.0,
             "boostMultiplier": 4.0,
             "lookSensitivity": 0.12,
             "pitchLimit": 89.0
@@ -66,8 +52,8 @@
     },
     {
       "name": "MainCamera",
-      "position": [2.0, 2.0, 2.0],
-      "rotation": [0.0, 35.264389682754654, -135.0],
+      "position": [14.0, 14.0, 12.0],
+      "rotation": [0.0, 18.75, -135.0],
       "components": [
         {
           "type": "Engine.Camera",

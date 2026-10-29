@@ -15,10 +15,11 @@
 #include <string_view>
 #include <utility>
 
-#include "DoodleAssetLoadContext.h"
-
 namespace Doodle
 {
+    //只按引用保存，完整定义留给具体 loader 的源文件
+    class DoodleFileSystem;
+
     /**
      * 类型擦除的 loader 句柄
      *
@@ -105,12 +106,14 @@ namespace Doodle
          * 缓存，之后直接命中缓存。Create 抛异常时缓存不变，不会留下一个
          * 永远加载不出来的坑位。
          *
-         * @param context 本次加载可以借用的服务
+         * 文件系统与资产管理器是 loader 构造时注入的固定服务，Load 不再
+         * 每次传上下文，只接收 key。
+         *
          * @param key 资产键，由具体 loader 的 Create 解释（内建名、相对路径等）
          * @return 非拥有指针，寿命到 Destroy 为止
          * @throw std::runtime_error Create 失败、或 Create 返回空指针时抛出
          */
-        [[nodiscard]] const T* Load(const DoodleAssetLoadContext& context, std::string_view key)
+        [[nodiscard]] const T* Load(std::string_view key)
         {
             const auto it = m_assets.find(key);
             if (it != m_assets.end())
@@ -118,7 +121,7 @@ namespace Doodle
                 return it->second.get();
             }
 
-            std::unique_ptr<T> asset = Create(context, key);
+            std::unique_ptr<T> asset = Create(key);
             if (asset == nullptr)
             {
                 // 非空是 Create 的契约。让实现错误在这里当场暴露，
@@ -157,8 +160,22 @@ namespace Doodle
     protected:
         /**
          * 只能由具体 loader 构造
+         *
+         * 文件系统由应用持有、资产管理器初始化时传给 loader；它是固定服务，
+         * 寿命覆盖 loader，不需要每次 Load 再传一遍。loader 只保存非拥有指针
          */
-        DoodleAssetLoader() = default;
+        explicit DoodleAssetLoader(const DoodleFileSystem& fileSystem)
+            : m_pFileSystem(&fileSystem)
+        {
+        }
+
+        /**
+         * 文件来源；由应用持有，寿命覆盖 loader
+         */
+        [[nodiscard]] const DoodleFileSystem& GetFileSystem() const
+        {
+            return *m_pFileSystem;
+        }
 
         /**
          * 建出一份资产
@@ -166,10 +183,14 @@ namespace Doodle
          * 只负责创建，不负责缓存与去重：查重、插入、销毁都由基类处理。
          * 返回的 unique_ptr 必须非空；失败抛 std::runtime_error。
          *
+         * 文件来源通过 GetFileSystem() 取；需要递归加载依赖（例如材质加载
+         * 贴图）时直接调 DoodleAssetManager::GetInstance()，loader 内不再保存
+         * 一份资产管理器引用。
+         *
          * @note 实现要保证强异常安全：中途失败不能留下已上传的 GPU 资源。
          *       资产对象随 unique_ptr 析构，而析构不做 Vulkan 清理
          */
-        [[nodiscard]] virtual std::unique_ptr<T> Create(const DoodleAssetLoadContext& context, std::string_view key) = 0;
+        [[nodiscard]] virtual std::unique_ptr<T> Create(std::string_view key) = 0;
 
         /**
          * 释放一份资产的 GPU 资源；纯 CPU 资产不需要重写
@@ -180,6 +201,11 @@ namespace Doodle
         }
 
     private:
+        /**
+         * 文件来源，非拥有；由应用持有，寿命覆盖 loader
+         */
+        const DoodleFileSystem* m_pFileSystem = nullptr;
+
         /**
          * key → 资产
          *

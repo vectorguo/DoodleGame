@@ -8,10 +8,15 @@
 #include "DoodleMeshLoader.h"
 
 #include <array>
+#include <cstddef>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
+#include "DoodleFbxImporter.h"
+#include "Platform/DoodleFileSystem.h"
 #include "Vulkan/DoodleVulkanDevice.h"
 
 namespace
@@ -83,13 +88,11 @@ namespace
      * 六个面依次是 +X、-X、+Y、-Y、+Z、-Z，所以每组的基址是
      * 0、4、8、12、16、20
      *
-     * 用 uint16_t 而不是 uint32_t：现在 24 个唯一顶点，索引最大是 23，
-     * 16 位绰绰有余。索引位数只由唯一顶点数决定，与画几个三角形无关
-     *
-     * 顶点数越过 65535 时必须换成 uint32_t，那时 DoodleMesh 的接口与
-     * DoodleCommandBuffer::Record 里写死的 VK_INDEX_TYPE_UINT16 要一起改
+     * 用 uint32_t：与 DoodleMesh / DoodleCommandBuffer 的索引类型保持一致。
+     * 24 个顶点当然放得进 16 位，但项目统一一种索引类型，避免内建网格与
+     * FBX 网格走两套分支；FBX 拍平后顶点数也很容易越过 65535
      */
-    const std::array<uint16_t, 36> kCubeIndices = {{
+    const std::array<uint32_t, 36> kCubeIndices = {{
         //+X
         0, 1, 2, 0, 2, 3,
         //-X
@@ -107,28 +110,48 @@ namespace
 
 namespace Doodle
 {
-    DoodleMeshLoader::DoodleMeshLoader(const DoodleVulkanDevice& device)
-        : m_pDevice(&device)
+    DoodleMeshLoader::DoodleMeshLoader(const DoodleVulkanDevice& device,
+                                       const DoodleFileSystem& fileSystem)
+        : DoodleAssetLoader<DoodleMesh>(fileSystem), m_pDevice(&device)
     {
         // 这里不做任何上传：内建网格也要等到第一次 Load 才建。
         // loader 注册是初始化链上最不该失败的一步，真正的资源错误
         // 留给 Create，报错时还能带上具体 key
     }
 
-    std::unique_ptr<DoodleMesh> DoodleMeshLoader::Create(const DoodleAssetLoadContext&,
-                                                              const std::string_view key)
+    std::unique_ptr<DoodleMesh> DoodleMeshLoader::Create(const std::string_view key)
     {
-        if (key != kBuiltinCubeName)
+        if (key == kBuiltinCubeName)
         {
-            // 网格名写错是内容错误，必须在建场景之前暴露出来。
-            // 将来的文件网格在这里补「按路径导入」
-            throw std::runtime_error("mesh asset not found: " + std::string(key));
+            // 内建网格走的是和外部网格同一条路：建 DoodleMesh、上传，
+            // 由基类登记进缓存。没有任何「内建专用」的旁路
+            auto pMesh = std::make_unique<DoodleMesh>();
+            pMesh->Initialize(*m_pDevice, kCubeVertices, kCubeIndices);
+            return pMesh;
         }
 
-        // 内建网格走的是和将来外部网格同一条路：建 DoodleMesh、上传，
-        // 由基类登记进缓存。没有任何「内建专用」的旁路
+        // 外部网格第一版只认 FBX。扩展名检查放在读文件之前：路径拼错时
+        // 报「不支持这个格式」比导入器报「无法识别文件格式」更直接
+        if (!key.ends_with(".fbx"))
+        {
+            throw std::runtime_error("mesh asset not found: " + std::string(key) +
+                                     " (only 'builtin:cube' and .fbx paths are supported)");
+        }
+
+        const std::vector<std::byte> bytes = GetFileSystem().ReadBinary(key);
+        const DoodleFbxMeshData meshData = DoodleFbxImporter::Import(bytes, key);
+
         auto pMesh = std::make_unique<DoodleMesh>();
-        pMesh->Initialize(*m_pDevice, kCubeVertices, kCubeIndices);
+        pMesh->Initialize(*m_pDevice, meshData.vertices, meshData.indices);
+
         return pMesh;
+    }
+
+    void DoodleMeshLoader::DestroyAsset(DoodleMesh& mesh)
+    {
+        // DoodleMesh 的析构只释放 C++ 对象；VkBuffer / VkDeviceMemory 必须
+        // 显式 Destroy。基类的默认 DestroyAsset 是空操作，少了这一行，
+        // 资产管理器清缓存之后设备上会留下缓冲与内存，触发 VUID-05137
+        mesh.Destroy();
     }
 }

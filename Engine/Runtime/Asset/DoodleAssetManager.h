@@ -15,13 +15,11 @@
 #include <unordered_map>
 #include <utility>
 
-#include "DoodleAssetLoadContext.h"
 #include "DoodleAssetLoader.h"
 
 namespace Doodle
 {
     class DoodleApplication;
-    class DoodleCommandBuffer;
     class DoodleFileSystem;
     class DoodleVulkanDevice;
 
@@ -36,7 +34,6 @@ namespace Doodle
     {
         const DoodleFileSystem& fileSystem;
         DoodleVulkanDevice& device;
-        DoodleCommandBuffer& commandBuffer;
     };
 
     /**
@@ -144,9 +141,11 @@ namespace Doodle
             }
 
             // 注册与查找都按 typeid(T) 做键，所以这个下转型一定成立：
-            // 该键下只可能是 DoodleAssetLoader<T> 的派生对象
+            // 该键下只可能是 DoodleAssetLoader<T> 的派生对象。
+            // loader 在 Initialize 时已经持有固定的 fileSystem / assetManager，
+            // 这里只按 key 分发，不再每次加载临时组 context
             auto* pLoader = static_cast<DoodleAssetLoader<T>*>(it->second.get());
-            return pLoader->Load(MakeLoadContext(), key);
+            return pLoader->Load(key);
         }
 
     private:
@@ -170,18 +169,6 @@ namespace Doodle
             // 公共基类只保留与 T 无关的析构与 Destroy；DoodleAssetLoader<T>
             // 自己继承它，所以这里直接交给容器，不再需要额外的槽位包装
             m_loaders.emplace(type, std::unique_ptr<IDoodleAssetLoader>(std::move(pLoader)));
-        }
-
-        /**
-         * 组成本次加载的上下文
-         */
-        [[nodiscard]] DoodleAssetLoadContext MakeLoadContext()
-        {
-            return DoodleAssetLoadContext
-            {
-                .fileSystem = *m_pFileSystem,
-                .assetManager = *this
-            };
         }
 
     private:

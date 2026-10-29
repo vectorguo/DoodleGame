@@ -16,6 +16,7 @@
 namespace Doodle
 {
     class DoodleVulkanDevice;
+    class DoodleFileSystem;
 
     /**
      * 网格资产 loader，资产管理器内部使用
@@ -24,16 +25,23 @@ namespace Doodle
      * 与销毁在 DoodleAssetLoader<DoodleMesh> 基类里；本类只负责把 key 变成
      * 一份网格。
      *
-     * 现在只认内建名 "builtin:cube"。将来读 FBX 时，在同一个 Create 里按路径
-     * 导入并返回即可 —— 名字索引已经由基类的缓存承担，不需要再维护一份库。
+     * 目前支持两类 key：
+     * - "builtin:cube"：内建立方体；
+     * - 以 .fbx 结尾的相对路径：交给 DoodleFbxImporter 解析并拍平成单个
+     *   DoodleMesh。
+     *
+     * 外部 FBX 第一版按「全部拍平成一个 mesh」处理：节点世界变换烘焙进顶点，
+     * 材质、UV、骨骼与动画都不保留。缓存、去重与销毁仍由基类按 key 负责；
+     * 这条限制写在 DoodleFbxImporter 的注释里，换成模型资产时从那里扩展。
      *
      * 设备在构造时注入，Create 时才用它上传：loader 注册本身不再碰 Vulkan，
      * 失败点从「资产管理器初始化」推迟到「第一次 Load」，报错也能带上 key。
+     * 文件系统同样在构造时由基类保存非拥有指针，Load 只接收 key。
      */
     class DoodleMeshLoader final : public DoodleAssetLoader<DoodleMesh>
     {
     public:
-        explicit DoodleMeshLoader(const DoodleVulkanDevice& device);
+        DoodleMeshLoader(const DoodleVulkanDevice& device, const DoodleFileSystem& fileSystem);
         ~DoodleMeshLoader() override = default;
 
         DoodleMeshLoader(const DoodleMeshLoader&) = delete;
@@ -42,7 +50,16 @@ namespace Doodle
         DoodleMeshLoader& operator=(DoodleMeshLoader&&) = delete;
 
     protected:
-        [[nodiscard]] std::unique_ptr<DoodleMesh> Create(const DoodleAssetLoadContext& context, std::string_view key) override;
+        [[nodiscard]] std::unique_ptr<DoodleMesh> Create(std::string_view key) override;
+
+        /**
+         * 释放一份网格的 GPU 资源
+         *
+         * 基类的默认实现是空操作；DoodleMesh 的析构器只释放对象内存，
+         * 不销毁 VkBuffer / VkDeviceMemory。不重写这里，资产管理器 Destroy
+         * 之后设备上会留下这对缓冲，vkDestroyDevice 触发 VUID-05137
+         */
+        void DestroyAsset(DoodleMesh& mesh) override;
 
     private:
         /**

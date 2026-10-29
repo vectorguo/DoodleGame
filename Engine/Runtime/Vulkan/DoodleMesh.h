@@ -31,8 +31,9 @@ namespace Doodle
      * 使用方拿到的是 const 指针（非拥有），寿命由加载它的 loader 保证；
      * loader 内部则用 unique_ptr 持有，不存在需要搬运对象本身的场景
      *
-     * 索引类型固定为 uint16_t：与 DoodleCommandBuffer::Record 里写死的
-     * VK_INDEX_TYPE_UINT16 是同一个决定。顶点数越过 65535 时，两边要一起改
+     * 索引类型固定为 uint32_t：FBX 拍平后顶点数很容易越过 65535，
+     * 与 DoodleCommandBuffer::Record 里的 VK_INDEX_TYPE_UINT32 是同一个决定。
+     * 内建立方体也走同一条路，不按模型大小分两套索引类型
      */
     class DoodleMesh
     {
@@ -56,7 +57,7 @@ namespace Doodle
          */
         void Initialize(const DoodleVulkanDevice& device,
                         std::span<const Vertex> vertices,
-                        std::span<const uint16_t> indices);
+                        std::span<const uint32_t> indices);
 
         /**
          * 销毁两份缓冲
