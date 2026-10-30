@@ -46,7 +46,7 @@ namespace Doodle
          */
         void Deserialize(const DoodleComponentConfig& config) override;
 
-        void OnUpdate(const DoodleUpdateContext& context) override;
+        void OnUpdate() override;
 
     private:
         /**

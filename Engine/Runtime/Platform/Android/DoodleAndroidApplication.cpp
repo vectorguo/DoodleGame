@@ -60,9 +60,9 @@ namespace Doodle
 
     void DoodleAndroidApplication::Run()
     {
-        //帧时钟的起点，和基类 Run 一致：构造与 Initialize 的耗时不算进首帧。
-        //本类重写了 Run，这一行不能指望基类那份去做
-        m_lastFrameTime = std::chrono::steady_clock::now();
+        // 帧时钟的起点，和基类 Run 一致：构造与 Initialize 的耗时不算进首帧。
+        // 本类重写了 Run，这一行不能指望基类那份去做
+        ResetFrameClock();
 
         //取回具体类型：IsRenderable 是 Android 窗口特有的，不在 DoodleWindow 接口上。
         //窗口是本类自己刚建出来的，转换安全；所有权仍在 m_pWindow 那一处，

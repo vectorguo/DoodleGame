@@ -16,6 +16,48 @@
 
 namespace Doodle
 {
+    std::vector<DoodleLight*> DoodleLight::s_lights;
+    const DoodleLight* DoodleLight::s_pMainLight = nullptr;
+
+    void DoodleLight::OnAwake()
+    {
+        //登记顺序就是创建顺序，主光源取第一个启用的那个，与改动前的
+        //「遍历顺序里第一个启用的」一致
+        s_lights.push_back(this);
+        RefreshMainLight();
+    }
+
+    void DoodleLight::OnEnable()
+    {
+        RefreshMainLight();
+    }
+
+    void DoodleLight::OnDisable()
+    {
+        RefreshMainLight();
+    }
+
+    void DoodleLight::OnDestroy()
+    {
+        //先摘除再重算：结果不可能再落回一个正在销毁的组件
+        std::erase(s_lights, this);
+        RefreshMainLight();
+    }
+
+    void DoodleLight::RefreshMainLight()
+    {
+        s_pMainLight = nullptr;
+
+        for (const DoodleLight* pLight : s_lights)
+        {
+            if (pLight->IsEnabled())
+            {
+                s_pMainLight = pLight;
+                break;
+            }
+        }
+    }
+
     void DoodleLight::Serialize(DoodleComponentConfig& config) const
     {
         //与 Deserialize 同一组 key；方向随宿主 Transform，不写进配置

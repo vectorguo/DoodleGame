@@ -16,6 +16,7 @@
 
 #include "Core/DoodleGameObject.h"
 #include "Core/DoodleTransform.h"
+#include "Core/DoodleTime.h"
 #include "Platform/DoodleInput.h"
 #include "Core/DoodleComponentConfig.h"
 
@@ -63,10 +64,10 @@ namespace Doodle
             throw std::runtime_error(config.GetPath() + ".pitchLimit: must be in (0, 90)");
         }
     }
-    void DoodleFreeLookController::OnUpdate(const DoodleUpdateContext& context)
+    void DoodleFreeLookController::OnUpdate()
     {
         DoodleTransform& transform = GetGameObject().GetTransform();
-        const float deltaSeconds = context.deltaSeconds;
+        const float deltaSeconds = DoodleTime::GetDeltaTime();
 
         //环视：只在光标捕获（应用层按右键切换）且有位移时重建旋转。
         //没有位移时保持 Transform 原样，避免每帧把外部设置的旋转改掉

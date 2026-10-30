@@ -7,7 +7,8 @@
 
 #include "DoodleCamera.h"
 
-#include <cmath>
+#include <algorithm>
+#include <functional>
 #include <stdexcept>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -18,10 +19,40 @@
 
 namespace Doodle
 {
+    std::vector<DoodleCamera*> DoodleCamera::s_cameras;
+    const DoodleCamera* DoodleCamera::s_pMainCamera = nullptr;
+
+    void DoodleCamera::OnAwake()
+    {
+        s_cameras.push_back(this);
+        SortCameras();
+        RefreshMainCamera();
+    }
+
+    void DoodleCamera::OnEnable()
+    {
+        RefreshMainCamera();
+    }
+
+    void DoodleCamera::OnDisable()
+    {
+        RefreshMainCamera();
+    }
+
+    void DoodleCamera::OnDestroy()
+    {
+        //先摘除再重算：重算结果不可能再落回一个正在销毁的组件
+        std::erase(s_cameras, this);
+        RefreshMainCamera();
+    }
+
     void DoodleCamera::Serialize(DoodleComponentConfig& config) const
     {
-        //与 Deserialize 同一组 key；projection 存枚举整数，fov 写回角度制
+        //与 Deserialize 同一组 key；projection / renderType 存枚举整数，
+        //fov 写回角度制
         config.SetInt("projection", static_cast<int>(m_projectionType));
+        config.SetInt("renderType", static_cast<int>(m_renderType));
+        config.SetInt("priority", m_priority);
         config.SetFloat("fov", glm::degrees(m_fovY));
         config.SetFloat("near", m_near);
         config.SetFloat("far", m_far);
@@ -31,7 +62,7 @@ namespace Doodle
     void DoodleCamera::Deserialize(const DoodleComponentConfig& config)
     {
 #ifndef NDEBUG
-        config.ExpectOnlyKeys({"projection", "fov", "near", "far", "orthoHalfHeight"});
+        config.ExpectOnlyKeys({"projection", "renderType", "priority", "fov", "near", "far", "orthoHalfHeight"});
 #endif
 
         const int projection = config.GetInt("projection", static_cast<int>(ECameraProjectionType::Perspective));
@@ -47,6 +78,23 @@ namespace Doodle
         {
             throw std::runtime_error(config.GetPath() + ".projection: expected 0 (perspective) or 1 (orthographic)");
         }
+
+        const int renderType = config.GetInt("renderType", static_cast<int>(ECameraRenderType::Base));
+        if (renderType == static_cast<int>(ECameraRenderType::Base))
+        {
+            m_renderType = ECameraRenderType::Base;
+        }
+        else if (renderType == static_cast<int>(ECameraRenderType::Overlay))
+        {
+            m_renderType = ECameraRenderType::Overlay;
+        }
+        else
+        {
+            throw std::runtime_error(config.GetPath() + ".renderType: expected 0 (base) or 1 (overlay)");
+        }
+
+        //优先级任意整数，不分范围：只有相对高低有意义
+        m_priority = config.GetInt("priority", 0);
 
         m_fovY = glm::radians(config.GetFloat("fov", 45.0f));
         m_near = config.GetFloat("near", 0.1f);
@@ -72,6 +120,21 @@ namespace Doodle
         {
             throw std::runtime_error(config.GetPath() + ".orthoHalfHeight: must be greater than 0");
         }
+    }
+
+    void DoodleCamera::SetRenderType(const ECameraRenderType type)
+    {
+        m_renderType = type;
+        RefreshMainCamera();
+    }
+
+    void DoodleCamera::SetPriority(const int priority)
+    {
+        m_priority = priority;
+
+        //优先级是排序键，改完必须恢复有序，否则列表头不再是最高的那台
+        SortCameras();
+        RefreshMainCamera();
     }
 
     glm::mat4 DoodleCamera::GetViewMatrix() const
@@ -123,5 +186,38 @@ namespace Doodle
         proj[1][1] *= -1.0f;
 
         return proj;
+    }
+
+    void DoodleCamera::SortCameras()
+    {
+        //优先级降序 → 地址升序：列表头就是优先级最高的 Base 相机候选。
+        //同优先级用 std::less 比较地址，只为凑出一个确定的全序；它不表达
+        //「谁先创建」——同优先级之间谁排前面不作承诺
+        std::ranges::sort(s_cameras,
+                          [](const DoodleCamera* pLeft, const DoodleCamera* pRight)
+                          {
+                              if (pLeft->m_priority != pRight->m_priority)
+                              {
+                                  return pLeft->m_priority > pRight->m_priority;
+                              }
+
+                              return std::less<const DoodleCamera*>()(pLeft, pRight);
+                          });
+    }
+
+    void DoodleCamera::RefreshMainCamera()
+    {
+        //列表已经按优先级排好，第一个启用的 Base 就是主相机；这里只需要
+        //跳过停用的和 Overlay，不再比较优先级
+        s_pMainCamera = nullptr;
+
+        for (const DoodleCamera* pCamera : s_cameras)
+        {
+            if (pCamera->IsEnabled() && pCamera->m_renderType == ECameraRenderType::Base)
+            {
+                s_pMainCamera = pCamera;
+                break;
+            }
+        }
     }
 }

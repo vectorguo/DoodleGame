@@ -14,7 +14,6 @@
 #include <vector>
 
 #include "Core/DoodleLifecycleState.h"
-#include "Core/DoodleUpdateContext.h"
 
 namespace Doodle
 {
@@ -86,7 +85,7 @@ namespace Doodle
          * 管理器不在 Alive 时不更新场景，也不在本函数里回收；场景的回收
          * 不依赖它是否 active。
          */
-        void Update(const DoodleUpdateContext& context);
+        void Update();
 
         /**
          * 请求销毁所有场景：只推进到 PendingDestroy，不跑回调

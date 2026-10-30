@@ -113,7 +113,8 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Math/DoodleMath.cpp
     Engine/Runtime/Math/DoodleMath.h
     Engine/Runtime/Core/DoodleTransform.h
-    Engine/Runtime/Core/DoodleUpdateContext.h
+    Engine/Runtime/Core/DoodleTime.cpp
+    Engine/Runtime/Core/DoodleTime.h
     Engine/Runtime/Core/DoodleLifecycleState.h
     Engine/Runtime/Core/DoodleComponent.h
     Engine/Runtime/Core/DoodleGameObject.h

@@ -8,7 +8,6 @@
 #pragma once
 
 #include "DoodleLifecycleState.h"
-#include "DoodleUpdateContext.h"
 
 namespace Doodle
 {
@@ -24,6 +23,10 @@ namespace Doodle
      *   OnUpdate  每帧调用，仅当组件启用且生命周期状态为 Alive
      *   OnDisable 每次 SetEnabled(false) 触发；销毁前若仍处于启用状态也补一次
      *   OnDestroy 销毁前调用一次
+     *
+     * OnUpdate 不带参数：帧时长这类「本帧事实」直接从 DoodleTime / DoodleInput
+     * 读取，与 Unity 的 Time / Input 一致。它们都是帧边界由应用统一推进的
+     * 全局快照，同一帧内谁读都一样，不需要一层层传下来。
      *
      * 回调的顺序与时机由 DoodleGameObject 保证，派生类只覆盖关心的那几个。
      * 不写成纯虚函数：大多数组件只实现 OnUpdate，纯虚只会制造一堆空壳。
@@ -53,7 +56,7 @@ namespace Doodle
 
         virtual void OnAwake() {}
         virtual void OnEnable() {}
-        virtual void OnUpdate(const DoodleUpdateContext& context) {}
+        virtual void OnUpdate() {}
         virtual void OnDisable() {}
         virtual void OnDestroy() {}
 

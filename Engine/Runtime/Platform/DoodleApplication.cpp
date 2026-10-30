@@ -13,6 +13,7 @@
 
 #include "Core/DoodleGameObject.h"
 #include "Core/DoodleBuiltinComponentRegistration.h"
+#include "Core/DoodleTime.h"
 #include "Rendering/DoodleCamera.h"
 #include "Rendering/DoodleDrawContext.h"
 #include "Rendering/DoodleLight.h"
@@ -20,8 +21,6 @@
 #include "Scene/DoodleScene.h"
 #include "Scene/DoodleSceneData.h"
 
-#include <algorithm>
-#include <chrono>
 #include <stdexcept>
 #include <string_view>
 
@@ -81,7 +80,7 @@ namespace Doodle
     {
         // 帧时钟的起点：之前是构造与 Initialize，那段时间不属于任何一帧。
         // 覆盖 Run 的平台也要在循环前做同一件事（Android 那份见 DoodleAndroidApplication::Run）
-        m_lastFrameTime = std::chrono::steady_clock::now();
+        ResetFrameClock();
 
         while (!m_pWindow->IsCloseRequested())
         {
@@ -190,20 +189,16 @@ namespace Doodle
         m_pFileSystem.reset();
     }
 
+    void DoodleApplication::ResetFrameClock()
+    {
+        DoodleTime::Reset();
+    }
+
     void DoodleApplication::Tick()
     {
-        const auto now = std::chrono::steady_clock::now();
-
-        // 对「上一帧」求差即可：首帧的上一帧是 Run 进入循环的时刻。它和
-        // Suspend / Resume 之后的长间隔是同一类情况，都被下面的上限钳住，
-        // 不需要首帧标志
-        float deltaSeconds = std::chrono::duration<float>(now - m_lastFrameTime).count();
-
-        // 断点、拖窗口、系统卡顿之后两帧间隔可能很长；不钳上限的话，
-        // 组件会在一帧里走出一大段位移，甚至穿过碰撞体。
-        deltaSeconds = std::min(deltaSeconds, 0.1f);
-
-        m_lastFrameTime = now;
+        // 帧时长（钳上限、乘 timeScale、累计）统一由 DoodleTime 维护，
+        // 本层只按帧边界推进一次；下面各步读到的都是同一份本帧时间
+        DoodleTime::Update();
 
         // 输入快照每帧刷新一次，位置在场景更新之前：同一帧内所有组件看到的
         // 是同一份状态。平台层在 PumpEvents 里已经把原始状态轮询好
@@ -224,20 +219,24 @@ namespace Doodle
 
         // 先更新场景，再收集本帧要画的东西，最后画：渲染读到的是本帧最新的
         // Transform，而收集夹在两者之间，拿到的是 Update 之后的一致快照
-        m_sceneManager.Update(DoodleUpdateContext{deltaSeconds});
-        CollectDrawItems();
+        m_sceneManager.Update();
 
-        // 没有相机就没有 view / proj。启动场景已经在 LoadStartupScene 里校验过
-        // 必须带相机，这里为空只可能是运行期把相机组件停用或销毁了 —— 跳过
-        // 本帧，而不是拿一个假相机去画
-        if (m_pActiveCamera != nullptr)
+        // 主相机由 DoodleCamera 自己维护，这里只取结果。没有相机就没有
+        // view / proj：绘制项收集也只喂给 DrawFrame，所以本帧连收集一起跳过，
+        // 不做没有消费者的遍历。启动场景已经在 LoadStartupScene 里校验过
+        // 必须有一台，这里为空只可能是运行期把相机组件停用或销毁了 ——
+        // 跳过本帧，而不是拿一个假相机去画
+        const DoodleCamera* pMainCamera = DoodleCamera::GetMainCamera();
+        if (pMainCamera != nullptr)
         {
+            CollectDrawItems();
+
             // 相机、光源与绘制项在本帧组成一份上下文，渲染门面只认这一份输入。
             // 它只是栈上的引用集合：容器与组件仍归本层，DrawFrame 返回后即可复用
             m_vulkanManager.DrawFrame(DoodleDrawContext
             {
-                .camera = *m_pActiveCamera,
-                .pLight = m_pActiveLight,
+                .camera = *pMainCamera,
+                .pLight = DoodleLight::GetMainLight(),
                 .drawItems = m_reusableDrawItems,
             });
         }
@@ -258,27 +257,21 @@ namespace Doodle
         DoodleScene& scene = m_sceneManager.CreateScene(pSceneData->name);
         scene.InitializeFromData(*pSceneData);
 
-        // 当前渲染只有一个相机入口：场景里没有相机就没有 view / proj。
+        // 当前渲染只有一个相机入口：场景里没有可用的主相机就没有 view / proj。
         // 这是启动内容错误，在这里当场报出来，比运行起来后对着一个永远不更新的
-        // 窗口猜原因便宜。相机可以在运行期被停用 / 销毁，所以每帧仍要重新查找，
-        // 这条检查只负责启动那一刻
-        for (const DoodleGameObject* pGameObject : scene.GetGameObjects())
+        // 窗口猜原因便宜。判断走 DoodleCamera::GetMainCamera()，所以 Overlay
+        // 相机、以及全部被停用的相机都不算数。相机可以在运行期被停用 / 销毁，
+        // 所以每帧仍要取一次，这条检查只负责启动那一刻
+        if (DoodleCamera::GetMainCamera() == nullptr)
         {
-            if (pGameObject->GetComponent<DoodleCamera>() != nullptr)
-            {
-                return;
-            }
+            throw std::runtime_error("DoodleApplication: startup scene '" + scene.GetName() +
+                                     "' has no base camera");
         }
-
-        throw std::runtime_error("DoodleApplication: startup scene '" + scene.GetName() +
-                                 "' has no camera");
     }
 
     void DoodleApplication::CollectDrawItems()
     {
         m_reusableDrawItems.clear();
-        m_pActiveCamera = nullptr;
-        m_pActiveLight = nullptr;
 
         m_sceneManager.GetScenes(m_reusableScenes);
         for (const DoodleScene* pScene : m_reusableScenes)
@@ -286,28 +279,6 @@ namespace Doodle
             pScene->GetGameObjects(m_reusableGameObjects);
             for (const DoodleGameObject* pGameObject : m_reusableGameObjects)
             {
-                // 相机不挂在绘制项上：对象可以只带相机、不带网格。第一个启用的
-                // 相机生效，与「GetComponent 取第一个」的语义一致
-                if (m_pActiveCamera == nullptr)
-                {
-                    const auto* pCamera = pGameObject->GetComponent<DoodleCamera>();
-                    if (pCamera != nullptr && pCamera->IsEnabled())
-                    {
-                        m_pActiveCamera = pCamera;
-                    }
-                }
-
-                // 主光源与相机同一条规则：第一个启用的生效。
-                // 允许为空 —— 没有光源时渲染层只剩环境项，不是内容错误
-                if (m_pActiveLight == nullptr)
-                {
-                    const auto* pLight = pGameObject->GetComponent<DoodleLight>();
-                    if (pLight != nullptr && pLight->IsEnabled())
-                    {
-                        m_pActiveLight = pLight;
-                    }
-                }
-
                 // 一个对象只取第一个渲染器：GetComponent 的现有语义。
                 // 需要同一对象画多份网格时，再扩展成遍历全部组件
                 const auto* pRenderer = pGameObject->GetComponent<DoodleMeshRenderer>();

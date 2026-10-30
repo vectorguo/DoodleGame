@@ -42,7 +42,7 @@ namespace Doodle
         }
     }
 
-    void DoodleSceneManager::Update(const DoodleUpdateContext& context)
+    void DoodleSceneManager::Update()
     {
         if (!IsAlive())
         {
@@ -62,7 +62,7 @@ namespace Doodle
                 continue;
             }
 
-            pScene->Update(context);
+            pScene->Update();
         }
 
         // 场景的更新里可能请求销毁管理器自身。和下层一样，不在本函数里回收，

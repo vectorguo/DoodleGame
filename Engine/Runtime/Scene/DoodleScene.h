@@ -13,7 +13,6 @@
 #include <vector>
 
 #include "Core/DoodleLifecycleState.h"
-#include "Core/DoodleUpdateContext.h"
 
 namespace Doodle
 {
@@ -94,7 +93,7 @@ namespace Doodle
          * inactive 时不更新对象，但 sweep 仍然执行；生命周期不是 Alive 的
          * 场景直接返回，剩下的回调交给 DestroyReally 统一处理。
          */
-        void Update(const DoodleUpdateContext& context);
+        void Update();
 
         /**
          * 请求销毁：只推进到 PendingDestroy，不跑组件回调

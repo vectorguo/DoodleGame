@@ -116,7 +116,7 @@ namespace Doodle
         }
     }
 
-    void DoodleScene::Update(const DoodleUpdateContext& context)
+    void DoodleScene::Update()
     {
         // 已请求销毁或正在销毁：本层对象都已标记 PendingDestroy，不再更新，
         // 也不再做组件级 sweep。剩下的回调由 DestroyReally 统一跑，避免同一批
@@ -139,7 +139,7 @@ namespace Doodle
                 DoodleGameObject& gameObject = *m_gameObjects[i];
                 if (gameObject.IsAlive())
                 {
-                    gameObject.Update(context);
+                    gameObject.Update();
                 }
             }
         }

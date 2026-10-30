@@ -84,7 +84,7 @@ namespace Doodle
         }
     }
 
-    void DoodleGameObject::Update(const DoodleUpdateContext& context)
+    void DoodleGameObject::Update()
     {
         const auto count = m_components.size();
         for (std::size_t i = 0; i < count; ++i)
@@ -102,7 +102,7 @@ namespace Doodle
                 continue;
             }
 
-            pComponent->OnUpdate(context);
+            pComponent->OnUpdate();
         }
 
         if (IsAlive())

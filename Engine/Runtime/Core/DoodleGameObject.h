@@ -18,7 +18,6 @@
 #include "DoodleComponent.h"
 #include "DoodleLifecycleState.h"
 #include "DoodleTransform.h"
-#include "DoodleUpdateContext.h"
 
 namespace Doodle
 {
@@ -83,7 +82,7 @@ namespace Doodle
          * 更新；组件删除的 sweep 也跳过，交给场景 sweep 的 DestroyReally 统一
          * 处理（它会覆盖所有剩余组件）。
          */
-        void Update(const DoodleUpdateContext& context);
+        void Update();
 
         /**
          * 请求销毁：只推进到 PendingDestroy，不跑组件回调

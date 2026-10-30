@@ -6,7 +6,6 @@
 //
 #pragma once
 
-#include <chrono>
 #include <memory>
 #include <vector>
 
@@ -24,8 +23,6 @@ namespace Doodle
     //只作为遍历结果的元素出现，完整定义留给源文件
     class DoodleGameObject;
     class DoodleScene;
-    class DoodleCamera;
-    class DoodleLight;
 
     /**
      * 应用对象：驱动帧循环、按顺序起停 Vulkan 与其他应用级服务
@@ -52,8 +49,8 @@ namespace Doodle
      * InitializeRuntime 里，别绕开它自己拼；销毁顺序收在 DestroyRuntime 里
      * （场景 → 资产管理器 → Vulkan），场景引用着网格、网格缓冲必须先于设备释放；
      * 文件系统在 Initialize 里建好，资产管理器在第一次 InitializeRuntime 时
-     * 初始化，之后跨 Android 的 Suspend / Resume 一直存在；Run 进入循环前要把
-     * m_lastFrameTime 设为当前时刻，Tick 才有起点。除此之外时刻表随平台定，
+     * 初始化，之后跨 Android 的 Suspend / Resume 一直存在；Run 进入循环前要调
+     * ResetFrameClock，Tick 才有起点。除此之外时刻表随平台定，
      * 这正是「窗口与程序同寿」这条前提失效时唯一需要重写的东西
      */
     class DoodleApplication
@@ -121,8 +118,8 @@ namespace Doodle
          * 一直画到窗口关闭
          *
          * 默认实现：泵事件 → 推进一帧（先更新场景，再画），循环条件只认关闭请求。
-         * 进入循环前先把帧时钟的起点设为当前时刻：构造与 Initialize 的耗时
-         * 不属于任何一帧。覆盖 Run 的平台也要在循环前做同一件事
+         * 进入循环前先调 ResetFrameClock 把时间起点钉在当前时刻：构造与 Initialize
+         * 的耗时不属于任何一帧。覆盖 Run 的平台也要在循环前做同一件事
          *
          * @note 必须先调 Initialize
          */
@@ -221,13 +218,24 @@ namespace Doodle
         void DestroyFileSystem();
 
         /**
-         * 推进一帧：先按两帧间隔更新场景，再画一帧
+         * 把帧时钟的起点钉在当前时刻，并清零 DoodleTime 的累计量
          *
-         * deltaSeconds 在这里算：steady_clock 求差并钳到 0.1s，防止断点、
-         * 拖窗口或系统卡顿之后单帧过大。首帧的「上一帧」是 Run 进入循环的时刻，
-         * 同样走这条钳制，不单独判首帧。
+         * Run 进入循环前调用一次，等于「这一刻游戏开始」。覆盖 Run 的平台也要
+         * 在循环前调用（Android 那份见 DoodleAndroidApplication::Run）——
+         * 和 Tick 一样，这是重写帧循环时必须复用的两件事。
          *
-         * 各平台的帧循环都调用它，保证「场景先更新、渲染后执行」只有一处。
+         * 时间状态整体收在 DoodleTime 里，本函数与 Tick 是它仅有的两个写入口：
+         * 游戏层读到的永远是本帧快照，不能自己重置时钟
+         */
+        void ResetFrameClock();
+
+        /**
+         * 推进一帧：先推进时间与输入快照，再按帧时长更新场景，最后画一帧
+         *
+         * 帧时长由 DoodleTime 算好（steady_clock 求差、按 maximumDeltaTime 钳
+         * 上限、乘 timeScale），本函数只负责按帧边界推进一次；组件更新时
+         * 直接向 DoodleTime 取，本层不再往下传。各平台的帧循环都调用它，
+         * 保证「场景先更新、渲染后执行」只有一处。
          */
         void Tick();
 
@@ -270,18 +278,13 @@ namespace Doodle
          * 组件停用、网格为空的对象跳过。model 取收集那一刻 Transform 的矩阵，
          * 所以本函数必须排在场景 Update 之后、DrawFrame 之前。
          *
-         * 同一次遍历顺手找到本帧的相机：第一个启用状态的 DoodleCamera 生效，
-         * 结果写进 m_pActiveCamera。多相机切换需要「激活」概念，当前不做；
-         * 找不到时置空，调用方跳过本帧的绘制
-         *
-         * 主光源用同一条规则：第一个启用状态的 DoodleLight 写进 m_pActiveLight。
-         * 与相机不同的是它允许为空 —— 没有光源时本帧只剩环境项，照常绘制
+         * 相机与主光源不在这里找：它们由 DoodleCamera / DoodleLight 自己
+         * 维护，取用时直接问 DoodleCamera::GetMainCamera() 与
+         * DoodleLight::GetMainLight()，本函数只负责绘制项。
          *
          * 结果写进 m_reusableDrawItems；三个容器都是跨帧重复使用的，
-         * 稳态下不再分配。相机、主光源与绘制项在本帧一起组成
-         * DoodleDrawContext，交给渲染门面。
-         * 绘制顺序就是遍历顺序：场景创建顺序 → 对象创建顺序 → 组件添加顺序。
-         * 当前没有透明对象，不按深度排序，前后关系由深度测试负责
+         * 稳态下不再分配。绘制顺序就是遍历顺序：场景创建顺序 → 对象创建顺序 →
+         * 组件添加顺序。当前没有透明对象，不按深度排序，前后关系由深度测试负责
          */
         void CollectDrawItems();
 
@@ -340,19 +343,6 @@ namespace Doodle
          */
         bool m_runtimeInitialized = false;
 
-        /**
-         * 上一帧的时间戳；由 Run 在进入循环前取初值，Tick 每帧更新
-         *
-         * 不在构造时取：构造到进入 Run 之间还有建窗与 Vulkan 初始化，
-         * 那段时间不属于任何一帧。首帧按「进入 Run → 第一帧」求差即可，
-         * 它和 Suspend / Resume 之后的长间隔是同一类东西，都由 Tick 里的
-         * 上限钳住，所以不需要首帧标志。
-         *
-         * 留在 protected：Android 覆盖的 Run 要在循环前自己设起点，
-         * 这是那一份实现唯一需要直接写的基础状态
-         */
-        std::chrono::steady_clock::time_point m_lastFrameTime;
-
     private:
         /**
          * 每帧收集绘制项时重复使用的暂存容器
@@ -364,23 +354,6 @@ namespace Doodle
         std::vector<DoodleScene*> m_reusableScenes;
         std::vector<DoodleGameObject*> m_reusableGameObjects;
         std::vector<DoodleDrawItem> m_reusableDrawItems;
-
-        /**
-         * 本帧生效的相机，由 CollectDrawItems 每帧重新查找
-         *
-         * 非拥有指针：相机组件由场景里的 GameObject 持有，场景先于帧循环结束
-         * 销毁，所以这里不能缓存跨帧的相机指针 —— 对象随时可能被销毁，
-         * 每帧现找是唯一不会悬空的写法
-         */
-        const DoodleCamera* m_pActiveCamera = nullptr;
-
-        /**
-         * 本帧生效的主光源，由 CollectDrawItems 每帧重新查找
-         *
-         * 与相机同一套理由：非拥有、每帧现找，场景随时可能停用或销毁它。
-         * 可为空 —— 空表示本帧没有启用的光源，渲染层只剩环境项
-         */
-        const DoodleLight* m_pActiveLight = nullptr;
 
         /**
          * 当前实例，由构造置位、析构清空，成对维护

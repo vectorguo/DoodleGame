@@ -126,6 +126,8 @@ namespace Doodle
      */
     class DoodleInput final
     {
+        friend class DoodleApplication;
+
     public:
         DoodleInput() = delete;
 
@@ -254,8 +256,6 @@ namespace Doodle
         };
 
     private:
-        friend class DoodleApplication;
-
         /**
          * 用本帧的原始状态刷新快照，并推进按下/松开边沿
          *

@@ -35,7 +35,7 @@ namespace Doodle
         (void)config;
 #endif
     }
-    void DoodleCameraDirector::OnUpdate(const DoodleUpdateContext& /*context*/)
+    void DoodleCameraDirector::OnUpdate()
     {
         const DoodleVirtualCamera* pActiveCamera = FindActiveVirtualCamera();
         if (pActiveCamera == nullptr)
