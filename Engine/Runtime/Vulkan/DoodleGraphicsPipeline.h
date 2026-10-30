@@ -89,7 +89,7 @@ namespace Doodle
         /**
          * 创建描述符集布局
          *
-         * 它声明 binding 0 是一个只在顶点阶段可见的 uniform buffer。
+         * 它声明 binding 0 是一个顶点与片元阶段都可见的 uniform buffer。
          * 必须在 CreatePipelineLayout 之前完成 —— 管线布局会引用它
          */
         void CreateDescriptorSetLayout();
@@ -105,7 +105,7 @@ namespace Doodle
         /**
          * 创建管线布局
          *
-         * 管线布局引用描述符集布局（整帧共享的 view / proj），并声明
+         * 管线布局引用描述符集布局（整帧共享的 view / proj 与主光源），并声明
          * 每个 draw item 的 model push constant 范围 —— 两条契约都在这里接进管线。
          * 仍在创建图形管线之前完成。
          */

@@ -25,14 +25,13 @@ namespace Doodle
      * 与销毁在 DoodleAssetLoader<DoodleMesh> 基类里；本类只负责把 key 变成
      * 一份网格。
      *
-     * 目前支持两类 key：
-     * - "builtin:cube"：内建立方体；
-     * - 以 .fbx 结尾的相对路径：交给 DoodleFbxImporter 解析并拍平成单个
-     *   DoodleMesh。
+     * 目前只支持以 .fbx 结尾的相对路径：交给 DoodleFbxImporter 解析并拍平成
+     * 单个 DoodleMesh。
      *
-     * 外部 FBX 第一版按「全部拍平成一个 mesh」处理：节点世界变换烘焙进顶点，
-     * 材质、UV、骨骼与动画都不保留。缓存、去重与销毁仍由基类按 key 负责；
-     * 这条限制写在 DoodleFbxImporter 的注释里，换成模型资产时从那里扩展。
+     * FBX 第一版按「全部拍平成一个 mesh」处理：节点世界变换烘焙进顶点，
+     * 只保留位置、法线与第一套 UV；材质、骨骼与动画都不保留。缓存、去重与销毁
+     * 仍由基类按 key 负责；这条限制写在 DoodleFbxImporter 的注释里，
+     * 换成模型资产时从那里扩展。
      *
      * 设备在构造时注入，Create 时才用它上传：loader 注册本身不再碰 Vulkan，
      * 失败点从「资产管理器初始化」推迟到「第一次 Load」，报错也能带上 key。

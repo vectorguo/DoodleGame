@@ -8,7 +8,6 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -22,11 +21,12 @@ namespace Doodle
      *
      * 只描述数据，不是资产类型、不注册进 DoodleAssetManager。第一版只产出
      * 几何：所有节点上的所有 mesh 实例都按世界变换烘焙进同一组顶点/索引，
-     * 节点层级、材质、UV、骨骼与动画都不保留。
+     * 节点层级、材质、骨骼与动画都不保留。
      *
-     * 顶点仍用现有的 Vertex（position + color）；颜色是由法线和固定光向算出
-     * 的临时明暗，用来在没有材质/光照管线时看清模型形状。DoodleMeshLoader
-     * 负责把这份数据上传成 DoodleMesh。
+     * 顶点是 position + normal + 第一套 UV。法线来自源文件（没有时按面法线
+     * 补齐），UV 来自第一套纹理坐标；源文件缺哪一项就填「安全值」，不会因为
+     * 缺一张贴图或一组 UV 而整份加载失败。DoodleMeshLoader 负责把这份数据
+     * 上传成 DoodleMesh。
      */
     struct DoodleFbxMeshData
     {
@@ -34,7 +34,7 @@ namespace Doodle
          * 拍平后的顶点；每个三角形三个独立顶点（不复用索引）
          *
          * 不复用是为了绕开 FBX 的法线/UV 分裂属性：同一个位置在不同面上
-         * 可能有不同法线，逐角点复制最直接。第一版先接受这份冗余，
+         * 可能有不同法线或 UV，逐角点复制最直接。第一版先接受这份冗余，
          * 等顶点格式与材质确定后再优化
          */
         std::vector<Vertex> vertices;

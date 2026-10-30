@@ -33,7 +33,7 @@ namespace Doodle
      *
      * 索引类型固定为 uint32_t：FBX 拍平后顶点数很容易越过 65535，
      * 与 DoodleCommandBuffer::Record 里的 VK_INDEX_TYPE_UINT32 是同一个决定。
-     * 内建立方体也走同一条路，不按模型大小分两套索引类型
+     * 不按模型大小分两套索引类型
      */
     class DoodleMesh
     {
@@ -86,7 +86,7 @@ namespace Doodle
         /**
          * 索引条数，即 vkCmdDrawIndexed 要的 indexCount
          *
-         * 不是顶点数：本项目这颗正方体是 36 个索引、24 个顶点，两个数字不一样
+         * 不是顶点数：索引会重复引用同一个顶点，两个数字通常不一样
          */
         [[nodiscard]] uint32_t GetIndexCount() const
         {

@@ -5,10 +5,10 @@
 #include "DoodleVulkanManager.h"
 
 #include "../Platform/DoodleWindow.h"
-#include "DoodleDrawItem.h"
 #include "DoodleUniformBufferObject.h"
 #include "DoodleVulkanUtils.h"
 #include "Rendering/DoodleCamera.h"
+#include "Rendering/DoodleLight.h"
 
 #include <cstdint>
 #include <stdexcept>
@@ -107,7 +107,7 @@ namespace Doodle
         RecreateSwapChain();
     }
 
-    void DoodleVulkanManager::DrawFrame(const DoodleCamera& camera, const std::vector<DoodleDrawItem>& drawItems)
+    void DoodleVulkanManager::DrawFrame(const DoodleDrawContext& context)
     {
         //表面已被 Suspend 拆掉，没有可呈现的目标。
         //驱动层本就不该在这时调进来，但这个检查比崩溃便宜得多 ——
@@ -181,11 +181,11 @@ namespace Doodle
         //   承诺落空，栅栏停在未发出信号状态，下一轮等它就永远等不到
         vkResetFences(logicalDevice, 1, &inFlightFence);
 
-        //③' 写本帧的 UBO。位置不能更早也不能更晚：
+        //③' 写本帧的 UBO（相机 + 主光源）。位置不能更早也不能更晚：
         //    栅栏已等过，说明 GPU 不再读本槽位上一轮的数据；
         //    命令还没开始录，说明本帧还没有引用它。
         //    用同一块 UBO 给两个在途帧共用，会在这两者之间形成读写竞争
-        UpdateUniformBuffer(frameIndex, camera);
+        UpdateUniformBuffer(frameIndex, context);
 
         //④ 录制本帧命令。命令缓冲层不缓存任何上游句柄，录制时现取，
         //   所以交换链重建之后重录拿到的自然是新句柄。
@@ -199,7 +199,7 @@ namespace Doodle
         //   绘制项由调用方（应用层）从场景里收集好交进来，本层不关心它们
         //   从哪来。空列表也会录一条只做布局转换、不画东西的命令缓冲
         const auto commandBuffer = m_commandBuffer.Record(frameIndex, imageIndex,
-                                                          drawItems,
+                                                          context.drawItems,
                                                           m_descriptorSets[frameIndex]);
 
         //⑤ 提交到图形队列
@@ -361,13 +361,14 @@ namespace Doodle
         }
     }
 
-    void DoodleVulkanManager::UpdateUniformBuffer(const uint32_t frameIndex, const DoodleCamera& camera)
+    void DoodleVulkanManager::UpdateUniformBuffer(const uint32_t frameIndex,
+                                                  const DoodleDrawContext& context)
     {
         UniformBufferObject ubo{};
 
         //view 由相机从宿主 Transform 现算：相机不存位置 / 朝向，
         //移动它所在的对象，画面自然跟着变
-        ubo.view = camera.GetViewMatrix();
+        ubo.view = context.camera.GetViewMatrix();
 
         //每帧重新读交换链尺寸：窗口缩放后宽高比自动正确，
         //描述符集与 UBO 对象本身都不需要重建
@@ -379,7 +380,7 @@ namespace Doodle
         //
         //Y 翻转已经在 GetProjectionMatrix 里做完；这里拿到的 proj 是「显示方向 +
         //Vulkan 裁剪空间」的结果
-        ubo.proj = camera.GetProjectionMatrix(DoodleVulkanUtils::GetDisplayAspect(extent, preTransform));
+        ubo.proj = context.camera.GetProjectionMatrix(DoodleVulkanUtils::GetDisplayAspect(extent, preTransform));
 
         //最后把整幅画面转到图像自己的朝向上。桌面拿到的是 IDENTITY，这一乘是单位阵。
         //
@@ -388,11 +389,27 @@ namespace Doodle
         //（Free75 修的就是这条）
         ubo.proj = DoodleVulkanUtils::MakePreRotation(preTransform) * ubo.proj;
 
+        //主光源：方向取组件宿主 Transform 的前向，颜色乘上强度。
+        //方向已经是单位向量（DoodleLight::GetDirection 负责），这里不再归一化
+        //
+        //没有启用的光源时写零颜色：片元着色器只剩环境项，画面偏暗但仍是
+        //同一份着色逻辑。方向填一个固定值只是让 UBO 内容确定，不参与可见结果
+        if (context.pLight != nullptr)
+        {
+            ubo.lightDirection = glm::vec4(context.pLight->GetDirection(), 0.0f);
+            ubo.lightColor = glm::vec4(context.pLight->GetColor() * context.pLight->GetIntensity(), 0.0f);
+        }
+        else
+        {
+            ubo.lightDirection = glm::vec4(0.0f, 0.0f, -1.0f, 0.0f);
+            ubo.lightColor = glm::vec4(0.0f);
+        }
+
         //HOST_COHERENT 保证不需要手动 flush；下一次 vkQueueSubmit 之后再读取时，
         //这份写入对 GPU 可见。写入位置已在调用处保证：栅栏之后、录制之前。
         //第一次调用会在缓冲内部建立持久映射，之后每帧只是一次 memcpy
         //
-        //这里只有相机数据。每个对象的 model 走 push constant，
+        //这里只有帧级数据（相机 + 光源）。每个对象的 model 走 push constant，
         //由 DoodleCommandBuffer::Record 在逐个 draw item 时推进命令缓冲
         m_uniformBuffers[frameIndex].Write(&ubo, sizeof(ubo));
     }

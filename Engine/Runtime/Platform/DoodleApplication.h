@@ -12,7 +12,7 @@
 
 #include "Asset/DoodleAssetManager.h"
 #include "Scene/DoodleSceneManager.h"
-#include "Vulkan/DoodleDrawItem.h"
+#include "Rendering/DoodleDrawItem.h"
 #include "Vulkan/DoodleVulkanManager.h"
 
 namespace Doodle
@@ -25,6 +25,7 @@ namespace Doodle
     class DoodleGameObject;
     class DoodleScene;
     class DoodleCamera;
+    class DoodleLight;
 
     /**
      * 应用对象：驱动帧循环、按顺序起停 Vulkan 与其他应用级服务
@@ -273,8 +274,12 @@ namespace Doodle
          * 结果写进 m_pActiveCamera。多相机切换需要「激活」概念，当前不做；
          * 找不到时置空，调用方跳过本帧的绘制
          *
+         * 主光源用同一条规则：第一个启用状态的 DoodleLight 写进 m_pActiveLight。
+         * 与相机不同的是它允许为空 —— 没有光源时本帧只剩环境项，照常绘制
+         *
          * 结果写进 m_reusableDrawItems；三个容器都是跨帧重复使用的，
-         * 稳态下不再分配。
+         * 稳态下不再分配。相机、主光源与绘制项在本帧一起组成
+         * DoodleDrawContext，交给渲染门面。
          * 绘制顺序就是遍历顺序：场景创建顺序 → 对象创建顺序 → 组件添加顺序。
          * 当前没有透明对象，不按深度排序，前后关系由深度测试负责
          */
@@ -368,6 +373,14 @@ namespace Doodle
          * 每帧现找是唯一不会悬空的写法
          */
         const DoodleCamera* m_pActiveCamera = nullptr;
+
+        /**
+         * 本帧生效的主光源，由 CollectDrawItems 每帧重新查找
+         *
+         * 与相机同一套理由：非拥有、每帧现找，场景随时可能停用或销毁它。
+         * 可为空 —— 空表示本帧没有启用的光源，渲染层只剩环境项
+         */
+        const DoodleLight* m_pActiveLight = nullptr;
 
         /**
          * 当前实例，由构造置位、析构清空，成对维护

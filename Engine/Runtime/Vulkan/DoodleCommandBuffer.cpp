@@ -247,7 +247,7 @@ namespace Doodle
         //绑定描述符集。与顶点/索引缓冲不同，描述符集绑定必须说明是给图形管线用的
         //（计算管线是另一个 bind point），而且必须用创建管线时那份管线布局来解释它。
         //firstSet = 0 / setCount = 1：本项目的管线布局只有 set 0 一个槽位。
-        //集合里的 binding 0 指向当前帧的 UBO（view / proj），着色器按
+        //集合里的 binding 0 指向当前帧的 UBO（view / proj / 主光源），着色器按
         //(set = 0, binding = 0) 读取
         //
         //整帧只绑一次：组里所有对象共用同一份相机数据，没有「每个对象一个集合」
@@ -302,7 +302,7 @@ namespace Doodle
             //   开始，那是下面 firstIndex 的事，两者别混
             //
             //索引类型写死成 UINT32：DoodleMesh 的索引数组就是 uint32_t。
-            //项目里所有网格（内建立方体与 FBX 拍平结果）共用这一种索引类型，
+            //项目里所有网格（当前只有 FBX 拍平结果）共用这一种索引类型，
             //不做「小模型用 16 位、大模型用 32 位」的分叉 —— 那会让
             //DoodleMesh 与这里各带一份分支状态
             vkCmdBindIndexBuffer(commandBuffer, mesh.GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);

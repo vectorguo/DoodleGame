@@ -7,7 +7,7 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
-#include "DoodleDrawItem.h"
+#include "Rendering/DoodleDrawItem.h"
 
 namespace Doodle
 {
@@ -107,7 +107,7 @@ namespace Doodle
          *        用 const vector& 而不是 span：当前唯一调用方传的就是 vector，
          *        视图类型没有实际收益；出现第二种容器 / 子区间时再泛化
          * @param descriptorSet 本帧要绑定的描述符集，必须与 frameIndex 同槽位。
-         *        它把该帧的 UBO（view / proj）接到 binding 0；所有权在门面，本层只使用
+         *        它把该帧的 UBO（view / proj / 主光源）接到 binding 0；所有权在门面，本层只使用
          * @return 录好的那条命令缓冲，供调用方提交
          *
          * 把句柄交回去而不是让调用方自己再按索引取一次：录的和提交的必须是同一条，

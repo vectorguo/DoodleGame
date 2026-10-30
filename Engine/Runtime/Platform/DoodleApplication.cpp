@@ -12,9 +12,10 @@
 #include "DoodleWindow.h"
 
 #include "Core/DoodleGameObject.h"
-#include "Core/DoodleComponentRegistry.h"
 #include "Core/DoodleBuiltinComponentRegistration.h"
 #include "Rendering/DoodleCamera.h"
+#include "Rendering/DoodleDrawContext.h"
+#include "Rendering/DoodleLight.h"
 #include "Rendering/DoodleMeshRenderer.h"
 #include "Scene/DoodleScene.h"
 #include "Scene/DoodleSceneData.h"
@@ -231,7 +232,14 @@ namespace Doodle
         // 本帧，而不是拿一个假相机去画
         if (m_pActiveCamera != nullptr)
         {
-            m_vulkanManager.DrawFrame(*m_pActiveCamera, m_reusableDrawItems);
+            // 相机、光源与绘制项在本帧组成一份上下文，渲染门面只认这一份输入。
+            // 它只是栈上的引用集合：容器与组件仍归本层，DrawFrame 返回后即可复用
+            m_vulkanManager.DrawFrame(DoodleDrawContext
+            {
+                .camera = *m_pActiveCamera,
+                .pLight = m_pActiveLight,
+                .drawItems = m_reusableDrawItems,
+            });
         }
     }
 
@@ -270,6 +278,7 @@ namespace Doodle
     {
         m_reusableDrawItems.clear();
         m_pActiveCamera = nullptr;
+        m_pActiveLight = nullptr;
 
         m_sceneManager.GetScenes(m_reusableScenes);
         for (const DoodleScene* pScene : m_reusableScenes)
@@ -285,6 +294,17 @@ namespace Doodle
                     if (pCamera != nullptr && pCamera->IsEnabled())
                     {
                         m_pActiveCamera = pCamera;
+                    }
+                }
+
+                // 主光源与相机同一条规则：第一个启用的生效。
+                // 允许为空 —— 没有光源时渲染层只剩环境项，不是内容错误
+                if (m_pActiveLight == nullptr)
+                {
+                    const auto* pLight = pGameObject->GetComponent<DoodleLight>();
+                    if (pLight != nullptr && pLight->IsEnabled())
+                    {
+                        m_pActiveLight = pLight;
                     }
                 }
 

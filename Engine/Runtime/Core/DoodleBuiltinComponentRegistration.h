@@ -12,7 +12,7 @@ namespace Doodle
     /**
      * 注册引擎内置的可序列化组件
      *
-     * MeshRenderer 和 Camera 不再走场景的专用字段，而是和 GamePlay /
+     * MeshRenderer、Camera 和 Light 不再走场景的专用字段，而是和 GamePlay /
      * Package 组件一样通过类型 ID 进入注册表。由
      * DoodleApplication::InitializeRuntime 在内容加载之前调用。
      */

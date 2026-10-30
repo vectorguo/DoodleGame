@@ -40,9 +40,9 @@ namespace Doodle
      * 资产管理器：所有资源的统一入口
      *
      * 对外只有 Load<T>(key)。T 是资产类型键：
-     *   Load<DoodleMesh>("builtin:cube")
+     *   Load<DoodleMesh>("Art/SceneRes/Building/mesh.fbx")
      *   Load<DoodleSceneData>("Scenes/main.json")
-     * 具体用哪个 loader、走文件还是内建数据，调用方不需要知道。
+     * 具体用哪个 loader、数据怎么读，调用方不需要知道。
      *
      * 类型注册表与内建 loader 都藏在本类内部：Initialize 时一次性注册，
      * 加新资源类型只改本类 .cpp 的 RegisterBuiltinLoaders 和新增 loader，

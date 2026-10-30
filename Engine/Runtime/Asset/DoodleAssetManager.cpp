@@ -52,11 +52,9 @@ namespace Doodle
         {
             // fileSystem 在 Initialize 后固定不变：在这里传给 loader，由基类
             // 保存非拥有指针，之后 Load 只带 key。网格 loader 另外记下设备；
-            // 内建正方体在第一次 Load 时才上传
-            RegisterLoader<DoodleMesh>(
-                std::make_unique<DoodleMeshLoader>(context.device, *m_pFileSystem));
-            RegisterLoader<DoodleSceneData>(
-                std::make_unique<DoodleSceneLoader>(*m_pFileSystem));
+            // 网格上传推迟到第一次 Load
+            RegisterLoader<DoodleMesh>(std::make_unique<DoodleMeshLoader>(context.device, *m_pFileSystem));
+            RegisterLoader<DoodleSceneData>(std::make_unique<DoodleSceneLoader>(*m_pFileSystem));
         }
         catch (...)
         {

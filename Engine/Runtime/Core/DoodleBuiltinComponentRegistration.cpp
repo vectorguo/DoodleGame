@@ -9,6 +9,7 @@
 
 #include "DoodleComponentRegistry.h"
 #include "Rendering/DoodleCamera.h"
+#include "Rendering/DoodleLight.h"
 #include "Rendering/DoodleMeshRenderer.h"
 
 namespace Doodle
@@ -17,5 +18,6 @@ namespace Doodle
     {
         DoodleComponentRegistry::RegisterComponent<DoodleMeshRenderer>("Engine.MeshRenderer");
         DoodleComponentRegistry::RegisterComponent<DoodleCamera>("Engine.Camera");
+        DoodleComponentRegistry::RegisterComponent<DoodleLight>("Engine.Light");
     }
 }

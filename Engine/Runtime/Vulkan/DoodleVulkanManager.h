@@ -5,10 +5,8 @@
 #pragma once
 
 #include <array>
-#include <vector>
 
 #include "DoodleCommandBuffer.h"
-#include "DoodleDrawItem.h"
 #include "DoodleDepthImages.h"
 #include "DoodleGraphicsBuffer.h"
 #include "DoodleGraphicsPipeline.h"
@@ -16,14 +14,12 @@
 #include "DoodleSyncObjects.h"
 #include "DoodleVulkanConfig.h"
 #include "DoodleVulkanDevice.h"
+#include "Rendering/DoodleDrawContext.h"
 
 namespace Doodle
 {
-    //本层只按引用 / 指针持有窗口，完整定义留给源文件去取
+    //本层只按引用持有窗口，完整定义留给源文件去取
     class DoodleWindow;
-
-    //相机同样只按引用使用：门面不拥有相机组件，也不依赖对象模型
-    class DoodleCamera;
 
     /**
      * Vulkan子系统门面：按依赖顺序持有各层，对外提供统一的Vulkan入口
@@ -74,19 +70,15 @@ namespace Doodle
          * 复位栅栏并写入本帧 UBO、录制命令缓冲、提交、呈现。顺序不能调换，
          * 每一步都在为下一步准备前提条件
          *
-         * 绘制项由调用方每帧收集后传入。本门面不认识场景与 GameObject，
-         * 只负责把这一组数据录进命令缓冲；空列表合法，表示本帧只清屏 ——
-         * 场景为空、对象全被隐藏时都会走到这里，不是错误。
+         * context 是本帧的全部输入：相机、主光源与绘制项。本门面不认识场景与
+         * GameObject，只负责把这份数据录进命令缓冲；各成员的可空性与生命周期
+         * 见 DoodleDrawContext 的注释。调用方每次调用时构造一个临时量，
+         * 本层不保存它，也不关心它从哪来
          *
-         * camera 由调用方每帧从场景里找到后借进来：view 由它从宿主 Transform
-         * 现算，proj 由它按显示方向的宽高比生成。本层不保存相机指针，也不
-         * 关心它挂在哪个 GameObject 上；调用期间必须保持有效
-         *
-         * 只读引用而不是 span：当前唯一调用方传的就是 vector，换成视图
-         * 类型没有收益。等出现第二种容器 / 只取一段子区间时再泛化
-         *
-         * drawItems 只在本次调用期间使用：命令在这一步同步录完，返回后
-         * 调用方即可清空或复用容器。网格指针与矩阵本身都不归本层所有
+         * 换成一个上下文而不是三个参数，是为了让帧级输入以后继续长的时候
+         * 签名不变：时间、曝光、阴影参数都往 DoodleDrawContext 里加，
+         * DrawFrame 与所有调用点只按字段名更新，不会出现「参数越排越长、
+         * 顺序还容易传错」的问题
          *
          * 交换链与窗口不再匹配时（缩放窗口等），本函数内部完成重建：
          * acquire 返回 out-of-date 就立刻重建并放弃本帧；呈现返回 out-of-date /
@@ -101,7 +93,7 @@ namespace Doodle
          *
          * @note 里面的 Vulkan 调用大多是异步的，返回不代表 GPU 已完成
          */
-        void DrawFrame(const DoodleCamera& camera, const std::vector<DoodleDrawItem>& drawItems);
+        void DrawFrame(const DoodleDrawContext& context);
 
         /**
          * 通知窗口尺寸发生了变化，下一帧需要重建交换链
@@ -225,7 +217,7 @@ namespace Doodle
         void DestroyUniformBuffers();
 
         /**
-         * 把本帧的 view / proj 矩阵写进第 frameIndex 块 uniform 缓冲
+         * 把本帧的 view / proj 与主光源写进第 frameIndex 块 uniform 缓冲
          *
          * 调用位置在等完本槽位栅栏之后、录制命令之前：此时 GPU 不会再读写
          * 这块缓冲的上一轮内容，而本帧命令还没开始引用它
@@ -235,13 +227,18 @@ namespace Doodle
          * proj 之上再做最后一步交换链预旋转 —— 顺序不能换，预旋转必须排在
          * Y 翻转之后、作为投影的最后一步左乘，否则 Android 上会静默变形
          *
+         * 光源数据同样整帧共享：方向取 DoodleLight 宿主 Transform 的前向，
+         * 颜色乘上强度后写进 lightColor。pLight 为空时方向填空值、颜色写 0，
+         * 着色器只剩环境项 —— 这条兜底写在 UBO 里而不是着色器分支里，
+         * 着色器就一份逻辑
+         *
          * 这里不写 model：它每个对象都不一样，改由 Record 逐个 draw item
-         * 推进 push constant。本块缓冲只装整帧共享的相机数据
+         * 推进 push constant。本块缓冲只装整帧共享的相机与光源数据
          *
          * @param frameIndex 在途帧索引，与描述符集、命令缓冲使用同一个索引
-         * @param camera 本帧的相机，只在本次调用期间使用
+         * @param context 本帧上下文，只取其中的相机与光源；只在本次调用期间使用
          */
-        void UpdateUniformBuffer(const uint32_t frameIndex, const DoodleCamera& camera);
+        void UpdateUniformBuffer(const uint32_t frameIndex, const DoodleDrawContext& context);
 
         /**
          * 创建描述符池

@@ -16,6 +16,19 @@
       ]
     },
     {
+      "name": "MainLight",
+      "rotation": [0.0, 45.0, -135.0],
+      "components": [
+        {
+          "type": "Engine.Light",
+          "settings": {
+            "color": [1.0, 1.0, 1.0],
+            "intensity": 1.0
+          }
+        }
+      ]
+    },
+    {
       "name": "CameraRig",
       "position": [14.0, 14.0, 12.0],
       "rotation": [0.0, 18.75, -135.0],

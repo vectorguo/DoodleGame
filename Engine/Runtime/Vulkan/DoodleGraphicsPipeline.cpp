@@ -40,13 +40,15 @@ namespace Doodle
 
     void DoodleGraphicsPipeline::CreateDescriptorSetLayout()
     {
-        //binding 0 对应顶点着色器里 layout(set = 0, binding = 0) 的 UBO 块。
-        //stageFlags 只写顶点阶段：片元着色器没有读它，声明得越准确，驱动越省事
+        //binding 0 对应两个着色器里 layout(set = 0, binding = 0) 的 UBO 块。
+        //stageFlags 必须覆盖真正读它的阶段：顶点阶段读 view / proj，
+        //片元阶段读光源字段。少写片元阶段的话，片元里读到的是未定义值，
+        //校验层会在绘制时报 stage 不匹配 —— 声明得准，问题就不会跑到画面上
         VkDescriptorSetLayoutBinding uboLayoutBinding{};
         uboLayoutBinding.binding = 0;
         uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         uboLayoutBinding.descriptorCount = 1;
-        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         uboLayoutBinding.pImmutableSamplers = nullptr; // 只对采样器描述符有意义
 
         VkDescriptorSetLayoutCreateInfo layoutInfo{};
@@ -72,7 +74,7 @@ namespace Doodle
 
     void DoodleGraphicsPipeline::CreatePipelineLayout()
     {
-        //描述符集布局负责整帧共享的相机数据（view / proj）；
+        //描述符集布局负责整帧共享的数据（相机 view / proj 与主光源）；
         //每个对象自己的 model 矩阵走 push constant。
         //
         //范围只声明一次、offset 从 0 起：数据每帧按对象换，但接口不换，

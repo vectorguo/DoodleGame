@@ -8,7 +8,6 @@
 #include "DoodleFbxImporter.h"
 
 #include <algorithm>
-#include <cmath>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -54,17 +53,9 @@ namespace
         return {value.x, value.y, value.z};
     }
 
-    /**
-     * 由世界空间法线算临时明暗色
-     *
-     * 第一版没有材质/光照管线，顶点色是唯一能带进片元的信息。把法线点乘
-     * 固定光向当成 Lambert，至少能看清模型的凹凸和朝向；等做材质时这一段
-     * 会被真正的 material 参数替换。
-     */
-    glm::vec3 ShadeFbxNormal(const glm::vec3& normal, const glm::vec3& lightDirection)
+    glm::vec2 FbxVec2ToGlm(const ufbx_vec2& value)
     {
-        const float diffuse = std::max(glm::dot(normal, lightDirection), 0.0f);
-        return glm::vec3(0.82f) * (0.22f + 0.78f * diffuse);
+        return {value.x, value.y};
     }
 
     std::string MakeFbxErrorMessage(const ufbx_error& error)
@@ -126,8 +117,6 @@ namespace
 
         Doodle::DoodleFbxMeshData result;
 
-        const glm::vec3 lightDirection = glm::normalize(glm::vec3(0.45f, 0.65f, 0.8f));
-
         for (std::size_t nodeIndex = 0; nodeIndex < scene->nodes.count; ++nodeIndex)
         {
             const ufbx_node& node = *scene->nodes.data[nodeIndex];
@@ -168,6 +157,7 @@ namespace
                 {
                     glm::vec3 positions[3];
                     glm::vec3 normals[3];
+                    glm::vec2 uvs[3];
 
                     for (int corner = 0; corner < 3; ++corner)
                     {
@@ -186,6 +176,19 @@ namespace
                         else
                         {
                             normals[corner] = glm::vec3(0.0f);
+                        }
+
+                        // 只取第一套 UV。vertex_uv 与位置 / 法线共用同一个索引域，
+                        // 所以上面那个 index 可以直接查它的 indices。
+                        // 源文件没有 UV 时填 0 —— 这条通道先跟着格式走，贴图还没有
+                        if (mesh.vertex_uv.exists)
+                        {
+                            uvs[corner] = FbxVec2ToGlm(
+                                mesh.vertex_uv.values.data[mesh.vertex_uv.indices.data[index]]);
+                        }
+                        else
+                        {
+                            uvs[corner] = glm::vec2(0.0f);
                         }
                     }
 
@@ -206,7 +209,7 @@ namespace
                     else
                     {
                         // 法线经过非均匀缩放后可能不再单位长；长度异常时退回面法线，
-                        // 避免 NaN 一路传进颜色
+                        // 避免零向量一路传进光照计算
                         for (glm::vec3& normal : normals)
                         {
                             const float length = glm::length(normal);
@@ -215,18 +218,21 @@ namespace
                     }
 
                     // 让绕序与法线一致：法线朝外时三角形应为 CCW。
-                    // 这一步兜住 FBX 源文件绕序与管线 frontFace 不一致的情况
+                    // 这一步兜住 FBX 源文件绕序与管线 frontFace 不一致的情况。
+                    // UV 跟着换：它和位置、法线属于同一个角点，三个属性必须一起搬
                     if (glm::dot(faceNormal, normals[0] + normals[1] + normals[2]) < 0.0f)
                     {
                         std::swap(positions[1], positions[2]);
                         std::swap(normals[1], normals[2]);
+                        std::swap(uvs[1], uvs[2]);
                     }
 
                     for (int corner = 0; corner < 3; ++corner)
                     {
                         Doodle::Vertex vertex{};
                         vertex.pos = positions[corner];
-                        vertex.color = ShadeFbxNormal(normals[corner], lightDirection);
+                        vertex.normal = normals[corner];
+                        vertex.uv = uvs[corner];
 
                         result.indices.push_back(static_cast<uint32_t>(result.vertices.size()));
                         result.vertices.push_back(vertex);
@@ -247,8 +253,7 @@ namespace
 
 namespace Doodle
 {
-    DoodleFbxMeshData DoodleFbxImporter::Import(const std::span<const std::byte> bytes,
-                                                const std::string_view sourceName)
+    DoodleFbxMeshData DoodleFbxImporter::Import(const std::span<const std::byte> bytes, const std::string_view sourceName)
     {
         return ImportFbxMesh(bytes, sourceName);
     }

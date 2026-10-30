@@ -98,7 +98,7 @@ namespace Doodle
             transform.scale = objectData.scale;
         }
 
-        // 阶段三：按场景顺序创建全部组件 —— MeshRenderer、Camera、Package
+        // 阶段三：按场景顺序创建全部组件 —— MeshRenderer、Camera、Light、Package
         // 组件和 GamePlay 组件走同一条注册表路径。
         //
         // OnAwake 里能看到所有 GameObject 与排在它前面的组件；排在后面的
