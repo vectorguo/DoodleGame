@@ -37,7 +37,7 @@ namespace Doodle
         std::string path;
 
         /**
-         * 组件配置，路径为 path + ".settings"
+         * 组件配置；配置本身不带来源路径，装配层用 path 补错误前缀
          */
         DoodleComponentConfig config;
     };

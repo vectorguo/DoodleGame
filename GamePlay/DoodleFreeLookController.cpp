@@ -44,24 +44,22 @@ namespace Doodle
 
         if (!(m_moveSpeed > 0.0f))
         {
-            throw std::runtime_error(config.GetPath() + ".moveSpeed: must be greater than 0");
+            throw std::runtime_error("moveSpeed: must be greater than 0");
         }
 
         if (!(m_boostMultiplier > 0.0f))
         {
-            throw std::runtime_error(config.GetPath() +
-                                     ".boostMultiplier: must be greater than 0");
+            throw std::runtime_error("boostMultiplier: must be greater than 0");
         }
 
         if (!(m_lookSensitivity >= 0.0f))
         {
-            throw std::runtime_error(config.GetPath() +
-                                     ".lookSensitivity: must not be negative");
+            throw std::runtime_error("lookSensitivity: must not be negative");
         }
 
         if (!(m_pitchLimit > 0.0f && m_pitchLimit < 90.0f))
         {
-            throw std::runtime_error(config.GetPath() + ".pitchLimit: must be in (0, 90)");
+            throw std::runtime_error("pitchLimit: must be in (0, 90)");
         }
     }
     void DoodleFreeLookController::OnUpdate()

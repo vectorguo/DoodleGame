@@ -9,6 +9,7 @@
 #include "Core/DoodleGameObject.h"
 
 #include <cstddef>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -72,7 +73,14 @@ namespace Doodle
 #ifndef NDEBUG
                 if (pRegistration->validate != nullptr)
                 {
-                    pRegistration->validate(componentData.config);
+                    try
+                    {
+                        pRegistration->validate(componentData.config);
+                    }
+                    catch (const std::exception& error)
+                    {
+                        throw std::runtime_error(componentData.path + ".settings: " + error.what());
+                    }
                 }
 #endif
 
@@ -111,7 +119,14 @@ namespace Doodle
             {
                 const DoodleComponentData& componentData = componentDataList[j];
                 const DoodleComponentRegistration* pRegistration = registrations[i][j];
-                pRegistration->create(*gameObjects[i], componentData.config);
+                try
+                {
+                    pRegistration->create(*gameObjects[i], componentData.config);
+                }
+                catch (const std::exception& error)
+                {
+                    throw std::runtime_error(componentData.path + ".settings: " + error.what());
+                }
             }
         }
     }

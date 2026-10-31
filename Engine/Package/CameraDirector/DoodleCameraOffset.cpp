@@ -42,8 +42,7 @@ namespace Doodle
         }
         else
         {
-            throw std::runtime_error(config.GetPath() +
-                                     ".applyAfter: expected 0 (body) or 1 (aim)");
+            throw std::runtime_error("applyAfter: expected 0 (body) or 1 (aim)");
         }
     }
 }

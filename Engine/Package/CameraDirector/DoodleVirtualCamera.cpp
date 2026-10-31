@@ -55,8 +55,7 @@ namespace Doodle
         }
         else
         {
-            throw std::runtime_error(config.GetPath() +
-                                     ".standbyUpdate: expected 0 (always), 1 (never), "
+            throw std::runtime_error("standbyUpdate: expected 0 (always), 1 (never), "
                                      "or 2 (roundRobin)");
         }
 
@@ -67,17 +66,17 @@ namespace Doodle
 
         if (!(m_fovYDegrees > 0.0f && m_fovYDegrees < 180.0f))
         {
-            throw std::runtime_error(config.GetPath() + ".fov: must be in (0, 180)");
+            throw std::runtime_error("fov: must be in (0, 180)");
         }
 
         if (!(m_nearPlane > 0.0f))
         {
-            throw std::runtime_error(config.GetPath() + ".near: must be greater than 0");
+            throw std::runtime_error("near: must be greater than 0");
         }
 
         if (!(m_farPlane > m_nearPlane))
         {
-            throw std::runtime_error(config.GetPath() + ".far: must be greater than near");
+            throw std::runtime_error("far: must be greater than near");
         }
     }
     void DoodleVirtualCamera::OnAwake()

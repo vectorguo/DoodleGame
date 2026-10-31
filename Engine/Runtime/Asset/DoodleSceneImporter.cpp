@@ -196,8 +196,7 @@ namespace
         Doodle::DoodleComponentData componentData;
         componentData.typeName = std::move(type);
         componentData.path = sourcePath;
-        componentData.config = Doodle::DoodleComponentConfig(
-            std::move(settingsJson), sourcePath + ".settings");
+        componentData.config = Doodle::DoodleComponentConfig(std::move(settingsJson));
         return componentData;
     }
 

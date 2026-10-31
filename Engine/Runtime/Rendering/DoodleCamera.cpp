@@ -76,7 +76,7 @@ namespace Doodle
         }
         else
         {
-            throw std::runtime_error(config.GetPath() + ".projection: expected 0 (perspective) or 1 (orthographic)");
+            throw std::runtime_error("projection: expected 0 (perspective) or 1 (orthographic)");
         }
 
         const int renderType = config.GetInt("renderType", static_cast<int>(ECameraRenderType::Base));
@@ -90,7 +90,7 @@ namespace Doodle
         }
         else
         {
-            throw std::runtime_error(config.GetPath() + ".renderType: expected 0 (base) or 1 (overlay)");
+            throw std::runtime_error("renderType: expected 0 (base) or 1 (overlay)");
         }
 
         //优先级任意整数，不分范围：只有相对高低有意义
@@ -103,22 +103,22 @@ namespace Doodle
 
         if (!(m_fovY > 0.0f && m_fovY < glm::radians(180.0f)))
         {
-            throw std::runtime_error(config.GetPath() + ".fov: must be in (0, 180)");
+            throw std::runtime_error("fov: must be in (0, 180)");
         }
 
         if (!(m_near > 0.0f))
         {
-            throw std::runtime_error(config.GetPath() + ".near: must be greater than 0");
+            throw std::runtime_error("near: must be greater than 0");
         }
 
         if (!(m_far > m_near))
         {
-            throw std::runtime_error(config.GetPath() + ".far: must be greater than near");
+            throw std::runtime_error("far: must be greater than near");
         }
 
         if (!(m_orthoHalfHeight > 0.0f))
         {
-            throw std::runtime_error(config.GetPath() + ".orthoHalfHeight: must be greater than 0");
+            throw std::runtime_error("orthoHalfHeight: must be greater than 0");
         }
     }
 

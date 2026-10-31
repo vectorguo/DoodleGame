@@ -8,6 +8,7 @@
 #include "DoodleMeshRenderer.h"
 
 #include <cstddef>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -55,14 +56,14 @@ namespace Doodle
         const std::string assetPath = config.GetString("mesh", "");
         if (assetPath.empty())
         {
-            throw std::runtime_error(config.GetPath() + ".mesh: must not be empty");
+            throw std::runtime_error("mesh: must not be empty");
         }
 
         const auto* pMesh = DoodleAssetManager::GetInstance().Load<DoodleMesh>(assetPath);
         if (pMesh == nullptr)
         {
             // Loader 的契约是不返回空指针；这里只做防御
-            throw std::runtime_error(config.GetPath() + ".mesh: mesh '" + assetPath + "' is missing");
+            throw std::runtime_error("mesh: mesh '" + assetPath + "' is missing");
         }
 
         // SetMesh 负责安装网格并把材质表重置为默认值；
@@ -73,19 +74,28 @@ namespace Doodle
         if (materialConfigs.size() > m_materials.size())
         {
             throw std::runtime_error(
-                config.GetPath() + ".materials: has " + std::to_string(materialConfigs.size()) +
+                "materials: has " + std::to_string(materialConfigs.size()) +
                 " entries but mesh '" + assetPath + "' has " + std::to_string(m_materials.size()) +
                 " material slots");
         }
 
         for (std::size_t i = 0; i < materialConfigs.size(); ++i)
         {
+            // 子配置自己不知道数组下标，这里补上 "materials[i]" 前缀，
+            // 场景层再在外层补组件路径
+            try
+            {
 #ifndef NDEBUG
-            materialConfigs[i].ExpectOnlyKeys({"baseColor"});
+                materialConfigs[i].ExpectOnlyKeys({"baseColor"});
 #endif
-            DoodleMaterial material;
-            material.SetBaseColor(materialConfigs[i].GetVec4("baseColor", material.GetBaseColor()));
-            m_materials[i] = material;
+                DoodleMaterial material;
+                material.SetBaseColor(materialConfigs[i].GetVec4("baseColor", material.GetBaseColor()));
+                m_materials[i] = material;
+            }
+            catch (const std::exception& error)
+            {
+                throw std::runtime_error("materials[" + std::to_string(i) + "]: " + error.what());
+            }
         }
     }
 

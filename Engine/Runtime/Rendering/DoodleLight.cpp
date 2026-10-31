@@ -78,13 +78,13 @@ namespace Doodle
         //（当作关灯，只剩环境项）。GetVec3 已经保证各分量是有限数
         if (m_color.x < 0.0f || m_color.y < 0.0f || m_color.z < 0.0f)
         {
-            throw std::runtime_error(config.GetPath() + ".color: components must be non-negative");
+            throw std::runtime_error("color: components must be non-negative");
         }
 
         // GetFloat 已经拒绝 NaN / 无穷，这里只需要挡住负数
         if (m_intensity < 0.0f)
         {
-            throw std::runtime_error(config.GetPath() + ".intensity: must be non-negative");
+            throw std::runtime_error("intensity: must be non-negative");
         }
     }
 

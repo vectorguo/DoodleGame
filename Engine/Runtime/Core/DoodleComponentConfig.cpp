@@ -16,15 +16,12 @@
 
 namespace Doodle
 {
-    DoodleComponentConfig::DoodleComponentConfig(nlohmann::json settings, std::string path)
+    DoodleComponentConfig::DoodleComponentConfig(nlohmann::json settings)
         : m_settings(std::move(settings))
-        , m_path(std::move(path))
     {
         if (!m_settings.is_object())
         {
-            throw std::runtime_error(
-                (m_path.empty() ? std::string("<component settings>") : m_path) +
-                ": expected an object");
+            throw std::runtime_error("<component settings>: expected an object");
         }
     }
 
@@ -38,7 +35,7 @@ namespace Doodle
 
         if (!pValue->is_boolean())
         {
-            throw std::runtime_error(KeyPath(key) + ": expected a boolean");
+            throw std::runtime_error(std::string(key) + ": expected a boolean");
         }
 
         return pValue->get<bool>();
@@ -58,7 +55,7 @@ namespace Doodle
             const uint64_t unsignedNumber = pValue->get<uint64_t>();
             if (unsignedNumber > static_cast<uint64_t>(std::numeric_limits<int>::max()))
             {
-                throw std::runtime_error(KeyPath(key) + ": is out of range for int");
+                throw std::runtime_error(std::string(key) + ": is out of range for int");
             }
             number = static_cast<int64_t>(unsignedNumber);
         }
@@ -68,13 +65,13 @@ namespace Doodle
         }
         else
         {
-            throw std::runtime_error(KeyPath(key) + ": expected an integer");
+            throw std::runtime_error(std::string(key) + ": expected an integer");
         }
 
         if (number < std::numeric_limits<int>::min() ||
             number > std::numeric_limits<int>::max())
         {
-            throw std::runtime_error(KeyPath(key) + ": is out of range for int");
+            throw std::runtime_error(std::string(key) + ": is out of range for int");
         }
 
         return static_cast<int>(number);
@@ -88,7 +85,7 @@ namespace Doodle
             return defaultValue;
         }
 
-        return ToFiniteFloat(*pValue, KeyPath(key));
+        return ToFiniteFloat(*pValue, std::string(key));
     }
 
     std::string DoodleComponentConfig::GetString(const std::string_view key, std::string defaultValue) const
@@ -101,7 +98,7 @@ namespace Doodle
 
         if (!pValue->is_string())
         {
-            throw std::runtime_error(KeyPath(key) + ": expected a string");
+            throw std::runtime_error(std::string(key) + ": expected a string");
         }
 
         //空串是合法的：可选引用用空串表示「没有目标」
@@ -118,13 +115,13 @@ namespace Doodle
 
         if (!pValue->is_array() || pValue->size() != 3)
         {
-            throw std::runtime_error(KeyPath(key) + ": expected an array of 3 numbers");
+            throw std::runtime_error(std::string(key) + ": expected an array of 3 numbers");
         }
 
         glm::vec3 result{0.0f};
         for (std::size_t i = 0; i < 3; ++i)
         {
-            const std::string elementPath = KeyPath(key) + "[" + std::to_string(i) + "]";
+            const std::string elementPath = std::string(key) + "[" + std::to_string(i) + "]";
             result[i] = ToFiniteFloat((*pValue)[i], elementPath);
         }
 
@@ -166,13 +163,13 @@ namespace Doodle
 
         if (!pValue->is_array() || pValue->size() != 4)
         {
-            throw std::runtime_error(KeyPath(key) + ": expected an array of 4 numbers");
+            throw std::runtime_error(std::string(key) + ": expected an array of 4 numbers");
         }
 
         glm::vec4 result{0.0f};
         for (std::size_t i = 0; i < 4; ++i)
         {
-            const std::string elementPath = KeyPath(key) + "[" + std::to_string(i) + "]";
+            const std::string elementPath = std::string(key) + "[" + std::to_string(i) + "]";
             result[i] = ToFiniteFloat((*pValue)[i], elementPath);
         }
 
@@ -194,19 +191,19 @@ namespace Doodle
 
         if (!pValue->is_array())
         {
-            throw std::runtime_error(KeyPath(key) + ": expected an array of objects");
+            throw std::runtime_error(std::string(key) + ": expected an array of objects");
         }
 
         std::vector<DoodleComponentConfig> result;
         result.reserve(pValue->size());
         for (std::size_t i = 0; i < pValue->size(); ++i)
         {
-            const std::string elementPath = KeyPath(key) + "[" + std::to_string(i) + "]";
+            const std::string elementPath = std::string(key) + "[" + std::to_string(i) + "]";
             if (!(*pValue)[i].is_object())
             {
                 throw std::runtime_error(elementPath + ": expected an object");
             }
-            result.emplace_back((*pValue)[i], elementPath);
+            result.emplace_back((*pValue)[i]);
         }
 
         return result;
@@ -245,7 +242,7 @@ namespace Doodle
 
             if (!known)
             {
-                throw std::runtime_error(KeyPath(key) + ": unknown field '" + std::string(key) + "'");
+                throw std::runtime_error(std::string(key) + ": unknown field '" + std::string(key) + "'");
             }
         }
     }
@@ -261,33 +258,23 @@ namespace Doodle
         return &(*it);
     }
 
-    std::string DoodleComponentConfig::KeyPath(const std::string_view key) const
-    {
-        if (m_path.empty())
-        {
-            return std::string(key);
-        }
-
-        return m_path + "." + std::string(key);
-    }
-
-    float DoodleComponentConfig::ToFiniteFloat(const nlohmann::json& value, const std::string& path)
+    float DoodleComponentConfig::ToFiniteFloat(const nlohmann::json& value, const std::string& fieldName)
     {
         if (!value.is_number())
         {
-            throw std::runtime_error(path + ": expected a number");
+            throw std::runtime_error(fieldName + ": expected a number");
         }
 
         const double number = value.get<double>();
         if (!std::isfinite(number))
         {
-            throw std::runtime_error(path + ": must be a finite number");
+            throw std::runtime_error(fieldName + ": must be a finite number");
         }
 
         const auto converted = static_cast<float>(number);
         if (!std::isfinite(converted))
         {
-            throw std::runtime_error(path + ": is out of range for float");
+            throw std::runtime_error(fieldName + ": is out of range for float");
         }
 
         return converted;

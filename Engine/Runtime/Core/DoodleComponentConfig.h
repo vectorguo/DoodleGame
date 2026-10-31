@@ -30,9 +30,9 @@ namespace Doodle
      * 游戏运行时不应该持有它 —— 组件应当在 Deserialize / OnAwake 里把值复制到成员，
      * 之后只用自己的成员。
      *
-     * 读接口一律带路径报错，例如：
-     *   Scenes/main.json: gameObjects[2].components[0].settings.moveSpeed:
-     *       expected a number
+     * 配置本身不知道自己来自哪个场景 / 对象：读接口的错误只带字段名，例如
+     * "moveSpeed: expected a number"。需要文件与对象前缀时，由装配层
+     * （DoodleScene / DoodleSceneImporter）在异常外面补。
      */
     class DoodleComponentConfig final
     {
@@ -46,9 +46,8 @@ namespace Doodle
          * 由 loader / 场景写入器构造
          *
          * @param settings 必须是一个 JSON object
-         * @param path 只用于错误消息，例如 "Scenes/main.json: gameObjects[2].components[0].settings"
          */
-        DoodleComponentConfig(nlohmann::json settings, std::string path);
+        DoodleComponentConfig(nlohmann::json settings);
 
         /**
          * 底层 JSON
@@ -58,14 +57,6 @@ namespace Doodle
         [[nodiscard]] const nlohmann::json& GetJson() const
         {
             return m_settings;
-        }
-
-        /**
-         * 本配置的来源路径，组件自己报语义错误时可以使用
-         */
-        [[nodiscard]] const std::string& GetPath() const
-        {
-            return m_path;
         }
 
         /**
@@ -149,8 +140,9 @@ namespace Doodle
          * 读「对象数组」
          *
          * key 不存在时返回空数组；存在时必须是数组，且每个元素是 object。
-         * 每个元素包成一个子 DoodleComponentConfig，路径带上 [i]，元素内部的
-         * 字段错误能指出是第几个对象。
+         * 每个元素包成一个子 DoodleComponentConfig；数组形状的错误带
+         * "key[i]" 前缀，子配置内部的字段错误只带字段名，需要元素下标时
+         * 由调用方自己补（例如 DoodleMeshRenderer 的 materials）。
          *
          * 用途是「一个组件下挂一组配置对象」的字段（例如 renderer 的材质表）。
          * 返回的是拷贝：对象数量很小，换调用方随手存放的简单性
@@ -189,24 +181,14 @@ namespace Doodle
         [[nodiscard]] const nlohmann::json* FindValue(std::string_view key) const;
 
         /**
-         * 拼出 "来源路径.key" 形式的错误前缀；路径为空时只返回 key
+         * JSON 数字 → 有限 float；类型、有限性、float 溢出错误都带字段名抛出
          */
-        [[nodiscard]] std::string KeyPath(std::string_view key) const;
-
-        /**
-         * JSON 数字 → 有限 float；类型、有限性、float 溢出错误都带路径抛出
-         */
-        [[nodiscard]] static float ToFiniteFloat(const nlohmann::json& value, const std::string& path);
+        [[nodiscard]] static float ToFiniteFloat(const nlohmann::json& value, const std::string& fieldName);
 
     private:
         /**
          * 组件参数，始终是一个 JSON object
          */
         nlohmann::json m_settings = nlohmann::json::object();
-
-        /**
-         * 错误消息用的来源路径；空表示没有来源（测试 / 序列化）
-         */
-        std::string m_path;
     };
 }
