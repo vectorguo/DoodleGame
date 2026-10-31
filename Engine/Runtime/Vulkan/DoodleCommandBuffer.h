@@ -25,9 +25,10 @@ namespace Doodle
      * - **每帧的绘制流**（Record）：每个在途帧一个命令缓冲，反复重录不重建。
      *   交换链重建时本层也不重建 —— 本层不缓存任何上游层的句柄，
      *   录制时现取，重建后重录拿到的自然是新句柄
-     * - **传输命令池**：一次性拷贝用的池。拷贝本身 —— 从这个池里分配命令缓冲、
-     *   录拷贝、提交、等待、释放 —— 在 DoodleGraphicsBuffer::CopyTo 里，
-     *   因为那个动作按功能归属在缓冲类上。池留在这里，因为它和绘制池是同一种东西
+     * - **传输命令池与一次性传输**：拷贝 / 上传用的池。池留在这里，因为它和绘制池
+     *   是同一种东西；「从池里分配命令缓冲、提交、等待、释放」也在这里
+     *   （BeginOneTimeTransfer / EndOneTimeTransfer）。资源类只负责录「拷什么」，
+     *   谁拥有池，谁负责命令缓冲的生灭
      *
      * 生命周期与程序一致。两个命令池都只在 Initialize 里建一次；
      * 交换链重建时本层不重建，见上
@@ -39,7 +40,8 @@ namespace Doodle
      * （颜色入口、深度入口、颜色出口）
      *
      * 本类在进程内是唯一的一份：构造时登记、析构时注销，
-     * 供 DoodleGraphicsBuffer::CopyTo 找到它 —— 理由与代价见 GetInstance
+     * 供 DoodleGraphicsBuffer::CopyTo、纹理上传这类资源侧动作找到它 ——
+     * 理由与代价见 GetInstance
      *
      * 命令池与命令缓冲不拆成两个类：命令缓冲从池中分配、随池释放，
      * 两者的生命周期完全重合，没有各自独立的锚点
@@ -61,9 +63,9 @@ namespace Doodle
         /**
          * 取当前那一份命令缓冲层；没有时返回 nullptr
          *
-         * 存在的理由只有一个：`DoodleGraphicsBuffer` 的拷贝动作按功能归属在缓冲类上，
-         * 却需要一个命令池 —— 而池归本层管。与其让调用方沿着每一层把引用传下来，
-         * 不如给本层开一个和 DoodleApplication 同形的全局入口
+         * 存在的理由只有一个：`DoodleGraphicsBuffer` 的拷贝与纹理上传按功能归属
+         * 在资源类上，却需要本层的传输池 —— 而池归本层管。与其让调用方沿着每一层
+         * 把引用传下来，不如给本层开一个和 DoodleApplication 同形的全局入口
          *
          * 与 DoodleApplication::GetInstance 的区别只有一处：那边返回引用
          * （它假定调用时对象必然活着），这里返回指针 —— 因为「取不到就失败」
@@ -71,7 +73,7 @@ namespace Doodle
          *
          * @note 和 DoodleApplication 一样，本工程同一进程只有一份。
          * 但「取到了」不等于「能用了」：对象在 Initialize 之前就已经构造，
-         * 命令池却要到那时才有。真正的前置条件由 CopyTo 自己判断
+         * 命令池却要到那时才有。真正的前置条件由 BeginOneTimeTransfer 自己判断
          *
          * @note 代价要记清楚：这层依赖是**隐式**的 —— 调用点看不出它依赖命令层，
          * 也看不出命令层此刻是否可用。所以只给真正需要全局入口的地方开这个口子，
@@ -144,17 +146,32 @@ namespace Doodle
                                              VkDescriptorSet descriptorSet);
 
         /**
-         * 取传输命令池
+         * 开始一条一次性传输命令缓冲
          *
-         * 供 DoodleGraphicsBuffer::CopyTo / CopyFrom 用：池归本层，
-         * 「拷什么、什么时候拷」归缓冲层。取用方式见 GetInstance
+         * 分配 + begin 在这里做完，返回的句柄交给调用方录制。用传输池而不是
+         * 绘制池：绘制缓冲活满整个程序、反复重录；这条录一次就提交并释放。
          *
-         * @return 未 Initialize 时返回 VK_NULL_HANDLE
+         * 调用方录完必须交给 EndOneTimeTransfer —— 本层不持有这条命令缓冲，
+         * 中途抛异常就没人释放了。中间只该调用不抛异常的录制函数
+         *
+         * @throws std::runtime_error 本层尚未 Initialize（传输池不存在），
+         *         或分配 / begin 失败。失败时会释放已经分配的部分
          */
-        [[nodiscard]] VkCommandPool GetTransferCommandPool() const
-        {
-            return m_transferCommandPool;
-        }
+        [[nodiscard]] VkCommandBuffer BeginOneTimeTransfer() const;
+
+        /**
+         * 结束、提交并等待一条一次性传输命令缓冲，然后释放它
+         *
+         * 等整个图形队列空闲：一次上传不追求异步，而且调用方紧接着通常要
+         * 销毁中转资源，必须确认 GPU 不再引用它们。提交本身提供可见性，
+         * 不需要额外内存屏障；将来把上传与绘制合进同一次提交时才要补
+         *
+         * @param commandBuffer 必须来自 BeginOneTimeTransfer，且尚未提交
+         *
+         * @throws std::runtime_error 本层尚未 Initialize，或 end / 提交失败。
+         *         end / 提交失败时会先释放命令缓冲再抛
+         */
+        void EndOneTimeTransfer(VkCommandBuffer commandBuffer) const;
 
     private:
         /**
@@ -250,6 +267,12 @@ namespace Doodle
         VkCommandPool m_commandPool = VK_NULL_HANDLE;
 
         /**
+         * 命令缓冲，每个在途帧一个，用帧索引取用。
+         * 随命令池释放，不需要单独销毁
+         */
+        std::vector<VkCommandBuffer> m_commandBuffers;
+
+        /**
          * 传输命令池：一次性拷贝命令专用
          *
          * 与 m_commandPool 分开，是因为两个池里的缓冲寿命差着量级：绘制缓冲活满整个程序、
@@ -258,14 +281,8 @@ namespace Doodle
          * 建池时那个 VK_COMMAND_POOL_CREATE_TRANSIENT_BIT 说的正是这件事
          *
          * 不带 VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT：这里的缓冲
-         * 走的是「分配 → 录 → 提交 → 释放」，不需要重置，见 DoodleGraphicsBuffer::CopyTo 里的注释
+         * 走的是「分配 → 录 → 提交 → 释放」，不需要重置，见 BeginOneTimeTransfer 里的注释
          */
         VkCommandPool m_transferCommandPool = VK_NULL_HANDLE;
-
-        /**
-         * 命令缓冲，每个在途帧一个，用帧索引取用。
-         * 随命令池释放，不需要单独销毁
-         */
-        std::vector<VkCommandBuffer> m_commandBuffers;
     };
 }

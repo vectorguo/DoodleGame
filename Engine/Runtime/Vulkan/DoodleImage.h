@@ -48,8 +48,11 @@ namespace Doodle
          * @note 前置条件：尚未初始化。创建后处于 VK_IMAGE_LAYOUT_UNDEFINED，
          * 布局转换归使用者
          */
-        void Initialize(const DoodleVulkanDevice& device, VkExtent2D extent,
-                        VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspectFlags);
+        void Initialize(const DoodleVulkanDevice& device,
+                        const VkExtent2D extent,
+                        const VkFormat format,
+                        const VkImageUsageFlags usage,
+                        const VkImageAspectFlags aspectFlags);
 
         /**
          * 销毁视图、图与内存

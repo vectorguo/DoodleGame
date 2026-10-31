@@ -15,7 +15,7 @@
 
 #include "Asset/DoodleAssetManager.h"
 #include "Core/DoodleComponentConfig.h"
-#include "Vulkan/DoodleMesh.h"
+#include "DoodleMesh.h"
 
 namespace Doodle
 {

@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "Rendering/DoodleSubmesh.h"
-#include "Vulkan/DoodleVertex.h"
+#include "Rendering/DoodleVertex.h"
 
 namespace Doodle
 {

@@ -11,7 +11,7 @@
 #include <string_view>
 
 #include "DoodleAssetLoader.h"
-#include "Vulkan/DoodleMesh.h"
+#include "Rendering/DoodleMesh.h"
 
 namespace Doodle
 {

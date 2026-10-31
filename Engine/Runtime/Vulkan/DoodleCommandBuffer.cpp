@@ -7,7 +7,7 @@
 #include "DoodleCommandBuffer.h"
 #include "DoodleDepthImages.h"
 #include "DoodleGraphicsPipeline.h"
-#include "DoodleMesh.h"
+#include "Rendering/DoodleMesh.h"
 #include "DoodleSwapChain.h"
 #include "DoodleVulkanConfig.h"
 #include "DoodleVulkanDevice.h"
@@ -130,7 +130,7 @@ namespace Doodle
         createInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
         //注意这里没有 RESET_COMMAND_BUFFER_BIT，和有绘制缓冲的那个池不一样。
         //那个位决定「能不能重置池里的单个缓冲」，而本池的缓冲根本不需要重置 ——
-        //每次用完就地释放（见 DoodleGraphicsBuffer::CopyTo），下一次是全新分配、天然处于 initial 状态。
+        //每次用完就地释放（见 BeginOneTimeTransfer），下一次是全新分配、天然处于 initial 状态。
         //加了这个位反而会让「begin 会隐式重置」这条规矩在这里也成立，
         //从而掩盖掉某天有人试着复用一个旧句柄时的错误
         createInfo.queueFamilyIndex = familyIndex;
@@ -147,6 +147,92 @@ namespace Doodle
         //池引用了逻辑设备，必须先于设备层销毁
         vkDestroyCommandPool(m_pDevice->GetLogicalDevice(), m_transferCommandPool, nullptr);
         m_transferCommandPool = VK_NULL_HANDLE;
+    }
+
+    VkCommandBuffer DoodleCommandBuffer::BeginOneTimeTransfer() const
+    {
+        //未 Initialize 时池是空的；与其带着空句柄继续走、让校验层在几百行外
+        //报错，不如当场停下 —— 与 GetInstance 的取舍一致
+        if (m_pDevice == nullptr || m_transferCommandPool == VK_NULL_HANDLE)
+        {
+            throw std::runtime_error("failed to begin one-time transfer: command buffer layer is not initialized!");
+        }
+
+        const auto logicalDevice = m_pDevice->GetLogicalDevice();
+
+        //现分配一条，用完在 EndOneTimeTransfer 里释放。传输池没有
+        //RESET_COMMAND_BUFFER_BIT，已提交的句柄不能再次 begin：
+        //  VUID-vkBeginCommandBuffer-commandBuffer-00050
+        //  commandBuffer 必须处于 initial 状态
+        //现分配现释放同时让池的 TRANSIENT 标志名副其实：寿命只覆盖一次传输
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = m_transferCommandPool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = 1;
+
+        VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+        if (vkAllocateCommandBuffers(logicalDevice, &allocInfo, &commandBuffer) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to allocate one-time transfer command buffer!");
+        }
+
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        //承诺这份录制只提交一次：驱动可以在录制时少做「将来可能被改」的保留
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        beginInfo.pInheritanceInfo = nullptr;
+        if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
+        {
+            vkFreeCommandBuffers(logicalDevice, m_transferCommandPool, 1, &commandBuffer);
+            throw std::runtime_error("failed to begin one-time transfer command buffer!");
+        }
+
+        return commandBuffer;
+    }
+
+    void DoodleCommandBuffer::EndOneTimeTransfer(VkCommandBuffer commandBuffer) const
+    {
+        if (m_pDevice == nullptr || m_transferCommandPool == VK_NULL_HANDLE)
+        {
+            throw std::runtime_error("failed to end one-time transfer: command buffer layer is not initialized!");
+        }
+
+        const auto logicalDevice = m_pDevice->GetLogicalDevice();
+
+        if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
+        {
+            vkFreeCommandBuffers(logicalDevice, m_transferCommandPool, 1, &commandBuffer);
+            throw std::runtime_error("failed to record one-time transfer command buffer!");
+        }
+
+        //这次提交不带信号量也不带栅栏：没有第二个队列要同步，host 也不打算
+        //异步等它 —— 下面的 vkQueueWaitIdle 会把整个队列等干净
+        VkCommandBufferSubmitInfo commandBufferInfo{};
+        commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+        commandBufferInfo.commandBuffer = commandBuffer;
+
+        VkSubmitInfo2 submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+        submitInfo.commandBufferInfoCount = 1;
+        submitInfo.pCommandBufferInfos = &commandBufferInfo;
+
+        if (vkQueueSubmit2(m_pDevice->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS)
+        {
+            vkFreeCommandBuffers(logicalDevice, m_transferCommandPool, 1, &commandBuffer);
+            throw std::runtime_error("failed to submit one-time transfer command buffer!");
+        }
+
+        //这一等管资源寿命，不只是可见性：调用方返回后通常就销毁中转缓冲 /
+        //中转图，而拷贝命令可能还在读它们：
+        //  VUID-vkDestroyBuffer-buffer-00922  buffer 不得有在途命令引用
+        //  VUID-vkFreeMemory-memory-00677     同理
+        //可见性不需要额外屏障：vkQueueWaitIdle 等价于提交一个栅栏并等它信号，
+        //让这次写的效果变为 available；host 的等待构成 happens-before 边，
+        //之后的下一次 vkQueueSubmit 把已 available 的写对设备侧变可见
+        vkQueueWaitIdle(m_pDevice->GetGraphicsQueue());
+
+        vkFreeCommandBuffers(logicalDevice, m_transferCommandPool, 1, &commandBuffer);
     }
 
     VkCommandBuffer DoodleCommandBuffer::Record(const uint32_t frameIndex,

@@ -179,7 +179,7 @@ namespace Doodle
 
     void DoodleGraphicsBuffer::CopyTo(const DoodleGraphicsBuffer& dstBuffer, VkDeviceSize size) const
     {
-        //命令池在命令缓冲层那边 —— 通过单例借到它。取不到就是调用时机错了：
+        //命令层负责传输池与一次性命令缓冲的生灭；取不到就是调用时机错了：
         //与其带着空句柄继续往下走、让校验层在几百行外报错，不如当场停下
         const auto* pCommandBuffer = DoodleCommandBuffer::GetInstance();
         if (pCommandBuffer == nullptr)
@@ -187,45 +187,8 @@ namespace Doodle
             throw std::runtime_error("failed to copy buffer: command buffer layer is not available!");
         }
 
-        //取到了也可能还没 Initialize —— 对象在构造时就登记了，传输池要到那时才建
-        const auto transferCommandPool = pCommandBuffer->GetTransferCommandPool();
-        if (transferCommandPool == VK_NULL_HANDLE)
-        {
-            throw std::runtime_error("failed to copy buffer: transfer command pool is not created!");
-        }
-
-        const auto logicalDevice = m_pDevice->GetLogicalDevice();
-
-        //现分配一个命令缓冲，用完就还。
-        //
-        //不常驻一个是刻意的：命令缓冲一旦「分配 → 录制 → 提交」，就停在 executable
-        //状态，而 begin 只在池带 RESET_COMMAND_BUFFER_BIT 时才会隐式重置它 ——
-        //传输池没有那个位，所以复用同一个句柄第二次 begin 会撞
-        //  VUID-vkBeginCommandBuffer-commandBuffer-00050  commandBuffer 必须处于 initial 状态
-        //现分配现释放同时让传输池那个 TRANSIENT 标志名副其实：池里的缓冲
-        //确实是一次性的，寿命只覆盖本函数
-        VkCommandBufferAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        allocInfo.commandPool = transferCommandPool;
-        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandBufferCount = 1;
-
-        VkCommandBuffer transferCommandBuffer = VK_NULL_HANDLE;
-        if (vkAllocateCommandBuffers(logicalDevice, &allocInfo, &transferCommandBuffer) != VK_SUCCESS)
-        {
-            throw std::runtime_error("failed to allocate transfer command buffer!");
-        }
-
-        VkCommandBufferBeginInfo beginInfo{};
-        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        //承诺这份录制只提交一次。有了它，驱动可以在录的时候少做一些
-        //「这条命令将来可能被改」的保留 —— 这正是本函数要做的事
-        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        beginInfo.pInheritanceInfo = nullptr;
-        if (vkBeginCommandBuffer(transferCommandBuffer, &beginInfo) != VK_SUCCESS)
-        {
-            throw std::runtime_error("failed to begin recording transfer command buffer!");
-        }
+        //分配 / 提交 / 等待 / 释放都在命令层，本函数只录「拷什么」
+        const VkCommandBuffer transferCommandBuffer = pCommandBuffer->BeginOneTimeTransfer();
 
         //拷贝区域。三个字段都是 0 起始，只填 size —— 两边都是「整块缓冲从头上开始」。
         //size 不能写 VK_WHOLE_SIZE，VkBufferCopy 里没有这个取值
@@ -244,43 +207,7 @@ namespace Doodle
         copyInfo.pRegions = &copyRegion;
         vkCmdCopyBuffer2(transferCommandBuffer, &copyInfo);
 
-        if (vkEndCommandBuffer(transferCommandBuffer) != VK_SUCCESS)
-        {
-            throw std::runtime_error("failed to record transfer command buffer!");
-        }
-
-        //这次提交不带信号量也不带栅栏：没有第二个队列要同步，host 也不打算异步等它 ——
-        //下面那句 vkQueueWaitIdle 会把整个队列等干净，比栅栏更粗，但对一次上传足够
-        VkCommandBufferSubmitInfo commandBufferInfo{};
-        commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-        commandBufferInfo.commandBuffer = transferCommandBuffer;
-
-        VkSubmitInfo2 submitInfo{};
-        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-        submitInfo.commandBufferInfoCount = 1;
-        submitInfo.pCommandBufferInfos = &commandBufferInfo;
-
-        if (vkQueueSubmit2(m_pDevice->GetGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS)
-        {
-            throw std::runtime_error("failed to submit transfer command buffer!");
-        }
-
-        //等拷贝真正做完。这一句的作用是**资源寿命**，不是可见性 ——
-        //命令提交是异步的，不等到这里，调用方一返回就会去销毁源缓冲，
-        //而拷贝命令可能还在读它：
-        //  VUID-vkDestroyBuffer-buffer-00922  buffer 不得有在途的命令引用它
-        //  VUID-vkFreeMemory-memory-00677     同理，内存不得还被在途的命令引用
-        //
-        //可见性那一半不需要额外动作，这条路自带了：栅栏信号（vkQueueWaitIdle 定义上
-        //等价于提交一个栅栏并等它信号）让这次写的效果变为 available，host 的等待构成
-        //happens-before 边，而之后那次 vkQueueSubmit 本身就是一次 visibility 操作，
-        //把已经 available 的写对设备侧所有 agent 变可见。
-        //
-        //所以这里**不需要**内存屏障 —— 教程也没漏。（唯一会需要屏障的情形是
-        //把上传与绘制合进同一次提交，那时中间没有「提交」这个可见性操作，将来真这么做时要补上）
-        vkQueueWaitIdle(m_pDevice->GetGraphicsQueue());
-
-        vkFreeCommandBuffers(logicalDevice, transferCommandPool, 1, &transferCommandBuffer);
+        pCommandBuffer->EndOneTimeTransfer(transferCommandBuffer);
     }
 
     void DoodleGraphicsBuffer::CopyFrom(const DoodleGraphicsBuffer& srcBuffer, VkDeviceSize size)

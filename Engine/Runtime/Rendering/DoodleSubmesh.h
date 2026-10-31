@@ -19,9 +19,9 @@ namespace Doodle
      * firstIndex / indexCount 与「用哪个材质」的槽号，所以分段绘制不需要
      * 为每段另建资源，换段时只换这几个数。
      *
-     * 放在 Rendering 而不是 Vulkan：它和 DoodleDrawItem 一样是绘制侧的数据形状，
-     * 不碰任何 Vulkan 句柄。DoodleMesh（Vulkan）与导入器（Asset）都引用它，
-     * 依赖方向保持 Vulkan → Rendering 这条现成的单向线。
+     * 放在 Rendering：它和 DoodleDrawItem 一样是绘制侧的数据形状，不碰任何
+     * Vulkan 句柄。DoodleMesh（同目录）与导入器（Asset）都引用它；同目录的
+     * DoodleMesh 自己去持有 Vulkan 侧的 DoodleGraphicsBuffer。
      *
      * 三个字段都是 uint32_t，与索引类型和 vkCmdDrawIndexed 的参数一致：
      * 索引缓冲本身就是 uint32_t，firstIndex / indexCount 直接透传。

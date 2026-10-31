@@ -17,10 +17,10 @@
 #include "Rendering/DoodleCamera.h"
 #include "Rendering/DoodleDrawContext.h"
 #include "Rendering/DoodleLight.h"
+#include "Rendering/DoodleMesh.h"
 #include "Rendering/DoodleMeshRenderer.h"
 #include "Scene/DoodleScene.h"
 #include "Scene/DoodleSceneData.h"
-#include "Vulkan/DoodleMesh.h"
 
 #include <cstddef>
 #include <stdexcept>

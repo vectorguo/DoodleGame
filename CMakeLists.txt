@@ -82,14 +82,10 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Vulkan/DoodleSyncObjects.h
     Engine/Runtime/Vulkan/DoodleGraphicsBuffer.cpp
     Engine/Runtime/Vulkan/DoodleGraphicsBuffer.h
-    Engine/Runtime/Vulkan/DoodleMesh.cpp
-    Engine/Runtime/Vulkan/DoodleMesh.h
     Engine/Runtime/Vulkan/DoodleDepthImages.cpp
     Engine/Runtime/Vulkan/DoodleDepthImages.h
     Engine/Runtime/Vulkan/DoodleImage.cpp
     Engine/Runtime/Vulkan/DoodleImage.h
-    Engine/Runtime/Vulkan/DoodleTexture.cpp
-    Engine/Runtime/Vulkan/DoodleTexture.h
     Engine/Runtime/Vulkan/DoodleVulkanManager.cpp
     Engine/Runtime/Vulkan/DoodleVulkanManager.h
     Engine/Runtime/Vulkan/DoodleShaderModule.cpp
@@ -97,7 +93,6 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Vulkan/DoodleVulkanConfig.h
     Engine/Runtime/Vulkan/DoodleVulkanUtils.cpp
     Engine/Runtime/Vulkan/DoodleVulkanUtils.h
-    Engine/Runtime/Vulkan/DoodleVertex.h
     Engine/Runtime/Vulkan/QueueFamilySelection.h
     Engine/Runtime/Vulkan/SwapChainSupportDetails.h
     Engine/Runtime/Platform/DoodleWindow.h
@@ -140,6 +135,11 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Scene/DoodleSceneData.h
     Engine/Runtime/Scene/DoodleSceneManager.h
     Engine/Runtime/Scene/DoodleSceneManager.cpp
+    Engine/Runtime/Rendering/DoodleMesh.cpp
+    Engine/Runtime/Rendering/DoodleMesh.h
+    Engine/Runtime/Rendering/DoodleVertex.h
+    Engine/Runtime/Rendering/DoodleTexture.cpp
+    Engine/Runtime/Rendering/DoodleTexture.h
     Engine/Runtime/Rendering/DoodleMeshRenderer.h
     Engine/Runtime/Rendering/DoodleMeshRenderer.cpp
     Engine/Runtime/Rendering/DoodleDrawItem.h

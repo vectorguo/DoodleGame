@@ -13,8 +13,10 @@
 
 namespace Doodle
 {
-    void DoodleImage::Initialize(const DoodleVulkanDevice& device, const VkExtent2D extent,
-                                 const VkFormat format, const VkImageUsageFlags usage,
+    void DoodleImage::Initialize(const DoodleVulkanDevice& device,
+                                 const VkExtent2D extent,
+                                 const VkFormat format,
+                                 const VkImageUsageFlags usage,
                                  const VkImageAspectFlags aspectFlags)
     {
         m_pDevice = &device;
@@ -62,7 +64,12 @@ namespace Doodle
         VkImageCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         createInfo.imageType = VK_IMAGE_TYPE_2D;
-        createInfo.extent = {extent.width, extent.height, 1};
+        createInfo.extent =
+        {
+            .width = extent.width,
+            .height = extent.height,
+            .depth = 1
+        };
         createInfo.mipLevels = 1;     //本类固定单级：多级图要改签名，见类注释
         createInfo.arrayLayers = 1;   //同理，单层
         createInfo.format = m_format;
@@ -90,8 +97,7 @@ namespace Doodle
         allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         //用驱动要的尺寸，不是数据尺寸 —— 驱动可能要得更多（内部对齐、元数据）
         allocateInfo.allocationSize = memoryRequirements.size;
-        allocateInfo.memoryTypeIndex = m_pDevice->FindMemoryType(
-            memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        allocateInfo.memoryTypeIndex = m_pDevice->FindMemoryType(memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
         if (vkAllocateMemory(logicalDevice, &allocateInfo, nullptr, &m_imageMemory) != VK_SUCCESS)
         {

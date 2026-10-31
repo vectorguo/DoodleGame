@@ -11,8 +11,8 @@
 #include "DoodleShaderModule.h"
 #include "DoodleSwapChain.h"
 #include "DoodleVulkanDevice.h"
-#include "DoodleVertex.h"
 #include "Rendering/DoodleShaderData.h"
+#include "Rendering/DoodleVertex.h"
 
 namespace Doodle
 {

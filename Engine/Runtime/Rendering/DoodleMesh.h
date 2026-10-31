@@ -13,14 +13,18 @@
 
 #include <vulkan/vulkan_core.h>
 
-#include "DoodleGraphicsBuffer.h"
+#include "DoodleSubmesh.h"
 #include "DoodleVertex.h"
-#include "Rendering/DoodleSubmesh.h"
+#include "Vulkan/DoodleGraphicsBuffer.h"
 
 namespace Doodle
 {
     /**
      * 一份网格资产：顶点缓冲 + 索引缓冲 + 子网格区间
+     *
+     * 放在 Rendering：它属于「画什么」里的几何内容；Vulkan 侧的
+     * DoodleGraphicsBuffer 才是「怎么存」的显存机制。本类按值持有那份
+     * 机制，对外暴露的仍是网格语义。
      *
      * 几何数据住在设备本地显存里，本类只负责这组资源的生死。它不知道
      * GameObject、Transform、材质或绘制命令 —— 谁摆在哪里、画成什么颜色，
