@@ -11,6 +11,8 @@
 #include "DoodleSwapChain.h"
 #include "DoodleVulkanConfig.h"
 #include "DoodleVulkanDevice.h"
+#include "Rendering/DoodleShaderData.h"
+#include "Rendering/DoodleMaterial.h"
 
 namespace Doodle
 {
@@ -262,35 +264,48 @@ namespace Doodle
             0,
             nullptr);
 
-        //逐个对象录绘制。循环里只做随对象变化的三件事：
-        //推 model、绑该对象的顶点 / 索引缓冲、发一次索引绘制
+        //逐条绘制项录绘制。一条绘制项对应一次索引绘制：网格与子网格区间
+        //已经在收集侧展开好，这里只做随绘制项变化的几件事：
+        //推 localToWorld + 材质基色、绑网格的顶点 / 索引缓冲、按区间发一次绘制
         for (const DoodleDrawItem& drawItem : drawItems)
         {
-            //model 每个对象一份，走 push constant。
-            //stage 与大小引用管线布局那边的同一组常量：范围是那边声明的，
-            //这里只是照着填数据。两边各写一个字面量 64 的话，改一处就会
-            //出现「范围 64、推了 128」这种只在绘制时报的错
+            //网格给出的是顶点 / 索引缓冲句柄；子网格按下标回网格取（表在
+            //Initialize 之后不可变），材质是收集时从 renderer 解析好的
+            //非拥有指针。本函数不认识网格或材质是什么，只把这些数录进命令里
+            const auto& mesh = *drawItem.pMesh;
+            const auto& submesh = mesh.GetSubmesh(drawItem.submeshIndex);
+            const auto& material = *drawItem.pMaterial;
+
+            //localToWorld 与材质基色每个绘制项一份，走 push constant。数据块的布局
+            //由 DoodlePushConstantObject 钉住，大小直接用 sizeof，布局改了这里
+            //自动跟上。stageFlags 必须与管线布局创建时声明的那段范围一致 ——
+            //少写片元阶段仍然「是范围的子集」，校验层不会报，但片元会读到旧值
             //
             //push 的是这条命令缓冲的当前值，下一条 push 直接覆盖 ——
-            //不需要每对象一块 UBO，也不需要等 GPU 用完上一份
+            //不需要每绘制项一块 UBO，也不需要等 GPU 用完上一份
+            const DoodlePushConstantObject pushConstants
+            {
+                .localToWorld = drawItem.localToWorld,
+                .baseColor = material.GetBaseColor()
+            };
             vkCmdPushConstants(
                 commandBuffer,
                 m_pGraphicsPipeline->GetPipelineLayout(),
-                DoodleGraphicsPipeline::ModelPushConstantStage,
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                 0,
-                DoodleGraphicsPipeline::ModelPushConstantSize,
-                &drawItem.model);
-
-            //网格给出的是顶点 / 索引缓冲句柄与索引条数。
-            //本函数不认识网格是什么，只把它们录进命令里
-            const DoodleMesh& mesh = *drawItem.pMesh;
+                sizeof(DoodlePushConstantObject),
+                &pushConstants);
 
             //绑定顶点缓冲。这里的 binding 编号 0 指回管线顶点输入描述里的 binding = 0 ——
             //所以它必须在 vkCmdBindPipeline 之后：管线还没绑定时，这个编号无从对应。
-            //绑定是录制状态，对之后录进来的每一次绘制都生效，所以每个对象各绑一次
-            const VkBuffer vertexBuffers[] = {mesh.GetVertexBuffer()};
-            const VkDeviceSize offsets[] = {0};
-            vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+            //绑定是录制状态，对之后录进来的每一次绘制都生效，所以每条绘制项各绑一次。
+            //
+            //当前每个网格只有一条顶点数据流（bindingCount = 1），用单变量取地址即可；
+            //vkCmdBindVertexBuffers 本身收的是数组首地址，以后多 mesh / 多数据流时
+            //再换回顶点缓冲数组，调用形状不用变
+            const VkBuffer vertexBuffer = mesh.GetVertexBuffer();
+            const VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertexBuffer, &offset);
 
             //绑定索引缓冲。与上面那行有三处不一样：
             //
@@ -307,14 +322,17 @@ namespace Doodle
             //DoodleMesh 与这里各带一份分支状态
             vkCmdBindIndexBuffer(commandBuffer, mesh.GetIndexBuffer(), 0, VK_INDEX_TYPE_UINT32);
 
-            //按索引绘制。参数从「画几个顶点」变成「按几个索引去取顶点」——
-            //顶点数不再需要：索引指向哪个顶点就抓哪个，同一个顶点被两个三角形
-            //共用时也只抓一次
+            //按区间绘制。indexCount 与 firstIndex 来自子网格：同一份索引缓冲按材质
+            //切成若干段，换段只换这两个数，不必为每段另建缓冲或重新上传。
             //
-            //后三个参数依次是 firstIndex / vertexOffset / firstInstance，这里全 0。
-            //它们正是「一块大缓冲里塞很多 mesh」那条路的入口：每个 mesh 各带一组
-            //非零值，就不必为它单独建缓冲
-            vkCmdDrawIndexed(commandBuffer, mesh.GetIndexCount(), 1, 0, 0, 0);
+            //后两个参数 vertexOffset / firstInstance 仍为 0：子网格共用同一份顶点
+            //缓冲，顶点偏移已经由索引值本身表达；本项目也不做实例化
+            vkCmdDrawIndexed(commandBuffer,
+                             submesh.indexCount,
+                             1,
+                             submesh.firstIndex,
+                             0,
+                             0);
         }
 
         //结束渲染
@@ -394,8 +412,7 @@ namespace Doodle
         vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
     }
 
-    void DoodleCommandBuffer::RecordImageTransitionToDepthAttachment(
-        VkCommandBuffer commandBuffer, const uint32_t frameIndex) const
+    void DoodleCommandBuffer::RecordImageTransitionToDepthAttachment(VkCommandBuffer commandBuffer, const uint32_t frameIndex) const
     {
         //取图之后、开画之前。这一步在渲染通道时代由驱动在通道入口自动完成；
         //动态渲染把它交还给录制者 —— 原文标注为「可以跳过」的那一节，在这里是必做

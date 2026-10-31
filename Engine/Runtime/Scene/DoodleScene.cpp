@@ -50,7 +50,7 @@ namespace Doodle
         //
         // 类型解析必须排在创建对象之前：未知类型属于内容错误，不能等到对象
         // 建了一半才发现。Debug 下还会在无宿主的临时组件上跑一遍 Deserialize，
-        // 配置 / 资产错误（例如 MeshRenderer 的 mesh key）也在这一步暴露；
+        // 配置 / 资产错误（例如 MeshRenderer 的 mesh 路径）也在这一步暴露；
         // Release 下跳过参数校验，只保留类型解析（create 需要它）。
         const auto& componentRegistry = DoodleComponentRegistry::GetInstance();
 

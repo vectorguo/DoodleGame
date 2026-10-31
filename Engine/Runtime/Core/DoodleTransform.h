@@ -63,7 +63,7 @@ namespace Doodle
          * 轴上，随对象一起旋转；这与「模型的本地坐标先被拉伸，再摆进世界」
          * 的直觉一致，也是 Unity 等引擎的 TRS 顺序。
          */
-        [[nodiscard]] glm::mat4 GetMatrix() const
+        [[nodiscard]] glm::mat4 GetLocalToWorldMatrix() const
         {
             return glm::translate(glm::mat4(1.0f), position)
                  * glm::mat4_cast(rotation)
@@ -84,7 +84,7 @@ namespace Doodle
         /**
          * 局部逐轴缩放，没有错切
          *
-         * 只影响 GetMatrix；GetForward / GetUp / GetRight 仍返回单位方向向量，
+         * 只影响 GetLocalToWorldMatrix；GetForward / GetUp / GetRight 仍返回单位方向向量，
          * 不因为缩放变长或变短。默认 1 表示不缩放。
          */
         glm::vec3 scale{1.0f};

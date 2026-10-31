@@ -10,6 +10,7 @@
 #include <initializer_list>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
@@ -132,9 +133,41 @@ namespace Doodle
         void SetVec3(std::string_view key, const glm::vec3& value);
 
         /**
+         * 读四维向量
+         *
+         * key 不存在时返回 defaultValue；必须是由 4 个有限数字组成的数组。
+         * 材质基色这类要进 push constant 的 vec4 走这个入口
+         */
+        [[nodiscard]] glm::vec4 GetVec4(std::string_view key, const glm::vec4& defaultValue) const;
+
+        /**
+         * 写入 / 覆盖一个四维向量字段，写成 [x, y, z, w] 数组
+         */
+        void SetVec4(std::string_view key, const glm::vec4& value);
+
+        /**
+         * 读「对象数组」
+         *
+         * key 不存在时返回空数组；存在时必须是数组，且每个元素是 object。
+         * 每个元素包成一个子 DoodleComponentConfig，路径带上 [i]，元素内部的
+         * 字段错误能指出是第几个对象。
+         *
+         * 用途是「一个组件下挂一组配置对象」的字段（例如 renderer 的材质表）。
+         * 返回的是拷贝：对象数量很小，换调用方随手存放的简单性
+         */
+        [[nodiscard]] std::vector<DoodleComponentConfig> GetObjectArray(std::string_view key) const;
+
+        /**
+         * 写入 / 覆盖一个对象数组
+         *
+         * 每个子配置的根必须是一个 object；空数组写成 []
+         */
+        void SetObjectArray(std::string_view key, const std::vector<DoodleComponentConfig>& values);
+
+        /**
          * key 是否存在于 settings 根层
          *
-         * 只判断存在性，不检查类型；当前 settings 是平的，没有嵌套字段
+         * 只判断存在性，不检查类型，也不递归子对象
          */
         [[nodiscard]] bool Has(std::string_view key) const;
 

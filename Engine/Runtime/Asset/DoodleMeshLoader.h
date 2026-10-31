@@ -28,10 +28,11 @@ namespace Doodle
      * 目前只支持以 .fbx 结尾的相对路径：交给 DoodleFbxImporter 解析并拍平成
      * 单个 DoodleMesh。
      *
-     * FBX 第一版按「全部拍平成一个 mesh」处理：节点世界变换烘焙进顶点，
-     * 只保留位置、法线与第一套 UV；材质、骨骼与动画都不保留。缓存、去重与销毁
-     * 仍由基类按 key 负责；这条限制写在 DoodleFbxImporter 的注释里，
-     * 换成模型资产时从那里扩展。
+     * FBX 仍按「全部拍平成一个 mesh」处理：节点世界变换烘焙进顶点，只保留
+     * 位置、法线与第一套 UV；材质只用来把索引切成子网格槽，基色与纹理归
+     * DoodleMeshRenderer 的材质配置。骨骼与动画都不保留。缓存、去重与销毁
+     * 仍由基类按 key 负责；这些限制写在 DoodleFbxImporter / DoodleMesh 的
+     * 注释里，换成模型资产时从那里扩展。
      *
      * 设备在构造时注入，Create 时才用它上传：loader 注册本身不再碰 Vulkan，
      * 失败点从「资产管理器初始化」推迟到「第一次 Load」，报错也能带上 key。

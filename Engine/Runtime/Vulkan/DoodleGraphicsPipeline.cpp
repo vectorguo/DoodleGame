@@ -12,6 +12,7 @@
 #include "DoodleSwapChain.h"
 #include "DoodleVulkanDevice.h"
 #include "DoodleVertex.h"
+#include "Rendering/DoodleShaderData.h"
 
 namespace Doodle
 {
@@ -75,17 +76,18 @@ namespace Doodle
     void DoodleGraphicsPipeline::CreatePipelineLayout()
     {
         //描述符集布局负责整帧共享的数据（相机 view / proj 与主光源）；
-        //每个对象自己的 model 矩阵走 push constant。
+        //每个绘制项的 localToWorld 矩阵与材质基色走 push constant。
         //
-        //范围只声明一次、offset 从 0 起：数据每帧按对象换，但接口不换，
+        //范围只声明一次、offset 从 0 起：数据每帧按绘制项换，但接口不换，
         //所以管线布局建一次就够，不需要为不同对象建不同的布局。
         //
-        //stageFlags 只写顶点阶段：片元着色器没有读它。范围大小与阶段对不上
-        //录制侧那次 push，校验层会当场报错，而不是画错位置
-        const VkPushConstantRange modelPushConstantRange{
-            .stageFlags = ModelPushConstantStage,
+        //stageFlags 同时覆盖顶点与片元：localToWorld 在顶点阶段用，baseColor 在片元阶段用。
+        //范围大小与录制侧那次 push 对不上时，校验层会当场报错，而不是画错位置
+        constexpr VkPushConstantRange drawPushConstantRange
+        {
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
             .offset = 0,
-            .size = ModelPushConstantSize
+            .size = sizeof(DoodlePushConstantObject)
         };
 
         VkPipelineLayoutCreateInfo createInfo{};
@@ -93,7 +95,7 @@ namespace Doodle
         createInfo.setLayoutCount = 1;
         createInfo.pSetLayouts = &m_descriptorSetLayout;
         createInfo.pushConstantRangeCount = 1;
-        createInfo.pPushConstantRanges = &modelPushConstantRange;
+        createInfo.pPushConstantRanges = &drawPushConstantRange;
 
         const auto result = vkCreatePipelineLayout(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_pipelineLayout);
         if (result != VK_SUCCESS)

@@ -20,11 +20,19 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject
     vec4 lightColor;       // rgb：光源颜色 × 强度
 } ubo;
 
+// 与顶点着色器里逐成员一致。本阶段只读 baseColor，
+// 但 block 是个整体，声明必须完全相同
+layout(push_constant) uniform PushConstantObject
+{
+    mat4 localToWorld;
+    vec4 baseColor;
+} pc;
+
 void main()
 {
-    // 常量基色：第一版没有材质系统，所有物体共用同一个颜色。
-    // 等材质落地后，这里换成从材质参数里读
-    const vec3 baseColor = vec3(0.82);
+    // 材质基色由绘制项经 push constant 送来：导入器按材质把网格切成子网格，
+    // 每段一条绘制项，换段就换基色。没有材质的几何用导入器给的默认灰
+    const vec3 baseColor = pc.baseColor.rgb;
     // 环境项：背光面也不至于全黑。它由常量给出，不受光源颜色影响 ——
     // 场景里没有光源时（lightColor 为 0），画面就只剩这一项
     const float ambient = 0.22;

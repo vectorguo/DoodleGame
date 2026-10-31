@@ -38,8 +38,8 @@ namespace Doodle
         const std::vector<std::byte> bytes = GetFileSystem().ReadBinary(key);
         const DoodleFbxMeshData meshData = DoodleFbxImporter::Import(bytes, key);
 
-        auto pMesh = std::make_unique<DoodleMesh>();
-        pMesh->Initialize(*m_pDevice, meshData.vertices, meshData.indices);
+        auto pMesh = std::make_unique<DoodleMesh>(key);
+        pMesh->Initialize(*m_pDevice, meshData.vertices, meshData.indices, meshData.submeshes);
 
         return pMesh;
     }

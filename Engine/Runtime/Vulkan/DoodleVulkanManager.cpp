@@ -5,10 +5,10 @@
 #include "DoodleVulkanManager.h"
 
 #include "../Platform/DoodleWindow.h"
-#include "DoodleUniformBufferObject.h"
 #include "DoodleVulkanUtils.h"
 #include "Rendering/DoodleCamera.h"
 #include "Rendering/DoodleLight.h"
+#include "Rendering/DoodleShaderData.h"
 
 #include <cstdint>
 #include <stdexcept>
@@ -335,7 +335,7 @@ namespace Doodle
 
     void DoodleVulkanManager::CreateUniformBuffers()
     {
-        constexpr VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+        constexpr VkDeviceSize bufferSize = sizeof(DoodleUniformBufferObject);
 
         //每帧一块，不允许共用：在途帧的 GPU 可能还在读上一轮，
         //host 这边却已经开始写下一轮的矩阵
@@ -364,7 +364,7 @@ namespace Doodle
     void DoodleVulkanManager::UpdateUniformBuffer(const uint32_t frameIndex,
                                                   const DoodleDrawContext& context)
     {
-        UniformBufferObject ubo{};
+        DoodleUniformBufferObject ubo{};
 
         //view 由相机从宿主 Transform 现算：相机不存位置 / 朝向，
         //移动它所在的对象，画面自然跟着变
@@ -409,7 +409,7 @@ namespace Doodle
         //这份写入对 GPU 可见。写入位置已在调用处保证：栅栏之后、录制之前。
         //第一次调用会在缓冲内部建立持久映射，之后每帧只是一次 memcpy
         //
-        //这里只有帧级数据（相机 + 光源）。每个对象的 model 走 push constant，
+        //这里只有帧级数据（相机 + 光源）。每个绘制项的 localToWorld 走 push constant，
         //由 DoodleCommandBuffer::Record 在逐个 draw item 时推进命令缓冲
         m_uniformBuffers[frameIndex].Write(&ubo, sizeof(ubo));
     }
@@ -474,7 +474,7 @@ namespace Doodle
             VkDescriptorBufferInfo bufferInfo{};
             bufferInfo.buffer = m_uniformBuffers[i].GetBuffer();
             bufferInfo.offset = 0;
-            bufferInfo.range = sizeof(UniformBufferObject);
+            bufferInfo.range = sizeof(DoodleUniformBufferObject);
 
             VkWriteDescriptorSet descriptorWrite{};
             descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

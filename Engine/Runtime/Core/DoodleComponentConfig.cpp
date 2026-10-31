@@ -156,6 +156,72 @@ namespace Doodle
         m_settings[std::string(key)] = nlohmann::json::array({value.x, value.y, value.z});
     }
 
+    glm::vec4 DoodleComponentConfig::GetVec4(const std::string_view key, const glm::vec4& defaultValue) const
+    {
+        const nlohmann::json* const pValue = FindValue(key);
+        if (pValue == nullptr)
+        {
+            return defaultValue;
+        }
+
+        if (!pValue->is_array() || pValue->size() != 4)
+        {
+            throw std::runtime_error(KeyPath(key) + ": expected an array of 4 numbers");
+        }
+
+        glm::vec4 result{0.0f};
+        for (std::size_t i = 0; i < 4; ++i)
+        {
+            const std::string elementPath = KeyPath(key) + "[" + std::to_string(i) + "]";
+            result[i] = ToFiniteFloat((*pValue)[i], elementPath);
+        }
+
+        return result;
+    }
+
+    void DoodleComponentConfig::SetVec4(const std::string_view key, const glm::vec4& value)
+    {
+        m_settings[std::string(key)] = nlohmann::json::array({value.x, value.y, value.z, value.w});
+    }
+
+    std::vector<DoodleComponentConfig> DoodleComponentConfig::GetObjectArray(const std::string_view key) const
+    {
+        const nlohmann::json* const pValue = FindValue(key);
+        if (pValue == nullptr)
+        {
+            return {};
+        }
+
+        if (!pValue->is_array())
+        {
+            throw std::runtime_error(KeyPath(key) + ": expected an array of objects");
+        }
+
+        std::vector<DoodleComponentConfig> result;
+        result.reserve(pValue->size());
+        for (std::size_t i = 0; i < pValue->size(); ++i)
+        {
+            const std::string elementPath = KeyPath(key) + "[" + std::to_string(i) + "]";
+            if (!(*pValue)[i].is_object())
+            {
+                throw std::runtime_error(elementPath + ": expected an object");
+            }
+            result.emplace_back((*pValue)[i], elementPath);
+        }
+
+        return result;
+    }
+
+    void DoodleComponentConfig::SetObjectArray(const std::string_view key, const std::vector<DoodleComponentConfig>& values)
+    {
+        nlohmann::json array = nlohmann::json::array();
+        for (const DoodleComponentConfig& value : values)
+        {
+            array.push_back(value.GetJson());
+        }
+        m_settings[std::string(key)] = std::move(array);
+    }
+
     bool DoodleComponentConfig::Has(const std::string_view key) const
     {
         return FindValue(key) != nullptr;

@@ -20,7 +20,9 @@
 #include "Rendering/DoodleMeshRenderer.h"
 #include "Scene/DoodleScene.h"
 #include "Scene/DoodleSceneData.h"
+#include "Vulkan/DoodleMesh.h"
 
+#include <cstddef>
 #include <stdexcept>
 #include <string_view>
 
@@ -287,11 +289,22 @@ namespace Doodle
                     const DoodleMesh* pMesh = pRenderer->GetMesh();
                     if (pMesh != nullptr)
                     {
-                        m_reusableDrawItems.push_back(
-                     {
-                            .pMesh = pMesh,
-                            .model = pGameObject->GetTransform().GetMatrix()
-                        });
+                        // 一条绘制项 = 一次 drawIndexed：把网格按材质切出的
+                        // 子网格逐段展开，记录子网格下标；材质从 renderer 的
+                        // 材质表取。localToWorld 对同一网格的各段相同
+                        const auto localToWorld = pGameObject->GetTransform().GetLocalToWorldMatrix();
+                        const auto& materials = pRenderer->GetMaterials();
+                        const auto& submeshes = pMesh->GetSubmeshes();
+                        for (std::size_t i = 0; i < submeshes.size(); ++i)
+                        {
+                            m_reusableDrawItems.push_back(
+                         {
+                                .localToWorld = localToWorld,
+                                .pMaterial = &materials[submeshes[i].materialIndex],
+                                .pMesh = pMesh,
+                                .submeshIndex = static_cast<uint32_t>(i)
+                            });
+                        }
                     }
                 }
             }

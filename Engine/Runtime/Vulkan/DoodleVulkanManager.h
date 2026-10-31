@@ -232,7 +232,7 @@ namespace Doodle
          * 着色器只剩环境项 —— 这条兜底写在 UBO 里而不是着色器分支里，
          * 着色器就一份逻辑
          *
-         * 这里不写 model：它每个对象都不一样，改由 Record 逐个 draw item
+         * 这里不写 localToWorld：它每个绘制项都不一样，改由 Record 逐个 draw item
          * 推进 push constant。本块缓冲只装整帧共享的相机与光源数据
          *
          * @param frameIndex 在途帧索引，与描述符集、命令缓冲使用同一个索引

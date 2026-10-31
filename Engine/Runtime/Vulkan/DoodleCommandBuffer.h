@@ -102,9 +102,9 @@ namespace Doodle
          * @param frameIndex 本帧用哪一条命令缓冲。由本层按它自己取 ——
          *        调用方交出帧索引即可，不必先取好句柄再传进来
          * @param imageIndex 当前交换链图像的索引，来自vkAcquireNextImageKHR
-         * @param drawItems 本帧要画的一组对象。每个元素给出网格与模型矩阵；
-         *        空表示本帧只清屏不画东西 —— 那是合法状态，不是错误。
-         *        用 const vector& 而不是 span：当前唯一调用方传的就是 vector，
+         * @param drawItems 本帧要画的一组绘制项。每个元素给出网格、子网格下标、
+         *        材质与模型矩阵；空表示本帧只清屏不画东西 —— 那是合法状态，
+         *        不是错误。用 const vector& 而不是 span：当前唯一调用方传的就是 vector，
          *        视图类型没有实际收益；出现第二种容器 / 子区间时再泛化
          * @param descriptorSet 本帧要绑定的描述符集，必须与 frameIndex 同槽位。
          *        它把该帧的 UBO（view / proj / 主光源）接到 binding 0；所有权在门面，本层只使用
@@ -120,9 +120,13 @@ namespace Doodle
          * 塞成成员等于把「每帧都会变的东西」和「只认程序生命周期的东西」混在一起，
          * 凭空多出「重建时要不要跟着换」这种问题。「谁使用」和「谁拥有」是两件事
          *
-         * 组里每个对象共用同一条管线、同一份视口、同一个描述符集；
-         * 随对象变化的只有 model（push constant）、顶点 / 索引缓冲和索引条数。
-         * 所以这些共用状态在循环外只设一次，循环里只录随对象变的那几样
+         * 组里每个绘制项共用同一条管线、同一份视口、同一个描述符集；
+         * 随绘制项变化的只有 localToWorld 与材质基色（push constant）、顶点 / 索引缓冲、
+         * 以及子网格下标对应的 firstIndex / indexCount。所以共用状态在循环外只设一次，
+         * 循环里只录随绘制项变的那几样。
+         *
+         * 一个对象可能有多个子网格，收集侧会把它展开成多条绘制项 ——
+         * 本层按每条项的 submeshIndex 回网格取区间，不关心它按什么材质分了段
          *
          * 绘制顺序就是数组顺序：本帧没有透明对象，不需要按深度排序，
          * 深度测试自己会把前后关系画对。等引入透明混合时，排序是收集侧的
@@ -134,7 +138,8 @@ namespace Doodle
          *
          * 名字不带 CommandBuffer：类名已经交代了宾语，重复一遍不带来信息
          */
-        [[nodiscard]] VkCommandBuffer Record(const uint32_t frameIndex, const uint32_t imageIndex,
+        [[nodiscard]] VkCommandBuffer Record(const uint32_t frameIndex,
+                                             const uint32_t imageIndex,
                                              const std::vector<DoodleDrawItem>& drawItems,
                                              VkDescriptorSet descriptorSet);
 

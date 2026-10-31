@@ -27,7 +27,7 @@ namespace Doodle
      *
      * 法线在模型空间（资产空间）：DoodleFbxImporter 把节点世界变换烘焙进位置时，
      * 也把它的逆转置作用在法线上，两者因此处在同一个空间。渲染时顶点着色器
-     * 再用 GameObject 的 model 逆转置把法线变到世界空间 —— 三步用的是同一条
+     * 再用 GameObject 的 localToWorld 逆转置把法线变到世界空间 —— 三步用的是同一条
      * 「位置用矩阵、法线用矩阵的逆转置」规则。
      *
      * UV 只保留源文件的第一套。贴图还没接进来，这一路先跟着顶点格式走：
@@ -65,7 +65,7 @@ namespace Doodle
         /**
          * 单位法线，对应着色器里的 layout(location = 1) in vec3
          *
-         * 模型空间，与 pos 同空间。顶点着色器乘 model 的逆转置后送进片元，
+         * 模型空间，与 pos 同空间。顶点着色器乘 localToWorld 的逆转置后送进片元，
          * 方向光的明暗就靠它区分朝向
          */
         glm::vec3 normal;

@@ -13,20 +13,23 @@ layout(location = 1) in vec3 inNormal;
 // 片元着色器也还没读它 —— 声明一个没有读取者的输入只会让编译器把它丢掉，
 // 等贴图接进来时再加。管线里的属性描述现在就该带上它，那时不用再改顶点布局
 
-// 每个对象自己的模型矩阵，走 push constant。
-// 它不在 UBO 里：UBO 一帧一份、所有对象共用，装不下逐对象的数据。
-// 范围（stage = 顶点、offset = 0、size = 64）由 C++ 侧的
-// DoodleGraphicsPipeline::ModelPushConstant* 声明，两边必须一致
+// 每条绘制项自己的数据：局部到世界矩阵 + 材质基色，走 push constant。
+// 它们不在 UBO 里：UBO 一帧一份、所有绘制项共用，装不下逐项的数据。
+// 范围（stage = 顶点 + 片元、offset = 0、size = 80）由 C++ 侧管线布局声明，
+// 数据块布局见 DoodlePushConstantObject，两边必须一致。
+// 本阶段只读 localToWorld；baseColor 由片元阶段读，但 block 必须逐成员一致 ——
+// 两个阶段声明的是同一段 push constant，不是两个独立的数据块
 layout(push_constant) uniform PushConstantObject
 {
-    mat4 model;
+    mat4 localToWorld;
+    vec4 baseColor;
 } pc;
 
 // 整帧共享的数据：相机矩阵 + 主光源。
 // set/binding 必须与 DoodleGraphicsPipeline 里的 VkDescriptorSetLayoutBinding
 // 以及写入时的 dstBinding 对齐。光源字段本阶段不读，但两个着色器里的 block
 // 必须逐成员一致 —— 这是同一个资源，不是两份数据。
-// std140 是 uniform block 的排布规则：C++ 侧的 UniformBufferObject
+// std140 是 uniform block 的排布规则：C++ 侧的 DoodleUniformBufferObject
 // 用 alignas(16) 和 static_assert 保证成员偏移与这里一致
 layout(set = 0, binding = 0, std140) uniform UniformBufferObject
 {
@@ -41,14 +44,14 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject
 layout(location = 0) out vec3 fragNormal;
 
 void main() {
-    // 位置补成齐次坐标，再依次乘 model / view / proj。
+    // 位置补成齐次坐标，再依次乘 localToWorld / view / proj。
     // 顺序不能反：矩阵从右往左作用，顶点先进入模型空间，再到观察空间，最后到裁剪空间
-    gl_Position = ubo.proj * ubo.view * pc.model * vec4(inPosition, 1.0);
+    gl_Position = ubo.proj * ubo.view * pc.localToWorld * vec4(inPosition, 1.0);
 
-    // 法线不能直接乘 model：平移会把方向当位置搬走，非均匀缩放会让法线
+    // 法线不能直接乘 localToWorld：平移会把方向当位置搬走，非均匀缩放会让法线
     // 不再垂直于原表面。逆转置的 3×3 部分才保持「垂直」这条性质 ——
     // 和 DoodleFbxImporter 处理节点变换时用的是同一条规则。
     // 插值发生在光栅化阶段，所以这里只负责变到世界空间，不归一化
-    mat3 normalMatrix = transpose(inverse(mat3(pc.model)));
+    mat3 normalMatrix = transpose(inverse(mat3(pc.localToWorld)));
     fragNormal = normalMatrix * inNormal;
 }

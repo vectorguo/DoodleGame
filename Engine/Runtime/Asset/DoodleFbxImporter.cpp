@@ -58,6 +58,33 @@ namespace
         return {value.x, value.y};
     }
 
+    /**
+     * 取某个节点实例上的材质
+     *
+     * 同一个 ufbx_mesh 可能被多个节点实例化，每个实例可以覆盖材质
+     * （ufbx_node.materials），所以必须按节点取，不能只看 mesh.materials。
+     * 节点表里缺项时退回 mesh 的材质；仍然没有就是「无材质」。
+     *
+     * 这里只把材质对象当作分区键：导入器用它的指针去重、分配 materialIndex，
+     * 基色与纹理不往网格里带 —— 那些归 renderer 的材质配置。
+     */
+    const ufbx_material* ResolveNodeMaterial(const ufbx_node& node,
+                                             const ufbx_mesh& mesh,
+                                             const uint32_t materialIndex)
+    {
+        if (materialIndex < node.materials.count && node.materials.data[materialIndex] != nullptr)
+        {
+            return node.materials.data[materialIndex];
+        }
+
+        if (materialIndex < mesh.materials.count)
+        {
+            return mesh.materials.data[materialIndex];
+        }
+
+        return nullptr;
+    }
+
     std::string MakeFbxErrorMessage(const ufbx_error& error)
     {
         std::string message;
@@ -86,7 +113,10 @@ namespace
      * 变换在下面烘焙进顶点，输出直接是引擎世界空间。
      *
      * 按节点遍历而不是按 mesh 数组遍历：同一份 mesh 可能被多个节点实例化，
-     * 每个实例的 geometry_to_world 不同；拍平语义下每个实例都复制一份几何。
+     * 每个实例的 geometry_to_world 与材质覆盖都不同；拍平语义下每个实例都复制
+     * 一份几何。源码里的材质只用来切子网格、分配稳定的 materialIndex；
+     * 材质外观不随网格导入，归 renderer 的材质配置。没有材质的面落到共享的
+     * 默认槽（materialIndex 0，颜色由 renderer 决定）。
      */
     Doodle::DoodleFbxMeshData ImportFbxMesh(const std::span<const std::byte> bytes,
                               const std::string_view sourceName)
@@ -116,6 +146,11 @@ namespace
         }
 
         Doodle::DoodleFbxMeshData result;
+
+        // 材质槽分配表：按 ufbx 材质对象去重。材质数量很少，线性查找足够；
+        // nullptr 也占一个槽，表示「没有材质」的几何共用的默认槽。
+        // 这里只分配槽号，不保存颜色 —— 外观归 renderer 的材质配置
+        std::vector<const ufbx_material*> materialSlotKeys;
 
         for (std::size_t nodeIndex = 0; nodeIndex < scene->nodes.count; ++nodeIndex)
         {
@@ -147,97 +182,137 @@ namespace
                 std::max<std::size_t>(mesh.max_face_triangles * 3, 3);
             std::vector<uint32_t> triangleIndices(maxTriangleIndices);
 
-            for (std::size_t faceIndex = 0; faceIndex < mesh.faces.count; ++faceIndex)
+            // 按材质分段发射，而不是逐面查 face_material：ufbx 已经按材质把面
+            // 分好组（material_parts），逐段发完再换下一段，输出索引天然连续，
+            // 每个 part 正好对应一个子网格区间
+            for (std::size_t partIndex = 0; partIndex < mesh.material_parts.count; ++partIndex)
             {
-                const ufbx_face face = mesh.faces.data[faceIndex];
-                const uint32_t triangleCount = ufbx_triangulate_face(
-                    triangleIndices.data(), triangleIndices.size(), &mesh, face);
-
-                for (uint32_t triangle = 0; triangle < triangleCount; ++triangle)
+                const ufbx_mesh_part& part = mesh.material_parts.data[partIndex];
+                // 声明了材质却没有面的段：跳过，否则会多出零长度的绘制项
+                // 和一个没人用的材质槽
+                if (part.face_indices.count == 0)
                 {
-                    glm::vec3 positions[3];
-                    glm::vec3 normals[3];
-                    glm::vec2 uvs[3];
+                    continue;
+                }
 
-                    for (int corner = 0; corner < 3; ++corner)
+                const uint32_t firstIndex = static_cast<uint32_t>(result.indices.size());
+
+                for (std::size_t partFaceIndex = 0; partFaceIndex < part.face_indices.count; ++partFaceIndex)
+                {
+                    const std::size_t faceIndex = part.face_indices.data[partFaceIndex];
+                    const ufbx_face face = mesh.faces.data[faceIndex];
+                    const uint32_t triangleCount = ufbx_triangulate_face(
+                        triangleIndices.data(), triangleIndices.size(), &mesh, face);
+
+                    for (uint32_t triangle = 0; triangle < triangleCount; ++triangle)
                     {
-                        const uint32_t index = triangleIndices[triangle * 3 + corner];
+                        glm::vec3 positions[3];
+                        glm::vec3 normals[3];
+                        glm::vec2 uvs[3];
 
-                        const glm::vec3 localPosition = FbxVec3ToGlm(
-                            mesh.vertex_position.values.data[mesh.vertex_position.indices.data[index]]);
-                        positions[corner] = glm::vec3(model * glm::vec4(localPosition, 1.0f));
-
-                        if (mesh.vertex_normal.exists)
+                        for (int corner = 0; corner < 3; ++corner)
                         {
-                            const glm::vec3 localNormal = FbxVec3ToGlm(
-                                mesh.vertex_normal.values.data[mesh.vertex_normal.indices.data[index]]);
-                            normals[corner] = normalMatrix * localNormal;
+                            const uint32_t index = triangleIndices[triangle * 3 + corner];
+
+                            const glm::vec3 localPosition = FbxVec3ToGlm(
+                                mesh.vertex_position.values.data[mesh.vertex_position.indices.data[index]]);
+                            positions[corner] = glm::vec3(model * glm::vec4(localPosition, 1.0f));
+
+                            if (mesh.vertex_normal.exists)
+                            {
+                                const glm::vec3 localNormal = FbxVec3ToGlm(
+                                    mesh.vertex_normal.values.data[mesh.vertex_normal.indices.data[index]]);
+                                normals[corner] = normalMatrix * localNormal;
+                            }
+                            else
+                            {
+                                normals[corner] = glm::vec3(0.0f);
+                            }
+
+                            // 只取第一套 UV。vertex_uv 与位置 / 法线共用同一个索引域，
+                            // 所以上面那个 index 可以直接查它的 indices。
+                            // 源文件没有 UV 时填 0 —— 这条通道先跟着格式走，贴图还没有
+                            if (mesh.vertex_uv.exists)
+                            {
+                                uvs[corner] = FbxVec2ToGlm(
+                                    mesh.vertex_uv.values.data[mesh.vertex_uv.indices.data[index]]);
+                            }
+                            else
+                            {
+                                uvs[corner] = glm::vec2(0.0f);
+                            }
+                        }
+
+                        glm::vec3 faceNormal = glm::cross(
+                            positions[1] - positions[0],
+                            positions[2] - positions[0]);
+                        const float faceNormalLength = glm::length(faceNormal);
+                        if (faceNormalLength > 0.0f)
+                        {
+                            faceNormal /= faceNormalLength;
+                        }
+
+                        if (!mesh.vertex_normal.exists)
+                        {
+                            // 源文件没有法线：用面法线做平面着色
+                            normals[0] = normals[1] = normals[2] = faceNormal;
                         }
                         else
                         {
-                            normals[corner] = glm::vec3(0.0f);
+                            // 法线经过非均匀缩放后可能不再单位长；长度异常时退回面法线，
+                            // 避免零向量一路传进光照计算
+                            for (glm::vec3& normal : normals)
+                            {
+                                const float length = glm::length(normal);
+                                normal = length > 0.0f ? normal / length : faceNormal;
+                            }
                         }
 
-                        // 只取第一套 UV。vertex_uv 与位置 / 法线共用同一个索引域，
-                        // 所以上面那个 index 可以直接查它的 indices。
-                        // 源文件没有 UV 时填 0 —— 这条通道先跟着格式走，贴图还没有
-                        if (mesh.vertex_uv.exists)
+                        // 让绕序与法线一致：法线朝外时三角形应为 CCW。
+                        // 这一步兜住 FBX 源文件绕序与管线 frontFace 不一致的情况。
+                        // UV 跟着换：它和位置、法线属于同一个角点，三个属性必须一起搬
+                        if (glm::dot(faceNormal, normals[0] + normals[1] + normals[2]) < 0.0f)
                         {
-                            uvs[corner] = FbxVec2ToGlm(
-                                mesh.vertex_uv.values.data[mesh.vertex_uv.indices.data[index]]);
+                            std::swap(positions[1], positions[2]);
+                            std::swap(normals[1], normals[2]);
+                            std::swap(uvs[1], uvs[2]);
                         }
-                        else
+
+                        for (int corner = 0; corner < 3; ++corner)
                         {
-                            uvs[corner] = glm::vec2(0.0f);
+                            Doodle::Vertex vertex{};
+                            vertex.pos = positions[corner];
+                            vertex.normal = normals[corner];
+                            vertex.uv = uvs[corner];
+
+                            result.indices.push_back(static_cast<uint32_t>(result.vertices.size()));
+                            result.vertices.push_back(vertex);
                         }
-                    }
-
-                    glm::vec3 faceNormal = glm::cross(
-                        positions[1] - positions[0],
-                        positions[2] - positions[0]);
-                    const float faceNormalLength = glm::length(faceNormal);
-                    if (faceNormalLength > 0.0f)
-                    {
-                        faceNormal /= faceNormalLength;
-                    }
-
-                    if (!mesh.vertex_normal.exists)
-                    {
-                        // 源文件没有法线：用面法线做平面着色
-                        normals[0] = normals[1] = normals[2] = faceNormal;
-                    }
-                    else
-                    {
-                        // 法线经过非均匀缩放后可能不再单位长；长度异常时退回面法线，
-                        // 避免零向量一路传进光照计算
-                        for (glm::vec3& normal : normals)
-                        {
-                            const float length = glm::length(normal);
-                            normal = length > 0.0f ? normal / length : faceNormal;
-                        }
-                    }
-
-                    // 让绕序与法线一致：法线朝外时三角形应为 CCW。
-                    // 这一步兜住 FBX 源文件绕序与管线 frontFace 不一致的情况。
-                    // UV 跟着换：它和位置、法线属于同一个角点，三个属性必须一起搬
-                    if (glm::dot(faceNormal, normals[0] + normals[1] + normals[2]) < 0.0f)
-                    {
-                        std::swap(positions[1], positions[2]);
-                        std::swap(normals[1], normals[2]);
-                        std::swap(uvs[1], uvs[2]);
-                    }
-
-                    for (int corner = 0; corner < 3; ++corner)
-                    {
-                        Doodle::Vertex vertex{};
-                        vertex.pos = positions[corner];
-                        vertex.normal = normals[corner];
-                        vertex.uv = uvs[corner];
-
-                        result.indices.push_back(static_cast<uint32_t>(result.vertices.size()));
-                        result.vertices.push_back(vertex);
                     }
                 }
+
+                const uint32_t indexCount = static_cast<uint32_t>(result.indices.size()) - firstIndex;
+                if (indexCount == 0)
+                {
+                    // 整段都是退化面：同样不留下空区间与空材质槽
+                    continue;
+                }
+
+                // part.index 与 mesh.materials / node.materials 的下标一一对应
+                const ufbx_material* pMaterial = ResolveNodeMaterial(node, mesh, part.index);
+                const auto materialIt = std::find(materialSlotKeys.begin(), materialSlotKeys.end(), pMaterial);
+                uint32_t materialIndex;
+                if (materialIt != materialSlotKeys.end())
+                {
+                    materialIndex = static_cast<uint32_t>(materialIt - materialSlotKeys.begin());
+                }
+                else
+                {
+                    materialIndex = static_cast<uint32_t>(materialSlotKeys.size());
+                    materialSlotKeys.push_back(pMaterial);
+                }
+
+                result.submeshes.push_back({firstIndex, indexCount, materialIndex});
             }
         }
 
