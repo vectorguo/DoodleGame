@@ -41,6 +41,8 @@ namespace Doodle
      *
      * 对外只有 Load<T>(key)。T 是资产类型键：
      *   Load<DoodleMesh>("Art/SceneRes/Building/mesh.fbx")
+     *   Load<DoodleTexture>("Art/SceneRes/Building/House1/House1_d.tga")
+     *   Load<DoodleMaterial>("Materials/House1.json")
      *   Load<DoodleSceneData>("Scenes/main.json")
      * 具体用哪个 loader、数据怎么读，调用方不需要知道。
      *
@@ -106,8 +108,8 @@ namespace Doodle
         /**
          * 初始化并注册内建 loader
          *
-         * 前置条件：Vulkan 设备与命令缓冲层已经初始化（网格 loader 要上传内建数据），
-         * 文件系统对象已经存在。重复调用属于错误用法，抛 std::logic_error。
+         * 前置条件：Vulkan 设备与命令缓冲层已经初始化（网格 / 纹理 loader 要上传
+         * GPU 数据），文件系统对象已经存在。重复调用属于错误用法，抛 std::logic_error。
          */
         void Initialize(const DoodleAssetManagerInitContext& context);
 

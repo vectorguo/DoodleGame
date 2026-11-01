@@ -28,7 +28,8 @@ namespace Doodle
      *
      * 区间按构造保证有序、首尾相接、覆盖整个索引缓冲 —— 导入器逐段顺序发射三角形。
      * DoodleMesh::Initialize 会校验这条不变量；materialIndex 槽号的合法性由
-     * DoodleMeshRenderer 按网格的材质槽数保证（材质表归 renderer 所有）。
+     * DoodleMeshRenderer 按网格的材质槽数保证（槽表归 renderer 所有，
+     * 元素指向共享材质资产）。
      */
     struct DoodleSubmesh
     {

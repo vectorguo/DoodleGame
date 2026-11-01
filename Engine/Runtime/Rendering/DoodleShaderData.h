@@ -107,8 +107,9 @@ namespace Doodle
      * 按 std430 排出同样的偏移；下面的 static_assert 把这条钉在编译期。
      *
      * localToWorld 只有顶点阶段读，baseColor 只有片元阶段读 —— 一个 block
-     * 覆盖两个阶段，范围仍是连续的一段。总长 80 字节，低于规范保证的
-     * maxPushConstantsSize 下限 128。
+     * 覆盖两个阶段，范围仍是连续的一段。baseColor 是线性空间的材质基色：
+     * CPU 侧已从配置里的 sRGB 值转换，纹理采样结果同样是线性，两者在片元里
+     * 直接相乘。总长 80 字节，低于规范保证的 maxPushConstantsSize 下限 128。
      *
      * 名字与着色器里的 block `PushConstantObject` 对齐，格式和
      * DoodleUniformBufferObject 一致（Doodle + 名词 + Object）。
