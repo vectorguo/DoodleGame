@@ -134,8 +134,8 @@ namespace Doodle
         m_vulkanManager.Initialize(*m_pWindow);
 
         // 资产管理器的内建 loader 只需要文件来源与设备。上传用的传输池由
-        // DoodleGraphicsBuffer / DoodleTexture 自己通过 DoodleCommandBuffer
-        // 的单例取，不需要从这里把命令缓冲层传下去。
+        // DoodleGraphicsBuffer / DoodleTexture 自己通过 DoodleCommandManager
+        // 的单例取，不需要从这里把命令管理层传下去。
         // 文件来源归应用持有，资产管理器只借引用
         m_assetManager.Initialize(
      {
@@ -291,7 +291,8 @@ namespace Doodle
                     {
                         // 一条绘制项 = 一次 drawIndexed：把网格按材质切出的
                         // 子网格逐段展开，记录子网格下标；材质从 renderer 的
-                        // 材质表取。localToWorld 对同一网格的各段相同
+                        // 材质槽表取（元素是非拥有指针，指向共享材质资产或默认材质）。
+                        // localToWorld 对同一网格的各段相同
                         const auto localToWorld = pGameObject->GetTransform().GetLocalToWorldMatrix();
                         const auto& materials = pRenderer->GetMaterials();
                         const auto& submeshes = pMesh->GetSubmeshes();
@@ -300,7 +301,7 @@ namespace Doodle
                             m_reusableDrawItems.push_back(
                          {
                                 .localToWorld = localToWorld,
-                                .pMaterial = &materials[submeshes[i].materialIndex],
+                                .pMaterial = materials[submeshes[i].materialIndex],
                                 .pMesh = pMesh,
                                 .submeshIndex = static_cast<uint32_t>(i)
                             });

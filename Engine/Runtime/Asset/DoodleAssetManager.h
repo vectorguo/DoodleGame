@@ -108,7 +108,7 @@ namespace Doodle
         /**
          * 初始化并注册内建 loader
          *
-         * 前置条件：Vulkan 设备与命令缓冲层已经初始化（网格 / 纹理 loader 要上传
+         * 前置条件：Vulkan 设备与命令管理层已经初始化（网格 / 纹理 loader 要上传
          * GPU 数据），文件系统对象已经存在。重复调用属于错误用法，抛 std::logic_error。
          */
         void Initialize(const DoodleAssetManagerInitContext& context);

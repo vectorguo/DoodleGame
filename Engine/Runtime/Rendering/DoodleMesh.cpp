@@ -7,18 +7,13 @@
 
 #include "DoodleMesh.h"
 
-#include <cstdint>
 #include <stdexcept>
 
 namespace Doodle
 {
     DoodleMesh::DoodleMesh(const std::string_view assetPath)
-        : m_assetPath(assetPath)
+        : DoodleAsset(assetPath)
     {
-        if (m_assetPath.empty())
-        {
-            throw std::invalid_argument("DoodleMesh: assetPath must not be empty");
-        }
     }
 
     void DoodleMesh::Initialize(const DoodleVulkanDevice& device,

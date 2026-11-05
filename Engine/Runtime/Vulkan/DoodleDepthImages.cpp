@@ -13,7 +13,7 @@
 
 namespace Doodle
 {
-    void DoodleDepthImages::Initialize(const DoodleVulkanDevice& device, const VkExtent2D extent)
+    void DoodleDepthImages::Initialize(const DoodleVulkanDevice& device, VkExtent2D extent)
     {
         m_pDevice = &device;
 
@@ -32,8 +32,12 @@ namespace Doodle
         //同一槽位下一次被用到之前，帧栅栏已经保证了上一次使用完成
         for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
         {
-            m_images[i].Initialize(device, extent, m_depthFormat,
-                                   VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, aspectMask);
+            m_images[i].Initialize(device,
+                                   extent.width,
+                                   extent.height,
+                                   m_depthFormat,
+                                   VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                                   aspectMask);
         }
     }
 
@@ -62,10 +66,11 @@ namespace Doodle
 
         for (const VkFormat format : candidates)
         {
-            VkFormatProperties2 formatProperties{};
-            formatProperties.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
-            vkGetPhysicalDeviceFormatProperties2(m_pDevice->GetPhysicalDevice(), format,
-                                                 &formatProperties);
+            VkFormatProperties2 formatProperties
+            {
+                .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2
+            };
+            vkGetPhysicalDeviceFormatProperties2(m_pDevice->GetPhysicalDevice(), format, &formatProperties);
 
             //查的是格式能力，不是图像用途。两个枚举名字几乎一样、类型都是 32 位标志位，
             //传错不会报编译错 —— 这条判断用的必须是 VK_FORMAT_FEATURE_ 那一组

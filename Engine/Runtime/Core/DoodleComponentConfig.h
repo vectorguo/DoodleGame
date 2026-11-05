@@ -137,24 +137,21 @@ namespace Doodle
         void SetVec4(std::string_view key, const glm::vec4& value);
 
         /**
-         * 读「对象数组」
+         * 读「字符串数组」
          *
-         * key 不存在时返回空数组；存在时必须是数组，且每个元素是 object。
-         * 每个元素包成一个子 DoodleComponentConfig；数组形状的错误带
-         * "key[i]" 前缀，子配置内部的字段错误只带字段名，需要元素下标时
-         * 由调用方自己补（例如 DoodleMeshRenderer 的 materials）。
-         *
-         * 用途是「一个组件下挂一组配置对象」的字段（例如 renderer 的材质表）。
-         * 返回的是拷贝：对象数量很小，换调用方随手存放的简单性
+         * key 不存在时返回空数组；存在时必须是数组，且每个元素是字符串。
+         * 数组形状的错误带 "key[i]" 前缀。用途是引用一组共享资产
+         * （例如 renderer 的材质路径表）。返回的是拷贝：数组都很小，
+         * 换调用方随手存放的简单性
          */
-        [[nodiscard]] std::vector<DoodleComponentConfig> GetObjectArray(std::string_view key) const;
+        [[nodiscard]] std::vector<std::string> GetStringArray(std::string_view key) const;
 
         /**
-         * 写入 / 覆盖一个对象数组
+         * 写入 / 覆盖一个字符串数组
          *
-         * 每个子配置的根必须是一个 object；空数组写成 []
+         * 允许空串元素（常用来表示「这个槽没有引用资产」）；空数组写成 []
          */
-        void SetObjectArray(std::string_view key, const std::vector<DoodleComponentConfig>& values);
+        void SetStringArray(std::string_view key, const std::vector<std::string>& values);
 
         /**
          * key 是否存在于 settings 根层

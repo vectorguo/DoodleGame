@@ -9,9 +9,9 @@
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 
-// 顶点格式里还有第一套 UV（location = 2 in vec2）。本阶段不用它，
-// 片元着色器也还没读它 —— 声明一个没有读取者的输入只会让编译器把它丢掉，
-// 等贴图接进来时再加。管线里的属性描述现在就该带上它，那时不用再改顶点布局
+// 顶点格式里的第一套 UV（location = 2 in vec2）。FBX 导入时保留，
+// 这里原样送到片元；V 轴的方向由片元着色器在采样时处理
+layout(location = 2) in vec2 inUV;
 
 // 每条绘制项自己的数据：局部到世界矩阵 + 材质基色，走 push constant。
 // 它们不在 UBO 里：UBO 一帧一份、所有绘制项共用，装不下逐项的数据。
@@ -43,6 +43,10 @@ layout(set = 0, binding = 0, std140) uniform UniformBufferObject
 // 法线经过插值后不再是单位长度，片元里会先归一化再点乘
 layout(location = 0) out vec3 fragNormal;
 
+// UV 插槽 1：与片元里的 layout(location = 1) in vec2 fragUV 配对。
+// 输入编号 2 是顶点属性槽，输出编号 1 是阶段间插槽，两套编号互不相干
+layout(location = 1) out vec2 fragUV;
+
 void main() {
     // 位置补成齐次坐标，再依次乘 localToWorld / view / proj。
     // 顺序不能反：矩阵从右往左作用，顶点先进入模型空间，再到观察空间，最后到裁剪空间
@@ -54,4 +58,7 @@ void main() {
     // 插值发生在光栅化阶段，所以这里只负责变到世界空间，不归一化
     mat3 normalMatrix = transpose(inverse(mat3(pc.localToWorld)));
     fragNormal = normalMatrix * inNormal;
+
+    // UV 直接透传，采样方向（V 轴）在片元着色器里统一处理
+    fragUV = inUV;
 }

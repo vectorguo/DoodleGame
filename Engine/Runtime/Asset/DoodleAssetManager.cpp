@@ -7,8 +7,10 @@
 
 #include "DoodleAssetManager.h"
 
+#include "DoodleMaterialLoader.h"
 #include "DoodleMeshLoader.h"
 #include "DoodleSceneLoader.h"
+#include "DoodleTextureLoader.h"
 
 #include <stdexcept>
 #include <utility>
@@ -51,9 +53,11 @@ namespace Doodle
         try
         {
             // fileSystem 在 Initialize 后固定不变：在这里传给 loader，由基类
-            // 保存非拥有指针，之后 Load 只带 key。网格 loader 另外记下设备；
-            // 网格上传推迟到第一次 Load
+            // 保存非拥有指针，之后 Load 只带 key。网格 / 纹理 loader 另外记下设备；
+            // GPU 上传推迟到第一次 Load
             RegisterLoader<DoodleMesh>(std::make_unique<DoodleMeshLoader>(context.device, *m_pFileSystem));
+            RegisterLoader<DoodleTexture>(std::make_unique<DoodleTextureLoader>(context.device, *m_pFileSystem));
+            RegisterLoader<DoodleMaterial>(std::make_unique<DoodleMaterialLoader>(*m_pFileSystem));
             RegisterLoader<DoodleSceneData>(std::make_unique<DoodleSceneLoader>(*m_pFileSystem));
         }
         catch (...)

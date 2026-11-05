@@ -40,7 +40,8 @@ namespace Doodle
          * 建图、分配内存、绑定、建视图
          *
          * @param device 已初始化的Vulkan设备
-         * @param extent 图像尺寸
+         * @param width 图像宽
+         * @param height 图像高
          * @param format 图像格式
          * @param usage 用途标志。决定驱动怎么摆放它，也决定谁能用它
          * @param aspectFlags 视图的切面 —— 深度图要 DEPTH（+STENCIL），颜色图要 COLOR
@@ -49,7 +50,8 @@ namespace Doodle
          * 布局转换归使用者
          */
         void Initialize(const DoodleVulkanDevice& device,
-                        const VkExtent2D extent,
+                        const uint32_t width,
+                        const uint32_t height,
                         const VkFormat format,
                         const VkImageUsageFlags usage,
                         const VkImageAspectFlags aspectFlags);
@@ -83,7 +85,9 @@ namespace Doodle
          *
          * 前置条件：m_pDevice 与 m_format 已赋值
          */
-        void CreateImage(VkExtent2D extent, VkImageUsageFlags usage);
+        void CreateImage(const uint32_t width,
+                         const uint32_t height,
+                         const VkImageUsageFlags usage);
 
         /**
          * 建视图

@@ -57,43 +57,40 @@ namespace Doodle
             imageCount = supportDetails.surfaceCapabilities.maxImageCount;
         }
 
-        //填充创建结构体
-        VkSwapchainCreateInfoKHR createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-        createInfo.surface = m_pDevice->GetSurface();
-        createInfo.minImageCount = imageCount;
-        createInfo.imageFormat = surfaceFormat.format;
-        createInfo.imageColorSpace = surfaceFormat.colorSpace;
-        createInfo.imageExtent = extent;
-        createInfo.imageArrayLayers = 1;
-        createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-        //队列族共享模式
+        //队列族共享模式。两族相同时用 EXCLUSIVE，否则 CONCURRENT 并列出两个族。
+        //先算成常量再进 createInfo，结构体本身就能一次构造完、保持 const
         const auto& queueFamilySelection = m_pDevice->GetQueueFamilySelection();
         const uint32_t queueFamilyIndices[] = {queueFamilySelection.graphicsFamilyIndex.value(), queueFamilySelection.presentFamilyIndex.value()};
-        if (queueFamilySelection.graphicsFamilyIndex == queueFamilySelection.presentFamilyIndex)
-        {
-            createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            createInfo.queueFamilyIndexCount = 0; // Optional
-            createInfo.pQueueFamilyIndices = nullptr; // Optional
-        }
-        else
-        {
-            createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-            createInfo.queueFamilyIndexCount = 2;
-            createInfo.pQueueFamilyIndices = queueFamilyIndices;
-        }
+        const bool sameQueueFamily = queueFamilySelection.graphicsFamilyIndex == queueFamilySelection.presentFamilyIndex;
+        const VkSharingMode imageSharingMode = sameQueueFamily ? VK_SHARING_MODE_EXCLUSIVE : VK_SHARING_MODE_CONCURRENT;
+        const uint32_t queueFamilyIndexCount = sameQueueFamily ? 0 : 2;
+        const uint32_t* pQueueFamilyIndices = sameQueueFamily ? nullptr : queueFamilyIndices;
 
-        //填 currentTransform 是**承诺**，不是请求：它的意思是"图像内容已经按这个变换转好了"，
-        //合成器因此不会再转一次。真正要转的那一步在投影里补（见 UpdateUniformBuffer）。
-        //
-        //桌面（macOS / Windows）上 currentTransform 恒为 IDENTITY，这里什么都不做；
-        //Android 手机的自然方向是竖屏，横屏 Activity 拿到的是 90/270 —— 这条路径只在那时生效
-        createInfo.preTransform = preTransform;
-        createInfo.compositeAlpha = compositeAlpha;
-        createInfo.presentMode = presentMode;
-        createInfo.clipped = VK_TRUE;
-        createInfo.oldSwapchain = VK_NULL_HANDLE;
+        //填充创建结构体
+        const VkSwapchainCreateInfoKHR createInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+            .surface = m_pDevice->GetSurface(),
+            .minImageCount = imageCount,
+            .imageFormat = surfaceFormat.format,
+            .imageColorSpace = surfaceFormat.colorSpace,
+            .imageExtent = extent,
+            .imageArrayLayers = 1,
+            .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .imageSharingMode = imageSharingMode,
+            .queueFamilyIndexCount = queueFamilyIndexCount,
+            .pQueueFamilyIndices = pQueueFamilyIndices,
+            //填 currentTransform 是**承诺**，不是请求：它的意思是"图像内容已经按这个变换转好了"，
+            //合成器因此不会再转一次。真正要转的那一步在投影里补（见 UpdateUniformBuffer）。
+            //
+            //桌面（macOS / Windows）上 currentTransform 恒为 IDENTITY，这里什么都不做；
+            //Android 手机的自然方向是竖屏，横屏 Activity 拿到的是 90/270 —— 这条路径只在那时生效
+            .preTransform = preTransform,
+            .compositeAlpha = compositeAlpha,
+            .presentMode = presentMode,
+            .clipped = VK_TRUE,
+            .oldSwapchain = VK_NULL_HANDLE
+        };
 
         //创建交换链
         const auto result = vkCreateSwapchainKHR(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_swapChain);
@@ -224,20 +221,28 @@ namespace Doodle
 
         for (size_t i = 0; i < m_swapChainImages.size(); ++i)
         {
-            VkImageViewCreateInfo createInfo{};
-            createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            createInfo.image = m_swapChainImages[i];
-            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            createInfo.format = m_swapChainImageFormat;
-            createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            createInfo.subresourceRange.baseMipLevel = 0;
-            createInfo.subresourceRange.levelCount = 1;
-            createInfo.subresourceRange.baseArrayLayer = 0;
-            createInfo.subresourceRange.layerCount = 1;
+            const VkImageViewCreateInfo createInfo
+            {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = m_swapChainImages[i],
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = m_swapChainImageFormat,
+                .components =
+             {
+                    .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .a = VK_COMPONENT_SWIZZLE_IDENTITY
+                },
+                .subresourceRange =
+             {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1
+                }
+            };
 
             const auto result = vkCreateImageView(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_swapChainImageViews[i]);
             if (result != VK_SUCCESS)

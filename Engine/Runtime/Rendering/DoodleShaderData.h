@@ -22,7 +22,7 @@ namespace Doodle
      * - DoodlePushConstantObject：每条绘制项一份，随 vkCmdPushConstants 推送。
      *
      * 放在 Rendering 而不是 Vulkan：数据形状归渲染域；把 UBO 写进哪块缓冲、
-     * 把 push constant 推到哪条命令，归 DoodleVulkanManager / DoodleCommandBuffer。
+     * 把 push constant 推到哪条命令，归 DoodleVulkanManager / DoodleCommandManager。
      * 两块数据放在同一个头里，是因为它们总被同一条管线与同一次录制一起消费，
      * 且都不依赖 Vulkan。
      *

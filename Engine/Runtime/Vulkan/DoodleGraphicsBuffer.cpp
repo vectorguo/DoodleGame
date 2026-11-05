@@ -6,7 +6,7 @@
 //
 
 #include "DoodleGraphicsBuffer.h"
-#include "DoodleCommandBuffer.h"
+#include "DoodleCommandManager.h"
 #include "DoodleVulkanDevice.h"
 
 #include <stdexcept>
@@ -35,13 +35,15 @@ namespace Doodle
         //第一步：建对象。先放在局部量里，全部成功之后才写进成员 ——
         //中途任何一步失败，对象仍停在「未初始化」，可以重试，也不会留下半成品
         VkBuffer buffer = VK_NULL_HANDLE;
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = size;
-        bufferInfo.usage = usage;
-        //只有图形队列用它，独占即可。将来引入独立的传输队列做上传时，
-        //或者这块缓冲要跨队列族共享时，这个字段才需要重新考虑
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        const VkBufferCreateInfo bufferInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = size,
+            .usage = usage,
+            //只有图形队列用它，独占即可。将来引入独立的传输队列做上传时，
+            //或者这块缓冲要跨队列族共享时，这个字段才需要重新考虑
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE
+        };
         if (vkCreateBuffer(logicalDevice, &bufferInfo, nullptr, &buffer) != VK_SUCCESS)
         {
             throw std::runtime_error("failed to create buffer!");
@@ -68,10 +70,12 @@ namespace Doodle
             throw std::runtime_error("failed to find memory type!");
         }
 
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocateInfo.allocationSize = memoryRequirements.size;
-        allocateInfo.memoryTypeIndex = memoryTypeIndex;
+        const VkMemoryAllocateInfo allocateInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = memoryRequirements.size,
+            .memoryTypeIndex = memoryTypeIndex
+        };
 
         //分配失败要把第一步建出来的对象收掉再抛。
         //半成品留在场上，调用方没有任何办法把它认出来并释放 ——
@@ -132,7 +136,7 @@ namespace Doodle
             stagingBuffer.Write(pData, size);
 
             //到这里 CPU 的事做完了，剩下这次搬运由 GPU 自己完成。
-            //入口与实现都在本类上，命令池从命令缓冲层的单例借
+            //入口与实现都在本类上，命令池从命令管理层的单例借
             stagingBuffer.CopyTo(*this, size);
 
             //销毁中转。这一步必须排在 CopyTo 之后 —— 它返回时拷贝才真正做完，
@@ -179,35 +183,12 @@ namespace Doodle
 
     void DoodleGraphicsBuffer::CopyTo(const DoodleGraphicsBuffer& dstBuffer, VkDeviceSize size) const
     {
-        //命令层负责传输池与一次性命令缓冲的生灭；取不到就是调用时机错了：
-        //与其带着空句柄继续往下走、让校验层在几百行外报错，不如当场停下
-        const auto* pCommandBuffer = DoodleCommandBuffer::GetInstance();
-        if (pCommandBuffer == nullptr)
-        {
-            throw std::runtime_error("failed to copy buffer: command buffer layer is not available!");
-        }
-
-        //分配 / 提交 / 等待 / 释放都在命令层，本函数只录「拷什么」
-        const VkCommandBuffer transferCommandBuffer = pCommandBuffer->BeginOneTimeTransfer();
-
-        //拷贝区域。三个字段都是 0 起始，只填 size —— 两边都是「整块缓冲从头上开始」。
-        //size 不能写 VK_WHOLE_SIZE，VkBufferCopy 里没有这个取值
-        VkBufferCopy2 copyRegion{};
-        copyRegion.sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2;
-        copyRegion.srcOffset = 0;
-        copyRegion.dstOffset = 0;
-        copyRegion.size = size;
-
-        //这里是拷贝，不是复制挂载 —— 两者内容是独立的副本，之后各改各的互不影响
-        VkCopyBufferInfo2 copyInfo{};
-        copyInfo.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2;
-        copyInfo.srcBuffer = GetBuffer();
-        copyInfo.dstBuffer = dstBuffer.GetBuffer();
-        copyInfo.regionCount = 1;
-        copyInfo.pRegions = &copyRegion;
-        vkCmdCopyBuffer2(transferCommandBuffer, &copyInfo);
-
-        pCommandBuffer->EndOneTimeTransfer(transferCommandBuffer);
+        //命令层负责传输池、命令缓冲与拷贝命令的录制；本函数只把「拷哪一段」交给它。
+        //对象存在不等于已 Initialize，真正的前置条件由 BeginTransferCommand 判断
+        auto& commandManager = DoodleCommandManager::GetInstance();
+        commandManager.BeginTransferCommand();
+        commandManager.FillBufferTransferCommand(GetBuffer(), dstBuffer.GetBuffer(), size);
+        commandManager.EndTransferCommand();
     }
 
     void DoodleGraphicsBuffer::CopyFrom(const DoodleGraphicsBuffer& srcBuffer, VkDeviceSize size)

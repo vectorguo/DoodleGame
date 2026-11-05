@@ -181,7 +181,7 @@ namespace Doodle
         m_settings[std::string(key)] = nlohmann::json::array({value.x, value.y, value.z, value.w});
     }
 
-    std::vector<DoodleComponentConfig> DoodleComponentConfig::GetObjectArray(const std::string_view key) const
+    std::vector<std::string> DoodleComponentConfig::GetStringArray(const std::string_view key) const
     {
         const nlohmann::json* const pValue = FindValue(key);
         if (pValue == nullptr)
@@ -191,30 +191,30 @@ namespace Doodle
 
         if (!pValue->is_array())
         {
-            throw std::runtime_error(std::string(key) + ": expected an array of objects");
+            throw std::runtime_error(std::string(key) + ": expected an array of strings");
         }
 
-        std::vector<DoodleComponentConfig> result;
+        std::vector<std::string> result;
         result.reserve(pValue->size());
         for (std::size_t i = 0; i < pValue->size(); ++i)
         {
             const std::string elementPath = std::string(key) + "[" + std::to_string(i) + "]";
-            if (!(*pValue)[i].is_object())
+            if (!(*pValue)[i].is_string())
             {
-                throw std::runtime_error(elementPath + ": expected an object");
+                throw std::runtime_error(elementPath + ": expected a string");
             }
-            result.emplace_back((*pValue)[i]);
+            result.push_back((*pValue)[i].get<std::string>());
         }
 
         return result;
     }
 
-    void DoodleComponentConfig::SetObjectArray(const std::string_view key, const std::vector<DoodleComponentConfig>& values)
+    void DoodleComponentConfig::SetStringArray(const std::string_view key, const std::vector<std::string>& values)
     {
         nlohmann::json array = nlohmann::json::array();
-        for (const DoodleComponentConfig& value : values)
+        for (const std::string& value : values)
         {
-            array.push_back(value.GetJson());
+            array.push_back(value);
         }
         m_settings[std::string(key)] = std::move(array);
     }

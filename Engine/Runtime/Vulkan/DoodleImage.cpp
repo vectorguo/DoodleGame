@@ -14,7 +14,8 @@
 namespace Doodle
 {
     void DoodleImage::Initialize(const DoodleVulkanDevice& device,
-                                 const VkExtent2D extent,
+                                 const uint32_t width,
+                                 const uint32_t height,
                                  const VkFormat format,
                                  const VkImageUsageFlags usage,
                                  const VkImageAspectFlags aspectFlags)
@@ -22,7 +23,7 @@ namespace Doodle
         m_pDevice = &device;
         m_format = format;
 
-        CreateImage(extent, usage);
+        CreateImage(width, height, usage);
         CreateImageView(aspectFlags);
     }
 
@@ -59,28 +60,29 @@ namespace Doodle
         m_format = VK_FORMAT_UNDEFINED;
     }
 
-    void DoodleImage::CreateImage(const VkExtent2D extent, const VkImageUsageFlags usage)
+    void DoodleImage::CreateImage(const uint32_t width,
+                                  const uint32_t height,
+                                  const VkImageUsageFlags usage)
     {
-        VkImageCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        createInfo.imageType = VK_IMAGE_TYPE_2D;
-        createInfo.extent =
+        const VkImageCreateInfo createInfo
         {
-            .width = extent.width,
-            .height = extent.height,
-            .depth = 1
+            .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = VK_IMAGE_TYPE_2D,
+            .format = m_format,
+            .extent =
+            {
+                .width = width,
+                .height = height,
+                .depth = 1
+            },
+            .mipLevels = 1,     //本类固定单级：多级图要改签名，见类注释
+            .arrayLayers = 1,   //同理，单层
+            .samples = VK_SAMPLE_COUNT_1_BIT,            //本类固定单采样
+            .tiling = VK_IMAGE_TILING_OPTIMAL,           //最优平铺：驱动最擅长的排布
+            .usage = usage,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,    //只有图形队列碰它
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED   //只是声明初始状态，真正转换由调用方录屏障
         };
-        createInfo.mipLevels = 1;     //本类固定单级：多级图要改签名，见类注释
-        createInfo.arrayLayers = 1;   //同理，单层
-        createInfo.format = m_format;
-        //格式能力是按平铺查的，图像也必然用最优平铺 —— 驱动最擅长的排布
-        createInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-        //这个字段只是「声明初始状态」，不会真的做任何转换 ——
-        //真正的转换是调用方在命令缓冲里录的屏障。取值只能 UNDEFINED 或 PREINITIALIZED
-        createInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        createInfo.usage = usage;
-        createInfo.samples = VK_SAMPLE_COUNT_1_BIT;            //本类固定单采样
-        createInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;    //只有图形队列碰它
 
         const auto logicalDevice = m_pDevice->GetLogicalDevice();
         if (vkCreateImage(logicalDevice, &createInfo, nullptr, &m_image) != VK_SUCCESS)
@@ -93,11 +95,13 @@ namespace Doodle
         VkMemoryRequirements memoryRequirements;
         vkGetImageMemoryRequirements(logicalDevice, m_image, &memoryRequirements);
 
-        VkMemoryAllocateInfo allocateInfo{};
-        allocateInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        //用驱动要的尺寸，不是数据尺寸 —— 驱动可能要得更多（内部对齐、元数据）
-        allocateInfo.allocationSize = memoryRequirements.size;
-        allocateInfo.memoryTypeIndex = m_pDevice->FindMemoryType(memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        const VkMemoryAllocateInfo allocateInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            //用驱动要的尺寸，不是数据尺寸 —— 驱动可能要得更多（内部对齐、元数据）
+            .allocationSize = memoryRequirements.size,
+            .memoryTypeIndex = m_pDevice->FindMemoryType(memoryRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+        };
 
         if (vkAllocateMemory(logicalDevice, &allocateInfo, nullptr, &m_imageMemory) != VK_SUCCESS)
         {
@@ -112,22 +116,33 @@ namespace Doodle
 
     void DoodleImage::CreateImageView(const VkImageAspectFlags aspectFlags)
     {
-        VkImageViewCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        createInfo.image = m_image;
-        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        createInfo.format = m_format;
-        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
         //切面由调用方给：含模板分量的深度格式必须把模板位一起声明，
-        //颜色图则只用 COLOR —— 这个判断属于使用者的语义，不属于本类
-        createInfo.subresourceRange.aspectMask = aspectFlags;
-        createInfo.subresourceRange.baseMipLevel = 0;
-        createInfo.subresourceRange.levelCount = 1;
-        createInfo.subresourceRange.baseArrayLayer = 0;
-        createInfo.subresourceRange.layerCount = 1;
+        //颜色图则只用 COLOR —— 这个判断属于使用者的语义，不属于本类。
+        //
+        //指定初始化必须按 VkImageViewCreateInfo 的成员声明顺序写；
+        //跳过 pNext / flags 是允许的，它们保持零初始化
+        const VkImageViewCreateInfo createInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = m_image,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = m_format,
+            .components =
+         {
+                .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+                .a = VK_COMPONENT_SWIZZLE_IDENTITY
+            },
+            .subresourceRange =
+         {
+                .aspectMask = aspectFlags,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1
+            }
+        };
 
         const auto logicalDevice = m_pDevice->GetLogicalDevice();
         if (vkCreateImageView(logicalDevice, &createInfo, nullptr, &m_imageView) != VK_SUCCESS)

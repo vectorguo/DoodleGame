@@ -51,7 +51,7 @@ namespace Doodle
         }
 
         /**
-         * 获取描述符集布局
+         * 获取描述符集布局（set 0）：整帧共享的 UBO
          *
          * 门面创建描述符集时需要它。布局的所有权仍在本层：调用方只读，
          * 不能销毁，也不应该把它缓存到生命周期更长的地方
@@ -59,6 +59,17 @@ namespace Doodle
         [[nodiscard]] VkDescriptorSetLayout GetDescriptorSetLayout() const
         {
             return m_descriptorSetLayout;
+        }
+
+        /**
+         * 获取纹理描述符集布局（set 1）：每个材质一张 combined image sampler
+         *
+         * 门面按纹理创建描述符集时用它。与 set 0 分开，是因为 UBO 按帧轮转、
+         * 纹理按资产共享，两者的更新频率和数量都不同
+         */
+        [[nodiscard]] VkDescriptorSetLayout GetTextureDescriptorSetLayout() const
+        {
+            return m_textureDescriptorSetLayout;
         }
 
         /**
@@ -71,7 +82,7 @@ namespace Doodle
 
     private:
         /**
-         * 创建描述符集布局
+         * 创建描述符集布局（set 0）
          *
          * 它声明 binding 0 是一个顶点与片元阶段都可见的 uniform buffer。
          * 必须在 CreatePipelineLayout 之前完成 —— 管线布局会引用它
@@ -79,7 +90,7 @@ namespace Doodle
         void CreateDescriptorSetLayout();
 
         /**
-         * 销毁描述符集布局，并把句柄置空
+         * 销毁 set 0 描述符集布局，并把句柄置空
          *
          * 调用前必须确认描述符池已经销毁：集合从池里分配，池先走，
          * 布局才能安全销毁。顺序由 DoodleVulkanManager::Destroy 保证
@@ -87,12 +98,27 @@ namespace Doodle
         void DestroyDescriptorSetLayout();
 
         /**
+         * 创建纹理描述符集布局（set 1）
+         *
+         * binding 0 是一个片元阶段可见的 combined image sampler。
+         * 与 set 0 一样，必须在 CreatePipelineLayout 之前完成
+         */
+        void CreateTextureDescriptorSetLayout();
+
+        /**
+         * 销毁 set 1 描述符集布局，并把句柄置空
+         *
+         * 调用前必须确认纹理描述符池已经销毁
+         */
+        void DestroyTextureDescriptorSetLayout();
+
+        /**
          * 创建管线布局
          *
-         * 管线布局引用描述符集布局（整帧共享的 view / proj 与主光源），并声明
-         * DoodlePushConstantObject 的 push constant 范围 —— 数据块与布局断言在
-         * Rendering/DoodleShaderData.h，这里按同一布局就地写范围。
-         * 仍在创建图形管线之前完成。
+         * 管线布局引用两个描述符集布局：set 0 是整帧共享的 view / proj 与主光源，
+         * set 1 是逐材质的纹理。同时声明 DoodlePushConstantObject 的 push constant
+         * 范围 —— 数据块与布局断言在 Rendering/DoodleShaderData.h，这里按同一布局
+         * 就地写范围。仍在创建图形管线之前完成。
          */
         void CreatePipelineLayout();
 
@@ -131,12 +157,20 @@ namespace Doodle
         const DoodleDepthImages* m_pDepthImages = nullptr;
 
         /**
-         * 描述符集布局
+         * 描述符集布局（set 0）：整帧共享的 view / proj 与主光源
          *
          * 它是管线接口的一部分：管线布局引用它，门面用它分配描述符集。
          * 寿命与图形管线相同，销毁顺序为：管线 → 管线布局 → 本布局
          */
         VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
+
+        /**
+         * 描述符集布局（set 1）：材质纹理
+         *
+         * 每张纹理一个描述符集，按材质槽引用；与 set 0 分开，避免把每帧数据
+         * 复制进每张纹理的集合
+         */
+        VkDescriptorSetLayout m_textureDescriptorSetLayout = VK_NULL_HANDLE;
 
         /**
          * 管线布局

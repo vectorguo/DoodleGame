@@ -76,8 +76,10 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Vulkan/DoodleSwapChain.h
     Engine/Runtime/Vulkan/DoodleGraphicsPipeline.cpp
     Engine/Runtime/Vulkan/DoodleGraphicsPipeline.h
-        Engine/Runtime/Vulkan/DoodleCommandBuffer.cpp
-    Engine/Runtime/Vulkan/DoodleCommandBuffer.h
+        Engine/Runtime/Vulkan/DoodleCommandManager.cpp
+    Engine/Runtime/Vulkan/DoodleCommandManager.h
+    Engine/Runtime/Vulkan/DoodleDescriptorManager.cpp
+    Engine/Runtime/Vulkan/DoodleDescriptorManager.h
     Engine/Runtime/Vulkan/DoodleSyncObjects.cpp
     Engine/Runtime/Vulkan/DoodleSyncObjects.h
     Engine/Runtime/Vulkan/DoodleGraphicsBuffer.cpp
@@ -113,11 +115,17 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Core/DoodleComponent.h
     Engine/Runtime/Core/DoodleGameObject.h
     Engine/Runtime/Core/DoodleGameObject.cpp
+    Engine/Runtime/Asset/DoodleAsset.cpp
+    Engine/Runtime/Asset/DoodleAsset.h
     Engine/Runtime/Asset/DoodleAssetLoader.h
     Engine/Runtime/Asset/DoodleAssetManager.cpp
     Engine/Runtime/Asset/DoodleAssetManager.h
     Engine/Runtime/Asset/DoodleMeshLoader.cpp
     Engine/Runtime/Asset/DoodleMeshLoader.h
+    Engine/Runtime/Asset/DoodleMaterialLoader.cpp
+    Engine/Runtime/Asset/DoodleMaterialLoader.h
+    Engine/Runtime/Asset/DoodleTextureLoader.cpp
+    Engine/Runtime/Asset/DoodleTextureLoader.h
     Engine/Runtime/Asset/DoodleSceneLoader.cpp
     Engine/Runtime/Asset/DoodleSceneLoader.h
     Engine/Runtime/Asset/DoodleFbxImporter.cpp
@@ -126,6 +134,8 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Asset/DoodleSceneImporter.h
     Engine/ThirdParty/ufbx/ufbx.c
     Engine/ThirdParty/ufbx/ufbx.h
+    Engine/ThirdParty/stb/stb_image.h
+    Engine/ThirdParty/stb/stb_image_impl.cpp
     Engine/Runtime/Scene/DoodleScene.h
     Engine/Runtime/Scene/DoodleScene.cpp
     Engine/Runtime/Core/DoodleComponentConfig.h
@@ -416,6 +426,62 @@ endif()
 # 上实测：同一份脚本直接 call 一切正常，经管道调用时就开始乱跑 —— 开头 chcp 65001 也救不了
 # 用法、前置条件都写在那份脚本的开头
 # ============================================================================
+
+# ---- 运行时资源：Resources/ 整棵树跟着可执行文件走 ----
+#
+# Resources/ 下全是运行时数据（场景、模型、材质、贴图……），代码里用的是相对
+# 路径（"Scenes/main.json"、"Art/..."），所以目录结构必须原样搬到运行时工作
+# 目录下。这里整棵拷过去，不按子目录各写一段 —— 以后加一类资源不用改 CMake。
+#
+# 目的地两个平台不一样，由调用方传进来：macOS 是 .app/Contents/Resources
+# （GLFW 会把进程工作目录切过去），Windows 没有包结构，放在可执行文件旁边。
+#
+# 不能只挂 POST_BUILD：改 JSON / 模型 / 贴图都不会触发链接，POST_BUILD 不跑，
+# 运行时就会一直读旧副本。把文件列成 DEPENDS，内容变了才重拷；stamp 保证
+# 没有变化时什么都不做。
+#
+# 先删再拷：copy_directory 只增不删，源码侧删掉的文件会在目的地活下来，
+# 运行时优先命中陈旧副本。删除只做在 Resources 的顶层项上，不整删目的地
+# 目录 —— 那里还有 Shaders 的拷贝（Windows 上还有可执行文件本身）。
+# 代价：把某个顶层目录整个删掉时，目的地里的旧副本不会自己消失，
+# 需要删一次 .app / 输出目录。
+function(doodle_stage_resources destination)
+    set(_doodle_resource_source "${CMAKE_SOURCE_DIR}/Resources")
+    # GLOB_RECURSE 给出依赖文件，GLOB 一层给出「该先删掉哪些顶层项」。
+    # .DS_Store 是 Finder 自己写的，不进依赖也不该跟着分发 —— 否则在 Finder
+    # 里翻一次资源目录就会平白触发一次重拷。这里用 list(FILTER) 剔除，
+    # 不用 file(GLOB) 的 PATTERN/EXCLUDE：那组关键字跟在通配表达式后面时
+    # 会被当成通配表达式本身，结果把整个工程目录都扫了进来（CMake 3.26 实测）
+    file(GLOB_RECURSE _doodle_resource_files CONFIGURE_DEPENDS
+        "${_doodle_resource_source}/*")
+    file(GLOB _doodle_resource_entries RELATIVE "${_doodle_resource_source}"
+        CONFIGURE_DEPENDS "${_doodle_resource_source}/*")
+    list(FILTER _doodle_resource_files EXCLUDE REGEX "\\.DS_Store$")
+    list(FILTER _doodle_resource_entries EXCLUDE REGEX "\\.DS_Store$")
+    set(_doodle_resource_stamp "${CMAKE_CURRENT_BINARY_DIR}/doodle_resources.stamp")
+
+    set(_doodle_resource_clean_commands)
+    foreach(_doodle_resource_entry IN LISTS _doodle_resource_entries)
+        list(APPEND _doodle_resource_clean_commands
+            COMMAND ${CMAKE_COMMAND} -E rm -rf
+                "${destination}/${_doodle_resource_entry}")
+    endforeach()
+
+    add_custom_command(
+        OUTPUT "${_doodle_resource_stamp}"
+        ${_doodle_resource_clean_commands}
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${_doodle_resource_source}" "${destination}"
+        COMMAND ${CMAKE_COMMAND} -E touch "${_doodle_resource_stamp}"
+        DEPENDS ${_doodle_resource_files}
+        COMMENT "Copy Resources into the runtime directory"
+        VERBATIM
+    )
+
+    add_custom_target(doodle_stage_resources DEPENDS "${_doodle_resource_stamp}")
+    add_dependencies(DoodleGame doodle_stage_resources)
+endfunction()
+
 if(WIN32)
     # Vulkan SDK 安装时设了 VULKAN_SDK 环境变量，FindVulkan 按它找头文件和 vulkan-1.lib。
     # 运行时的 vulkan-1.dll 由显卡驱动装进系统目录，不用随程序拷贝 ——
@@ -547,50 +613,8 @@ if(WIN32)
         VERBATIM
     )
 
-    # 场景文件同样不能只挂 POST_BUILD：改 JSON 不会触发链接，POST_BUILD 不跑，
-    # 输出目录里会一直留着旧场景。这里改成按文件依赖触发，stamp 保证无变化时
-    # 什么都不做。让 DoodleGame 依赖这个目标，单独构建 DoodleGame 时也会执行
-    file(GLOB _doodle_scene_files CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/Resources/Scenes/*")
-    set(_doodle_scene_stamp "${CMAKE_CURRENT_BINARY_DIR}/doodle_scenes_windows.stamp")
-
-    add_custom_command(
-        OUTPUT "${_doodle_scene_stamp}"
-        COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:DoodleGame>/Scenes"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/Resources/Scenes"
-            "$<TARGET_FILE_DIR:DoodleGame>/Scenes"
-        COMMAND ${CMAKE_COMMAND} -E touch "${_doodle_scene_stamp}"
-        DEPENDS ${_doodle_scene_files}
-        COMMENT "Copy Scenes next to DoodleGame.exe"
-        VERBATIM
-    )
-
-    add_custom_target(doodle_stage_scenes DEPENDS "${_doodle_scene_stamp}")
-    add_dependencies(DoodleGame doodle_stage_scenes)
-
-    # Art 运行数据（FBX 等）与场景同理：改模型不会触发链接，必须按文件依赖
-    # 拷贝。输出目录布局与 macOS 的包内 Resources 对齐，代码里的相对路径
-    # 仍是 "Art/..."
-    file(GLOB_RECURSE _doodle_art_files CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/Resources/Art/*")
-    set(_doodle_art_stamp "${CMAKE_CURRENT_BINARY_DIR}/doodle_art_windows.stamp")
-
-    add_custom_command(
-        OUTPUT "${_doodle_art_stamp}"
-        COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:DoodleGame>/Art"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/Resources/Art"
-            "$<TARGET_FILE_DIR:DoodleGame>/Art"
-        COMMAND ${CMAKE_COMMAND} -E touch "${_doodle_art_stamp}"
-        DEPENDS ${_doodle_art_files}
-        COMMENT "Copy Art next to DoodleGame.exe"
-        VERBATIM
-    )
-
-    add_custom_target(doodle_stage_art DEPENDS "${_doodle_art_stamp}")
-    add_dependencies(DoodleGame doodle_stage_art)
-
+    # Scenes / Art / Materials 全在 Resources/ 下，整棵搬过去
+    doodle_stage_resources("$<TARGET_FILE_DIR:DoodleGame>")
     return()
 endif()
 
@@ -835,61 +859,11 @@ if(APPLE)
         COMMENT "Copy Shaders into DoodleGame.app/Contents/Resources/Shaders"
     )
 
-    # 场景文件是运行时数据，和 Shaders 一样拷进包内 Resources。
+    # 场景、模型（Art/）、材质等全在 Resources/ 下，整棵搬进包内。
     #
     # 这不只是 Finder 双击时需要：GLFW 在 macOS 上默认把进程工作目录切到
     # .app/Contents/Resources（GLFW_COCOA_CHDIR_RESOURCES），所以即使从终端
     # 直接运行包内可执行文件，相对路径解析的起点也是 Resources。工程根目录
-    # 里的 Resources/Scenes 只是源文件。
-    #
-    # 与 Shaders 同理，先删再拷：copy_directory 只增不删，源码侧删掉的旧
-    # 场景文件会在包里活下来，运行时优先命中陈旧副本。
-    #
-    # 但这里不能只挂 POST_BUILD：POST_BUILD 只在目标重新链接时执行，而改
-    # JSON 不会触发链接 —— Ninja 会报 "no work to do"，包里一直留着旧场景。
-    # 所以把场景文件列成依赖，内容变了就重拷；stamp 让没有变化时什么都不做。
-    # 让 DoodleGame 依赖这个目标：无论只构建 DoodleGame 还是构建 all，拷贝
-    # 都在同一条依赖链上。目标里先建目录再拷，干净构建时 .app 不存在也能跑
-    file(GLOB _doodle_scene_files CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/Resources/Scenes/*")
-    set(_doodle_scene_stamp "${CMAKE_CURRENT_BINARY_DIR}/doodle_scenes_macos.stamp")
-
-    add_custom_command(
-        OUTPUT "${_doodle_scene_stamp}"
-        COMMAND ${CMAKE_COMMAND} -E rm -rf
-            "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Scenes"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/Resources/Scenes"
-            "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Scenes"
-        COMMAND ${CMAKE_COMMAND} -E touch "${_doodle_scene_stamp}"
-        DEPENDS ${_doodle_scene_files}
-        COMMENT "Copy Scenes into DoodleGame.app/Contents/Resources/Scenes"
-        VERBATIM
-    )
-
-    add_custom_target(doodle_stage_scenes DEPENDS "${_doodle_scene_stamp}")
-    add_dependencies(DoodleGame doodle_stage_scenes)
-
-    # Art 运行数据与场景同理：GLFW 把工作目录切到包内 Resources，代码里的
-    # "Art/..." 必须能在 .app/Contents/Resources/Art 下找到。
-    # 同样按源文件依赖触发，避免改模型后包里还是旧文件。
-    file(GLOB_RECURSE _doodle_art_files CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/Resources/Art/*")
-    set(_doodle_art_stamp "${CMAKE_CURRENT_BINARY_DIR}/doodle_art_macos.stamp")
-
-    add_custom_command(
-        OUTPUT "${_doodle_art_stamp}"
-        COMMAND ${CMAKE_COMMAND} -E rm -rf
-            "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Art"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/Resources/Art"
-            "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Art"
-        COMMAND ${CMAKE_COMMAND} -E touch "${_doodle_art_stamp}"
-        DEPENDS ${_doodle_art_files}
-        COMMENT "Copy Art into DoodleGame.app/Contents/Resources/Art"
-        VERBATIM
-    )
-
-    add_custom_target(doodle_stage_art DEPENDS "${_doodle_art_stamp}")
-    add_dependencies(DoodleGame doodle_stage_art)
+    # 里的 Resources/ 只是源文件。
+    doodle_stage_resources("$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources")
 endif()

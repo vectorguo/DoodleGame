@@ -24,17 +24,18 @@ namespace Doodle
     {
         const auto code = ReadFile(shaderPath);
 
-        VkShaderModuleCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-
         // SPIR-V 是 32 位字流：codeSize 以「字节」计，pCode 却是 uint32_t*。
         // 单位不一致是这一处的常见困惑点，推论有两条：
         //   1. codeSize 必须是 4 的倍数（合法的 glslc 产物天然满足，
         //      手动补过 '\0' 就会破坏）
         //   2. pCode 须满足 uint32_t 对齐 —— std::vector 的默认分配器
         //      保证最坏情况对齐，所以下面的转换是安全的
-        createInfo.codeSize = code.size();
-        createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+        const VkShaderModuleCreateInfo createInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = code.size(),
+            .pCode = reinterpret_cast<const uint32_t*>(code.data())
+        };
 
         VkShaderModule shaderModule = VK_NULL_HANDLE;
         if (vkCreateShaderModule(pDevice, &createInfo, nullptr, &shaderModule) != VK_SUCCESS)

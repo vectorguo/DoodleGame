@@ -10,7 +10,6 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -57,7 +56,25 @@ namespace Doodle
     {
         friend class DoodleScene;
 
+        /**
+         * 只能由所属场景创建
+         *
+         * 没有默认构造，对象从诞生起就属于一个场景；名字在构造时一次绑定，
+         * 场景归属之后由所属场景在转移所有权时更换。SetScene 只对 DoodleScene
+         * 开放，外部没有 SetName，GetScene() 因此可以返回引用而不是可能为空的指针。
+         *
+         * name 按值传递：场景拥有这个名字，构造里直接 move 进成员。调用方给
+         * 左值时是一次拷贝，给右值/临时对象时是一次移动；换成 const string&
+         * 会强制右值也走拷贝。
+         */
+        explicit DoodleGameObject(DoodleScene& scene, std::string name = "NewGameObject");
+
     public:
+        DoodleGameObject(const DoodleGameObject&) = delete;
+        DoodleGameObject& operator=(const DoodleGameObject&) = delete;
+        DoodleGameObject(DoodleGameObject&&) = delete;
+        DoodleGameObject& operator=(DoodleGameObject&&) = delete;
+
         /**
          * 析构兜底：若生命周期还停在 Alive / PendingDestroy，在这里补上
          *
@@ -65,11 +82,6 @@ namespace Doodle
          * delete、异常路径等没有经过场景回收的情况才会走到这里。
          */
         ~DoodleGameObject();
-
-        DoodleGameObject(const DoodleGameObject&) = delete;
-        DoodleGameObject& operator=(const DoodleGameObject&) = delete;
-        DoodleGameObject(DoodleGameObject&&) = delete;
-        DoodleGameObject& operator=(DoodleGameObject&&) = delete;
 
         /**
          * 更新所有组件
@@ -230,19 +242,6 @@ namespace Doodle
         }
 
     private:
-        /**
-         * 只能由所属场景创建
-         *
-         * 没有默认构造，对象从诞生起就属于一个场景；名字在构造时一次绑定，
-         * 场景归属之后由所属场景在转移所有权时更换。SetScene 只对 DoodleScene
-         * 开放，外部没有 SetName，GetScene() 因此可以返回引用而不是可能为空的指针。
-         *
-         * name 按值传递：场景拥有这个名字，构造里直接 move 进成员。调用方给
-         * 左值时是一次拷贝，给右值/临时对象时是一次移动；换成 const string&
-         * 会强制右值也走拷贝。
-         */
-        explicit DoodleGameObject(DoodleScene& scene, std::string name = "NewGameObject");
-
         /**
          * 真正执行销毁：推进到 Destroying → 跑组件回调 → 清空组件 → Destroyed
          *

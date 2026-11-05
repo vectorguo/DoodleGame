@@ -26,16 +26,18 @@ namespace Doodle
 
         //描述符集布局是管线布局的输入，后者又是图形管线的输入，三层依次创建
         CreateDescriptorSetLayout();
+        CreateTextureDescriptorSetLayout();
         CreatePipelineLayout();
         CreateGraphicsPipeline();
     }
 
     void DoodleGraphicsPipeline::Destroy()
     {
-        //逆着创建序拆：管线引用布局，布局引用描述符集布局。
+        //逆着创建序拆：管线引用布局，布局引用两个描述符集布局。
         //描述符池必须已经先销毁，否则池里的集合仍然引用着描述符集布局
         DestroyGraphicsPipeline();
         DestroyPipelineLayout();
+        DestroyTextureDescriptorSetLayout();
         DestroyDescriptorSetLayout();
     }
 
@@ -45,17 +47,21 @@ namespace Doodle
         //stageFlags 必须覆盖真正读它的阶段：顶点阶段读 view / proj，
         //片元阶段读光源字段。少写片元阶段的话，片元里读到的是未定义值，
         //校验层会在绘制时报 stage 不匹配 —— 声明得准，问题就不会跑到画面上
-        VkDescriptorSetLayoutBinding uboLayoutBinding{};
-        uboLayoutBinding.binding = 0;
-        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        uboLayoutBinding.descriptorCount = 1;
-        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        uboLayoutBinding.pImmutableSamplers = nullptr; // 只对采样器描述符有意义
+        const VkDescriptorSetLayoutBinding uboLayoutBinding
+        {
+            .binding = 0,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            .pImmutableSamplers = nullptr    //只对采样器描述符有意义
+        };
 
-        VkDescriptorSetLayoutCreateInfo layoutInfo{};
-        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = 1;
-        layoutInfo.pBindings = &uboLayoutBinding;
+        const VkDescriptorSetLayoutCreateInfo layoutInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = 1,
+            .pBindings = &uboLayoutBinding
+        };
 
         if (vkCreateDescriptorSetLayout(m_pDevice->GetLogicalDevice(), &layoutInfo,
                                         nullptr, &m_descriptorSetLayout) != VK_SUCCESS)
@@ -73,9 +79,52 @@ namespace Doodle
         }
     }
 
+    void DoodleGraphicsPipeline::CreateTextureDescriptorSetLayout()
+    {
+        //set 1 binding 0：一张被采样的纹理。
+        //
+        //与 set 0 分开的理由是更新频率和数量：set 0 每帧一份 UBO，随帧轮转；
+        //这里每个材质一张纹理，按资产共享。混进同一个集合意味着每张纹理
+        //都要复制 N 份 UBO，或者每帧重写所有材质集合
+        const VkDescriptorSetLayoutBinding textureLayoutBinding
+        {
+            .binding = 0,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = 1,
+            //只有片元着色器采样纹理；顶点阶段不读它
+            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .pImmutableSamplers = nullptr    //采样器随纹理一起写入，不是编译期固定的
+        };
+
+        const VkDescriptorSetLayoutCreateInfo layoutInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = 1,
+            .pBindings = &textureLayoutBinding
+        };
+
+        if (vkCreateDescriptorSetLayout(m_pDevice->GetLogicalDevice(), &layoutInfo,
+                                        nullptr, &m_textureDescriptorSetLayout) != VK_SUCCESS)
+        {
+            throw std::runtime_error("failed to create texture descriptor set layout!");
+        }
+    }
+
+    void DoodleGraphicsPipeline::DestroyTextureDescriptorSetLayout()
+    {
+        if (m_textureDescriptorSetLayout != VK_NULL_HANDLE)
+        {
+            vkDestroyDescriptorSetLayout(m_pDevice->GetLogicalDevice(), m_textureDescriptorSetLayout, nullptr);
+            m_textureDescriptorSetLayout = VK_NULL_HANDLE;
+        }
+    }
+
     void DoodleGraphicsPipeline::CreatePipelineLayout()
     {
-        //描述符集布局负责整帧共享的数据（相机 view / proj 与主光源）；
+        //set 0 负责整帧共享的数据（相机 view / proj 与主光源）；
+        //set 1 负责逐材质的纹理。分成两个集合而不是一个：UBO 按帧轮转，
+        //纹理按资产共享，两者的更新频率和数量都不同。
+        //
         //每个绘制项的 localToWorld 矩阵与材质基色走 push constant。
         //
         //范围只声明一次、offset 从 0 起：数据每帧按绘制项换，但接口不换，
@@ -90,12 +139,20 @@ namespace Doodle
             .size = sizeof(DoodlePushConstantObject)
         };
 
-        VkPipelineLayoutCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        createInfo.setLayoutCount = 1;
-        createInfo.pSetLayouts = &m_descriptorSetLayout;
-        createInfo.pushConstantRangeCount = 1;
-        createInfo.pPushConstantRanges = &drawPushConstantRange;
+        const VkDescriptorSetLayout setLayouts[]
+        {
+            m_descriptorSetLayout,
+            m_textureDescriptorSetLayout
+        };
+
+        const VkPipelineLayoutCreateInfo createInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .setLayoutCount = 2,
+            .pSetLayouts = setLayouts,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &drawPushConstantRange
+        };
 
         const auto result = vkCreatePipelineLayout(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_pipelineLayout);
         if (result != VK_SUCCESS)
@@ -123,17 +180,21 @@ namespace Doodle
         const VkShaderModule vertShaderModule = DoodleShaderModule::CreateShaderModule(pDevice, "Shaders/vert.spv");
         const VkShaderModule fragShaderModule = DoodleShaderModule::CreateShaderModule(pDevice, "Shaders/frag.spv");
 
-        VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
-        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
-        vertShaderStageInfo.module = vertShaderModule;
-        vertShaderStageInfo.pName = "main";
+        const VkPipelineShaderStageCreateInfo vertShaderStageInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_VERTEX_BIT,
+            .module = vertShaderModule,
+            .pName = "main"
+        };
 
-        VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
-        fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        fragShaderStageInfo.module = fragShaderModule;
-        fragShaderStageInfo.pName = "main";
+        const VkPipelineShaderStageCreateInfo fragShaderStageInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .module = fragShaderModule,
+            .pName = "main"
+        };
 
         const VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
@@ -144,10 +205,12 @@ namespace Doodle
             VK_DYNAMIC_STATE_VIEWPORT,
             VK_DYNAMIC_STATE_SCISSOR
         };
-        VkPipelineDynamicStateCreateInfo dynamicState{};
-        dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-        dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
-        dynamicState.pDynamicStates = dynamicStates.data();
+        const VkPipelineDynamicStateCreateInfo dynamicState
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+            .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
+            .pDynamicStates = dynamicStates.data()
+        };
 
         //顶点输入：两份描述都从 Vertex 类型上取。管线只吃描述，不关心数据来自哪
         //
@@ -159,62 +222,73 @@ namespace Doodle
         const auto bindingDescription = Vertex::GetBindingDescription();
         const auto attributeDescriptions = Vertex::GetAttributeDescriptions();
 
-        VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
-        vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertexInputInfo.vertexBindingDescriptionCount = 1;
-        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
-        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+        const VkPipelineVertexInputStateCreateInfo vertexInputInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+            .vertexBindingDescriptionCount = 1,
+            .pVertexBindingDescriptions = &bindingDescription,
+            .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
+            .pVertexAttributeDescriptions = attributeDescriptions.data()
+        };
 
         //输入装配：每 3 个顶点组成一个三角形
-        VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-        inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-        inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        inputAssembly.primitiveRestartEnable = VK_FALSE;
+        const VkPipelineInputAssemblyStateCreateInfo inputAssembly
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+            .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+            .primitiveRestartEnable = VK_FALSE
+        };
 
         //视口与剪裁走动态状态，这里只填数量，pViewports / pScissors 留空
-        VkPipelineViewportStateCreateInfo viewportState{};
-        viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-        viewportState.viewportCount = 1;
-        viewportState.scissorCount = 1;
+        const VkPipelineViewportStateCreateInfo viewportState
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+            .viewportCount = 1,
+            .scissorCount = 1
+        };
 
         //光栅化。顶点数组本身仍按「左上 → 右上 → 右下 → 左下」排，
         //但顶点着色器用 GLM 投影时做了 Y 翻转（proj[1][1] *= -1）——
         //那一步把屏幕空间的绕序整体反了过来，所以这里的 frontFace 取逆时针。
         //frontFace、投影约定与顶点顺序三者必须一起看；只改其中一处，画面会整片消失
-        VkPipelineRasterizationStateCreateInfo rasterizer{};
-        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-        rasterizer.depthClampEnable = VK_FALSE;
-        rasterizer.rasterizerDiscardEnable = VK_FALSE;
-        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-        rasterizer.lineWidth = 1.0f;
-        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-        rasterizer.depthBiasEnable = VK_FALSE;
+        const VkPipelineRasterizationStateCreateInfo rasterizer
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            .depthClampEnable = VK_FALSE,
+            .rasterizerDiscardEnable = VK_FALSE,
+            .polygonMode = VK_POLYGON_MODE_FILL,
+            .cullMode = VK_CULL_MODE_BACK_BIT,
+            .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+            .depthBiasEnable = VK_FALSE,
+            .lineWidth = 1.0f
+        };
 
         //多重采样：先关闭
-        VkPipelineMultisampleStateCreateInfo multisampling{};
-        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-        multisampling.sampleShadingEnable = VK_FALSE;
-        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        const VkPipelineMultisampleStateCreateInfo multisampling
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+            .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+            .sampleShadingEnable = VK_FALSE
+        };
 
         //颜色混合：不透明，直接覆盖写入
-        VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-        colorBlendAttachment.colorWriteMask =
-            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-            VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        colorBlendAttachment.blendEnable = VK_FALSE;
+        const VkPipelineColorBlendAttachmentState colorBlendAttachment
+        {
+            .blendEnable = VK_FALSE,
+            .colorWriteMask =
+                VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT
+        };
 
-        VkPipelineColorBlendStateCreateInfo colorBlending{};
-        colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        colorBlending.logicOpEnable = VK_FALSE;
-        colorBlending.logicOp = VK_LOGIC_OP_COPY;
-        colorBlending.attachmentCount = 1;
-        colorBlending.pAttachments = &colorBlendAttachment;
-        colorBlending.blendConstants[0] = 0.0f;
-        colorBlending.blendConstants[1] = 0.0f;
-        colorBlending.blendConstants[2] = 0.0f;
-        colorBlending.blendConstants[3] = 0.0f;
+        const VkPipelineColorBlendStateCreateInfo colorBlending
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            .logicOpEnable = VK_FALSE,
+            .logicOp = VK_LOGIC_OP_COPY,
+            .attachmentCount = 1,
+            .pAttachments = &colorBlendAttachment,
+            .blendConstants = {0.0f, 0.0f, 0.0f, 0.0f}
+        };
 
         //动态渲染：管线不再绑定渲染通道对象，改成在这里声明「我要往什么格式的图上画」。
         //
@@ -225,62 +299,67 @@ namespace Doodle
         //
         //pColorAttachmentFormats 指向的数组只在本次创建调用期间被读取，
         //从交换链读出来的这个局部量活到函数结束，够用 —— 不必为它留成员
-        VkPipelineRenderingCreateInfo renderingCreateInfo{};
-        renderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
         const auto colorFormat = m_pSwapChain->GetImageFormat();
-        renderingCreateInfo.colorAttachmentCount = 1;
-        renderingCreateInfo.pColorAttachmentFormats = &colorFormat;
-
         //深度格式从深度图组取 —— 格式是那一组挑的，这里只消费结果。
         //与颜色格式一样，创建管线时读一次、编译进管线，之后不再读
         const auto depthFormat = m_pDepthImages->GetFormat();
-        renderingCreateInfo.depthAttachmentFormat = depthFormat;
 
-        //含模板分量时，stencil 那一栏必须一起填，且与深度相同。
-        //只填 depth 不填 stencil，校验层会报两者不一致
-        if (DoodleDepthImages::HasStencilComponent(depthFormat))
+        //含模板分量时，stencil 那一栏必须一起填，且与深度相同；
+        //只填 depth 不填 stencil，校验层会报两者不一致。
+        //没有模板分量时保持 VK_FORMAT_UNDEFINED（这里的零值语义）
+        const VkPipelineRenderingCreateInfo renderingCreateInfo
         {
-            renderingCreateInfo.stencilAttachmentFormat = depthFormat;
-        }
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+            .colorAttachmentCount = 1,
+            .pColorAttachmentFormats = &colorFormat,
+            .depthAttachmentFormat = depthFormat,
+            .stencilAttachmentFormat =
+                DoodleDepthImages::HasStencilComponent(depthFormat) ? depthFormat : VK_FORMAT_UNDEFINED
+        };
 
         //深度／模板状态。声明了 depthAttachmentFormat 之后，这一格必须是有效指针 ——
         //规范为 renderPass 为空的情形专门写了这条约束。两处必须同一次改完：
         //只填格式不给状态，管线建不出来；只给状态不填格式，校验层要到绘制时才报
-        VkPipelineDepthStencilStateCreateInfo depthStencil{};
-        depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-        depthStencil.depthTestEnable = VK_TRUE;
-        depthStencil.depthWriteEnable = VK_TRUE;
-        //更小的深度 = 更近，与清屏值 1.0（最远）配对
-        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
-        //边界测试与模板都先不用。注意 depthBounds 是可选设备特性，
-        //本项目的 VkPhysicalDeviceFeatures 全零，也就是没开它
-        depthStencil.depthBoundsTestEnable = VK_FALSE;
-        depthStencil.stencilTestEnable = VK_FALSE;
-        depthStencil.front = {};
-        depthStencil.back = {};
+        const VkPipelineDepthStencilStateCreateInfo depthStencil
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+            .depthTestEnable = VK_TRUE,
+            .depthWriteEnable = VK_TRUE,
+            //更小的深度 = 更近，与清屏值 1.0（最远）配对
+            .depthCompareOp = VK_COMPARE_OP_LESS,
+            //边界测试与模板都先不用。注意 depthBounds 是可选设备特性，
+            //本项目的 VkPhysicalDeviceFeatures 全零，也就是没开它
+            .depthBoundsTestEnable = VK_FALSE,
+            .stencilTestEnable = VK_FALSE,
+            .front = {},
+            .back = {}
+        };
 
         //上面这些状态结构体都是栈上的局部变量，pipelineInfo 只记录它们的地址。
         //所以创建调用必须留在本函数作用域内 —— 拆出去就是悬垂指针
-        VkGraphicsPipelineCreateInfo pipelineInfo{};
-        pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        pipelineInfo.pNext = &renderingCreateInfo;
-        pipelineInfo.stageCount = 2;
-        pipelineInfo.pStages = shaderStages;
-        pipelineInfo.pVertexInputState = &vertexInputInfo;
-        pipelineInfo.pInputAssemblyState = &inputAssembly;
-        pipelineInfo.pViewportState = &viewportState;
-        pipelineInfo.pRasterizationState = &rasterizer;
-        pipelineInfo.pMultisampleState = &multisampling;
-        pipelineInfo.pDepthStencilState = &depthStencil;
-        pipelineInfo.pColorBlendState = &colorBlending;
-        pipelineInfo.pDynamicState = &dynamicState;
-        pipelineInfo.layout = m_pipelineLayout;
-        //动态渲染的标志就是这两个字段一起留空：没有渲染通道对象可指，
-        //子通道这个概念也随之消失。附件信息改由上一条 pNext 链承载
-        pipelineInfo.renderPass = VK_NULL_HANDLE;
-        pipelineInfo.subpass = 0;
-        pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
-        pipelineInfo.basePipelineIndex = -1;
+        //
+        //动态渲染的标志就是 renderPass / subpass 两格：没有渲染通道对象可指，
+        //子通道这个概念也随之消失。附件信息改由 pNext 链（renderingCreateInfo）承载
+        const VkGraphicsPipelineCreateInfo pipelineInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+            .pNext = &renderingCreateInfo,
+            .stageCount = 2,
+            .pStages = shaderStages,
+            .pVertexInputState = &vertexInputInfo,
+            .pInputAssemblyState = &inputAssembly,
+            .pViewportState = &viewportState,
+            .pRasterizationState = &rasterizer,
+            .pMultisampleState = &multisampling,
+            .pDepthStencilState = &depthStencil,
+            .pColorBlendState = &colorBlending,
+            .pDynamicState = &dynamicState,
+            .layout = m_pipelineLayout,
+            .renderPass = VK_NULL_HANDLE,
+            .subpass = 0,
+            .basePipelineHandle = VK_NULL_HANDLE,
+            .basePipelineIndex = -1
+        };
 
         //第二参数暂传 VK_NULL_HANDLE，即不使用管线缓存。
         //等「管线缓存」那一章再接上，用于跨次运行复用编译结果

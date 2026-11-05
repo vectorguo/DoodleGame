@@ -7,12 +7,12 @@
 
 #pragma once
 
-#include <string>
 #include <string_view>
 #include <vector>
 
 #include <vulkan/vulkan_core.h>
 
+#include "Asset/DoodleAsset.h"
 #include "DoodleSubmesh.h"
 #include "DoodleVertex.h"
 #include "Vulkan/DoodleGraphicsBuffer.h"
@@ -36,24 +36,24 @@ namespace Doodle
      * Initialize 会校验它们有序、连续、覆盖整个索引缓冲。
      *
      * 网格不保存材质数据：submesh.materialIndex 只是槽号，真正的 DoodleMaterial
-     * 由 DoodleMeshRenderer 持有并按实例序列化。同一份网格可以被多个对象共用、
-     * 各自配不同材质，资产缓存不会和外观绑死。
+     * 由 DoodleMeshRenderer 按槽引用共享材质资产。同一份网格可以被多个对象共用、
+     * 各自配不同材质资产，资产缓存不会和外观绑死。
      *
-     * 资产路径：文件资产在构造时传入（当前是相对文件路径），loader 的缓存仍以
-     * 同一个字符串为键；运行时动态创建的实例走默认构造，路径为空，这种网格
-     * 不能序列化。同一份网格被多个对象共享时路径只存一份，引用方通过
-     * GetAssetPath() 取得。以后引入资产基类时，这个字段上移到基类。
+     * 资产路径与「运行时动态创建」的约定在基类 DoodleAsset 里：文件资产的
+     * 路径就是 loader 的缓存键，空串表示动态创建、不能序列化。本类只关心
+     * 网格自己的资源与子网格表。
      *
-     * 不可复制、不可移动：两个 DoodleMesh 对象会各自销毁同一对 VkBuffer。
-     * 使用方拿到的是 const 指针（非拥有）：文件资产的寿命由 loader 保证，
-     * 运行时动态创建的实例由创建方保证；两者都要在 GPU 空闲时显式 Destroy。
-     * loader 内部则用 unique_ptr 持有，不存在需要搬运对象本身的场景
+     * 不可复制、不可移动（基类 DoodleAsset 已禁止）：两个 DoodleMesh 对象会
+     * 各自销毁同一对 VkBuffer。使用方拿到的是 const 指针（非拥有）：文件资产的
+     * 寿命由 loader 保证，运行时动态创建的实例由创建方保证；两者都要在
+     * GPU 空闲时显式 Destroy。loader 内部则用 unique_ptr 持有，不存在需要
+     * 搬运对象本身的场景
      *
      * 索引类型固定为 uint32_t：FBX 拍平后顶点数很容易越过 65535，
-     * 与 DoodleCommandBuffer::Record 里的 VK_INDEX_TYPE_UINT32 是同一个决定。
+     * 与 DoodleCommandManager::Record 里的 VK_INDEX_TYPE_UINT32 是同一个决定。
      * 不按模型大小分两套索引类型
      */
-    class DoodleMesh
+    class DoodleMesh : public DoodleAsset
     {
     public:
         /**
@@ -62,21 +62,16 @@ namespace Doodle
         DoodleMesh() = default;
 
         /**
-         * 文件资产：路径就是加载身份
+         * 文件资产：路径交给 DoodleAsset 保存并校验非空
          *
-         * @param assetPath 资产的加载路径（当前是相对文件路径），必须非空
+         * @param assetPath 资产的加载路径（当前是相对文件路径）
          */
         explicit DoodleMesh(std::string_view assetPath);
-
-        DoodleMesh(const DoodleMesh&) = delete;
-        DoodleMesh& operator=(const DoodleMesh&) = delete;
-        DoodleMesh(DoodleMesh&&) = delete;
-        DoodleMesh& operator=(DoodleMesh&&) = delete;
 
         /**
          * 把两份数据与子网格区间送上设备
          *
-         * @param device 已初始化的 Vulkan 设备，且命令缓冲层的传输池已经建好
+         * @param device 已初始化的 Vulkan 设备，且命令管理层的传输池已经建好
          * @param vertices 顶点数据，按 Vertex 的布局排列
          * @param indices 索引数据，每个值都必须小于 vertices.size()
          * @param submeshes 按材质切好的索引区间；必须有序、首尾相接、覆盖整个
@@ -105,17 +100,6 @@ namespace Doodle
          *       运行时动态创建的实例由创建方调用
          */
         void Destroy();
-
-        /**
-         * 资产的加载路径（当前就是 DoodleAssetLoader 的缓存键）
-         *
-         * 文件资产在构造时确定、之后不变；空串表示运行时动态创建，这种网格
-         * 不能序列化。它不参与渲染，供序列化与调试使用
-         */
-        [[nodiscard]] const std::string& GetAssetPath() const
-        {
-            return m_assetPath;
-        }
 
         /**
          * 顶点缓冲句柄
@@ -183,12 +167,6 @@ namespace Doodle
         }
 
     private:
-        /**
-         * 资产的加载路径，文件资产在构造时确定；空串表示运行时动态创建。
-         * 以后引入资产基类时上移到基类
-         */
-        std::string m_assetPath;
-
         /**
          * 顶点缓冲，走设备本地显存
          */

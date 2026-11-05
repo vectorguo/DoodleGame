@@ -88,19 +88,18 @@ namespace Doodle
          */
         [[nodiscard]] static VkVertexInputBindingDescription GetBindingDescription()
         {
-            VkVertexInputBindingDescription bindingDescription{};
-
-            //本结构体的全部属性打包在同一个数组里，所以只需要一条绑定，编号取 0。
-            //这是个约定编号：下面属性描述里的 binding 必须指回同一个数字
-            bindingDescription.binding = 0;
-
-            //写 sizeof(Vertex) 而不是 32：前者是「关于结构体的事实」，往结构体里
-            //加字段时它自动跟上；后者是一份「关于结构体的记忆」，会悄悄失效。
-            //这条规矩在下面的 offset 上还要再贯彻一次
-            bindingDescription.stride = sizeof(Vertex);
-
-            //每个顶点之后前进到下一条。本项目不做实例化渲染，没有逐实例的数据流
-            bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+            const VkVertexInputBindingDescription bindingDescription
+            {
+                //本结构体的全部属性打包在同一个数组里，所以只需要一条绑定，编号取 0。
+                //这是个约定编号：下面属性描述里的 binding 必须指回同一个数字
+                .binding = 0,
+                //写 sizeof(Vertex) 而不是 32：前者是「关于结构体的事实」，往结构体里
+                //加字段时它自动跟上；后者是一份「关于结构体的记忆」，会悄悄失效。
+                //这条规矩在下面的 offset 上还要再贯彻一次
+                .stride = sizeof(Vertex),
+                //每个顶点之后前进到下一条。本项目不做实例化渲染，没有逐实例的数据流
+                .inputRate = VK_VERTEX_INPUT_RATE_VERTEX
+            };
 
             return bindingDescription;
         }
@@ -116,26 +115,31 @@ namespace Doodle
          */
         [[nodiscard]] static std::array<VkVertexInputAttributeDescription, 3> GetAttributeDescriptions()
         {
-            std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
-
-            //位置：location 0，三个 32 位浮点分量（vec3）
-            attributeDescriptions[0].binding = 0;
-            attributeDescriptions[0].location = 0;
-            attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-            //偏移用宏算，理由同上面的 sizeof：字段挪动位置时它自动跟上
-            attributeDescriptions[0].offset = offsetof(Vertex, pos);
-
-            //法线：location 1，三个 32 位浮点分量（vec3）
-            attributeDescriptions[1].binding = 0;
-            attributeDescriptions[1].location = 1;
-            attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-            attributeDescriptions[1].offset = offsetof(Vertex, normal);
-
-            //UV：location 2，两个 32 位浮点分量（vec2）
-            attributeDescriptions[2].binding = 0;
-            attributeDescriptions[2].location = 2;
-            attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
-            attributeDescriptions[2].offset = offsetof(Vertex, uv);
+            const std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions
+            {{
+                //位置：location 0，三个 32 位浮点分量（vec3）
+                {
+                    .location = 0,
+                    .binding = 0,
+                    .format = VK_FORMAT_R32G32B32_SFLOAT,
+                    //偏移用宏算，理由同上面的 sizeof：字段挪动位置时它自动跟上
+                    .offset = offsetof(Vertex, pos)
+                },
+                //法线：location 1，三个 32 位浮点分量（vec3）
+                {
+                    .location = 1,
+                    .binding = 0,
+                    .format = VK_FORMAT_R32G32B32_SFLOAT,
+                    .offset = offsetof(Vertex, normal)
+                },
+                //UV：location 2，两个 32 位浮点分量（vec2）
+                {
+                    .location = 2,
+                    .binding = 0,
+                    .format = VK_FORMAT_R32G32_SFLOAT,
+                    .offset = offsetof(Vertex, uv)
+                }
+            }};
 
             return attributeDescriptions;
         }

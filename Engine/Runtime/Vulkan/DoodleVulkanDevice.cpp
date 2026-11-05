@@ -39,45 +39,38 @@ namespace Doodle
     void DoodleVulkanDevice::CreateVkInstance(const DoodleWindow& window)
     {
         //AppInfo
-        VkApplicationInfo appInfo{};
-        appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        appInfo.pApplicationName = "DoodleGame";
-        appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-        appInfo.pEngineName = "DoodleEngine";
-        appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-        //请求 1.3，为后面的动态渲染铺路：vkCmdBeginRendering 是 1.3 的核心功能，
-        //而规范要求「新核心版本的设备级功能必须同时被设备版本和这里声明的版本支持」
-        //（fundamentals.adoc，Valid Usage for Newer Core Versions）——
-        //光设备支持不够，不在这里声明的话 loader 连函数指针都不给
-        //
-        //顺带解掉了压在 1.0 时的一个校验层报错：VK_KHR_portability_subset 依赖实例扩展
-        //VK_KHR_get_physical_device_properties2，这个依赖要 1.1 以上才被核心版本吃掉，
-        //1.0 的实例上会撞 VUID-vkCreateDevice-ppEnabledExtensionNames-01387（macOS 实测）
-        //
-        //代价是这个声明成了硬门槛：AOSP loader 的 SanitizeApiVersion() 只替 1.0 驱动兜底，
-        //1.1/1.2 的驱动拿到更高的请求不在保护范围内，vkCreateInstance 会直接返回
-        //VK_ERROR_INCOMPATIBLE_DRIVER。minSdk 仍留在 24，与这里不匹配是明知而为 ——
-        //眼下只跑测试机（Android 16 / Adreno）。发布时怎么收口见 android/app/build.gradle.kts
-        appInfo.apiVersion = VK_API_VERSION_1_3;
-        appInfo.pNext = nullptr;
+        const VkApplicationInfo appInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+            .pApplicationName = "DoodleGame",
+            .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
+            .pEngineName = "DoodleEngine",
+            .engineVersion = VK_MAKE_VERSION(1, 0, 0),
+            //请求 1.3，为后面的动态渲染铺路：vkCmdBeginRendering 是 1.3 的核心功能，
+            //而规范要求「新核心版本的设备级功能必须同时被设备版本和这里声明的版本支持」
+            //（fundamentals.adoc，Valid Usage for Newer Core Versions）——
+            //光设备支持不够，不在这里声明的话 loader 连函数指针都不给
+            //
+            //顺带解掉了压在 1.0 时的一个校验层报错：VK_KHR_portability_subset 依赖实例扩展
+            //VK_KHR_get_physical_device_properties2，这个依赖要 1.1 以上才被核心版本吃掉，
+            //1.0 的实例上会撞 VUID-vkCreateDevice-ppEnabledExtensionNames-01387（macOS 实测）
+            //
+            //代价是这个声明成了硬门槛：AOSP loader 的 SanitizeApiVersion() 只替 1.0 驱动兜底，
+            //1.1/1.2 的驱动拿到更高的请求不在保护范围内，vkCreateInstance 会直接返回
+            //VK_ERROR_INCOMPATIBLE_DRIVER。minSdk 仍留在 24，与这里不匹配是明知而为 ——
+            //眼下只跑测试机（Android 16 / Adreno）。发布时怎么收口见 android/app/build.gradle.kts
+            .apiVersion = VK_API_VERSION_1_3
+        };
 
         //Extension
         const auto requiredExtensions = GetRequiredExtensions(window);
 
-        //Instance CreateInfo
-        VkInstanceCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-        createInfo.pApplicationInfo = &appInfo;
-        createInfo.pNext = nullptr;
-        createInfo.flags = 0;
-#ifdef __APPLE__
-        //MoltenVK 把 Vulkan 翻译到 Metal 上，不是原生 Vulkan 实现。
-        //这个标志让 loader 把这类「可移植」设备也枚举出来，
+        //实例标志：macOS 需要让 loader 把 MoltenVK 这类「可移植」设备也枚举出来，
         //不加的话有 Vulkan 能力的 Mac 会在枚举阶段就消失
-        createInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+        VkInstanceCreateFlags instanceFlags = 0;
+#ifdef __APPLE__
+        instanceFlags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 #endif
-        createInfo.enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size());
-        createInfo.ppEnabledExtensionNames = requiredExtensions.data();
 
         //校验层：有就用，没有就跳过。
         //
@@ -98,8 +91,18 @@ namespace Doodle
             Log::Info("validation layers not available, running without them");
         }
 #endif
-        createInfo.enabledLayerCount = enabledLayerCount;
-        createInfo.ppEnabledLayerNames = ppEnabledLayerNames;
+
+        //Instance CreateInfo
+        const VkInstanceCreateInfo createInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+            .flags = instanceFlags,
+            .pApplicationInfo = &appInfo,
+            .enabledLayerCount = enabledLayerCount,
+            .ppEnabledLayerNames = ppEnabledLayerNames,
+            .enabledExtensionCount = static_cast<uint32_t>(requiredExtensions.size()),
+            .ppEnabledExtensionNames = requiredExtensions.data()
+        };
 
         //Create Instance
         const auto result = vkCreateInstance(&createInfo, nullptr, &m_instance);
@@ -288,12 +291,16 @@ namespace Doodle
         //拿它当特性依据，等于把判断建立在一个被改写过的数上
         //
         //两个位一次问完：查询返回的是整块 1.3 特性表，问几个位都只花这一次调用
-        VkPhysicalDeviceVulkan13Features vulkan13Features{};
-        vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+        VkPhysicalDeviceVulkan13Features vulkan13Features
+        {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES
+        };
 
-        VkPhysicalDeviceFeatures2 features{};
-        features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        features.pNext = &vulkan13Features;
+        VkPhysicalDeviceFeatures2 features
+        {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            .pNext = &vulkan13Features
+        };
 
         vkGetPhysicalDeviceFeatures2(pDevice, &features);
 
@@ -345,17 +352,19 @@ namespace Doodle
         std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
         for (const uint32_t family : m_queueFamilySelection.GetUniqueFamilyIndices())
         {
-            VkDeviceQueueCreateInfo info{};
-            info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-            info.queueFamilyIndex = family;
-            info.queueCount = 1;
-            info.pQueuePriorities = &queuePriority;
+            const VkDeviceQueueCreateInfo info
+            {
+                .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                .queueFamilyIndex = family,
+                .queueCount = 1,
+                .pQueuePriorities = &queuePriority
+            };
             queueCreateInfos.push_back(info);
         }
 
         //物理设备特性。这一族是 1.0 时代的结构，装不下 1.1 之后新增的任何特性，
         //这里只留着占位，实际要开的位在下面那条 pNext 链上
-        VkPhysicalDeviceFeatures deviceFeatures{};
+        const VkPhysicalDeviceFeatures deviceFeatures{};
 
         //Vulkan 1.3 核心特性：动态渲染 + synchronization2
         //
@@ -368,23 +377,12 @@ namespace Doodle
         //只置这两位，其余留零即关。1.3 里还有别的特性是 MoltenVK 不支持的
         //（驱动里挂着「bufferDeviceAddress ... is not supported on this platform」的告警），
         //整块 enable 会连带把它们一起要过来，设备创建当场失败
-        VkPhysicalDeviceVulkan13Features vulkan13Features{};
-        vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-        vulkan13Features.dynamicRendering = VK_TRUE;
-        vulkan13Features.synchronization2 = VK_TRUE;
-
-        //设备创建信息
-        VkDeviceCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        //设备级特性走 pNext。pEnabledFeatures 那个字段填不出 1.1 之后的特性，
-        //两条链互不相干，可以同时存在
-        createInfo.pNext = &vulkan13Features;
-        createInfo.pQueueCreateInfos = queueCreateInfos.data();
-        createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
-        createInfo.pEnabledFeatures = &deviceFeatures;
-
-        //device layer 已废弃，规范要求必须为 0；layer 只在 instance 级启用
-        createInfo.enabledLayerCount = 0;
+        const VkPhysicalDeviceVulkan13Features vulkan13Features
+        {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+            .synchronization2 = VK_TRUE,
+            .dynamicRendering = VK_TRUE
+        };
 
         //处理扩展
         std::vector<const char*> deviceExtensions;
@@ -393,8 +391,22 @@ namespace Doodle
         {
             deviceExtensions.emplace_back("VK_KHR_portability_subset");
         }
-        createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
-        createInfo.ppEnabledExtensionNames = deviceExtensions.data();
+
+        //设备创建信息
+        const VkDeviceCreateInfo createInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            //设备级特性走 pNext。pEnabledFeatures 那个字段填不出 1.1 之后的特性，
+            //两条链互不相干，可以同时存在
+            .pNext = &vulkan13Features,
+            .queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size()),
+            .pQueueCreateInfos = queueCreateInfos.data(),
+            //device layer 已废弃，规范要求必须为 0；layer 只在 instance 级启用
+            .enabledLayerCount = 0,
+            .enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size()),
+            .ppEnabledExtensionNames = deviceExtensions.data(),
+            .pEnabledFeatures = &deviceFeatures
+        };
 
         //创建逻辑设备
         if (vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_logicalDevice) == VK_SUCCESS)
@@ -455,8 +467,10 @@ namespace Doodle
     {
         //用 2 版：语义与 1.0 版相同，但查询结构多一层、将来要挂 pNext 时不用再换。
         //这里真正需要的是 memoryTypes 那张表，pNext 链留空
-        VkPhysicalDeviceMemoryProperties2 memoryProperties{};
-        memoryProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+        VkPhysicalDeviceMemoryProperties2 memoryProperties
+        {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2
+        };
         vkGetPhysicalDeviceMemoryProperties2(m_physicalDevice, &memoryProperties);
 
         const auto& types = memoryProperties.memoryProperties;

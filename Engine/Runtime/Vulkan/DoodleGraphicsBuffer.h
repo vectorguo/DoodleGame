@@ -29,12 +29,12 @@ namespace Doodle
      * - **不管内存池**。现在一块缓冲独占一块内存，偏移恒为 0。将来多个缓冲共用一块内存时，
      *   内存的来源会换成「池 + 偏移」，那时改的是 Initialize 的签名和这里多一个 offset 字段，
      *   调用点不动
-     * - **拷贝命令在本类，命令池与命令缓冲在命令层**。GPU 侧的拷贝要命令池，
-     *   池归命令缓冲层；本类通过那层的单例借到一条一次性命令缓冲，只负责录「拷什么」。
-     *   分配 / 提交 / 等待 / 释放由 DoodleCommandBuffer::BeginOneTimeTransfer /
-     *   EndOneTimeTransfer 完成。这是一处**刻意的取舍**：原本「资源类不依赖录制层」
-     *   的那条线被单例跨过去了，换来的是整个拷贝动作归在调用者自然会去找的地方，
-     *   而且不必每拷一次建一个池。代价写在 DoodleCommandBuffer::GetInstance 的注释里
+     * - **拷贝内容在本类，命令与池在命令层**。GPU 侧的拷贝要命令池，而池归命令管理层；
+     *   本类通过那层的单例把「拷什么」交给它：BeginTransferCommand →
+     *   FillBufferTransferCommand → EndTransferCommand。这是一处**刻意的取舍**：原本
+     *   「资源类不依赖录制层」的那条线被单例跨过去了，换来的是整个拷贝动作归在
+     *   调用者自然会去找的地方，而且不必每拷一次建一个池。代价写在
+     *   DoodleCommandManager::GetInstance 的注释里
      * - **不知道 mesh、不知道绘制**。它就是一块有大小、有用途的字节区间
      *
      * 内存类型只开放两档（见 EMemoryType），数据进缓冲的路也只有三条：
@@ -47,8 +47,8 @@ namespace Doodle
      * 「类并不真正处理」的组合（比如 HOST_VISIBLE 不带 COHERENT），只会把错误拖到运行时
      *
      * 名字里的 Graphics 不表示它「只给图形管线用」—— Vulkan 里每个缓冲都可用于图形。
-     * 取这个名字是为了与 DoodleCommandBuffer 拉开距离：那两个名字只差中间一个词，
-     * 指的却是完全无关的东西（显存里的数据区间 vs 录好的命令流）
+     * 取这个名字是为了与 DoodleCommandManager 拉开距离：前者是显存里的数据区间，
+     * 后者管理录好的命令流，是两类完全不同的东西
      */
     class DoodleGraphicsBuffer
     {
@@ -132,7 +132,7 @@ namespace Doodle
          * @param pData 初始数据，不得为空；要空缓冲请用不带 pData 的重载
          *
          * @note DeviceLocal 这条路内部会提交一次拷贝并等待完成。所以只能在初始化期
-         *       调用，不得与在途的帧并发，且命令缓冲层的传输池必须已经建好 —— 见 CopyTo
+         *       调用，不得与在途的帧并发，且命令管理层的传输池必须已经建好 —— 见 CopyTo
          */
         void Initialize(const DoodleVulkanDevice& device,
                         VkDeviceSize size,
@@ -172,18 +172,20 @@ namespace Doodle
         /**
          * 把本缓冲的内容整段拷到 dstBuffer，拷完才返回
          *
-         * 从 DoodleCommandBuffer 的单例借到一条一次性传输命令缓冲，录拷贝，
-         * 再交给命令层提交并等待。池与命令缓冲的生灭在命令层，
-         * 「拷什么、什么时候拷」按功能归缓冲
+         * 通过 DoodleCommandManager 的单例开一条传输命令：
+         * BeginTransferCommand → FillBufferTransferCommand(本缓冲, 目标, size) →
+         * EndTransferCommand。池、命令缓冲与拷贝命令的录制都在命令层，
+         * 「拷哪一段」按功能归缓冲
          *
          * @param dstBuffer 目标缓冲。创建时须带 VK_BUFFER_USAGE_TRANSFER_DST_BIT；
          *        本缓冲（源）须带 VK_BUFFER_USAGE_TRANSFER_SRC_BIT
          * @param size 拷贝的字节数。必须同时落在两个缓冲的创建尺寸之内 ——
          *        VkBufferCopy 的 size 不吃 VK_WHOLE_SIZE，那里没有「整块」这个取值
          *
-         * @throws std::runtime_error 命令缓冲层的单例取不到，或一次性传输的
-         *         分配 / 录制 / 提交失败（包括传输池未初始化）。都是调用时机错了 ——
+         * @throws std::runtime_error 传输命令的 begin / 录制 / 提交失败
+         *         （包括传输池未初始化）。都是调用时机错了 ——
          *         与其带着空句柄继续往下走、让校验层在几百行外报错，不如当场停下
+         * @throws std::logic_error 已经有一条传输命令在录制（没有先 End）
          *
          * @note 前置条件：不得与在途的帧并发调用。内部等的是整个图形队列，
          * 帧循环正在跑时调它，CPU 会停下来等 GPU 把当前帧画完。

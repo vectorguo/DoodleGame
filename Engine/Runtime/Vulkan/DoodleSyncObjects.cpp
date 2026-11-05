@@ -31,17 +31,21 @@ namespace Doodle
 
         //VkSemaphoreCreateInfo 在当前版本除了 sType 没有必填字段，
         //flags 与 pNext 是留给以后版本或扩展的
-        VkSemaphoreCreateInfo semaphoreInfo{};
-        semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        constexpr VkSemaphoreCreateInfo semaphoreInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO
+        };
 
         //栅栏要创建成「已发出信号」状态。第一帧的 vkWaitForFences 会等这个栅栏，
         //可第一帧并不存在上一帧去给它发信号，不加这个 flag 会永久阻塞。
         //这不是在伪造信号：程序启动时确实没有任何在途工作，
         //「已完成」就是那一刻真实的初始状态。
         //帧循环第一次 vkResetFences 之后，它就恢复成普通的未发出信号栅栏
-        VkFenceCreateInfo fenceInfo{};
-        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        constexpr VkFenceCreateInfo fenceInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .flags = VK_FENCE_CREATE_SIGNALED_BIT
+        };
 
         //imageAvailable 与帧栅栏按「在途帧」分配，每个槽位一套。
         //

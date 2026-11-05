@@ -9,12 +9,17 @@
 
 #include <stdexcept>
 
-#include "Vulkan/DoodleCommandBuffer.h"
+#include "Vulkan/DoodleCommandManager.h"
 #include "Vulkan/DoodleGraphicsBuffer.h"
 #include "Vulkan/DoodleVulkanDevice.h"
 
 namespace Doodle
 {
+    DoodleTexture::DoodleTexture(const std::string_view assetPath)
+        : DoodleAsset(assetPath)
+    {
+    }
+
     void DoodleTexture::Initialize(const DoodleVulkanDevice& device,
                                    const uint32_t width,
                                    const uint32_t height,
@@ -31,14 +36,25 @@ namespace Doodle
             throw std::runtime_error("texture pixels do not match the given size!");
         }
 
-        m_image.Initialize(device,
-                        {.width = width, .height = height},
-                           kTextureFormat,
-                           VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                           VK_IMAGE_ASPECT_COLOR_BIT);
+        try
+        {
+            m_image.Initialize(device,
+                               width,
+                               height,
+                               kTextureFormat,
+                               VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                               VK_IMAGE_ASPECT_COLOR_BIT);
 
-        UploadPixels(width, height, pixels, size);
-        CreateSampler();
+            UploadPixels(width, height, pixels, size);
+            CreateSampler();
+        }
+        catch (...)
+        {
+            //loader 的强异常安全契约：失败时不能留下已创建的 GPU 资源。
+            //Destroy 对半初始化的状态是安全的（采样器/图像各自检查句柄）
+            Destroy();
+            throw;
+        }
     }
 
     void DoodleTexture::Destroy()
@@ -54,7 +70,8 @@ namespace Doodle
                                      const void* pixels,
                                      const VkDeviceSize size)
     {
-        //中转缓冲：CPU 能写、GPU 能读。与顶点/索引缓冲同一套
+        //中转缓冲：CPU 能写、GPU 能读。与顶点/索引缓冲同一套。
+        //Initialize 失败时会自己清理，所以不需要在 catch 里 Destroy 未建成的缓冲
         DoodleGraphicsBuffer stagingBuffer;
         stagingBuffer.Initialize(*m_pDevice,
                                  size,
@@ -62,144 +79,41 @@ namespace Doodle
                                  DoodleGraphicsBuffer::EMemoryType::HostVisible);
         stagingBuffer.Write(pixels, size);
 
-        //传输池与一次性命令缓冲的生灭归命令层；取不到就是调用时机错了
-        const auto* pCommandBuffer = DoodleCommandBuffer::GetInstance();
-        if (pCommandBuffer == nullptr)
-        {
-            throw std::runtime_error("failed to upload texture: command buffer layer is not available!");
-        }
+        //传输命令的 begin / 录制 / 提交 / 等待都在命令层；这里只把
+        //「哪块缓冲、哪张图、多大」交给它
+        auto& commandManager = DoodleCommandManager::GetInstance();
+        commandManager.BeginTransferCommand();
+        commandManager.FillTextureTransferCommand(stagingBuffer.GetBuffer(), m_image.GetImage(), width, height);
+        commandManager.EndTransferCommand();
 
-        //分配 / 提交 / 等待 / 释放都在命令层，这里只录这张图的三步：
-        //旧布局不要 → 写传输目标 → 拷像素 → 转可采样布局
-        const VkCommandBuffer transferCommandBuffer = pCommandBuffer->BeginOneTimeTransfer();
-        RecordImageTransitionToTransferDst(transferCommandBuffer);
-        RecordCopyBufferToImage(transferCommandBuffer, stagingBuffer.GetBuffer(), width, height);
-        RecordImageTransitionToShaderRead(transferCommandBuffer);
-        pCommandBuffer->EndOneTimeTransfer(transferCommandBuffer);
-
+        //销毁中转缓冲
         stagingBuffer.Destroy();
-    }
-
-    void DoodleTexture::RecordImageTransitionToTransferDst(VkCommandBuffer commandBuffer) const
-    {
-        //① 进 TRANSFER_DST：刚建出来的图，旧内容不要，源 scope 留空。
-        //dst access 只写到 TRANSFER_WRITE —— 接下来对这张图的唯一操作就是拷贝
-        VkImageMemoryBarrier2 barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = m_image.GetImage();
-
-        //整张图、单层单级：DoodleImage 固定单 mip 单层
-        barrier.subresourceRange =
-        {
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1
-        };
-        barrier.srcAccessMask = VK_ACCESS_2_NONE;
-        barrier.srcStageMask = VK_PIPELINE_STAGE_2_NONE;
-        barrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-        barrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-
-        VkDependencyInfo dependencyInfo{};
-        dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dependencyInfo.imageMemoryBarrierCount = 1;
-        dependencyInfo.pImageMemoryBarriers = &barrier;
-        vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
-    }
-
-    void DoodleTexture::RecordImageTransitionToShaderRead(VkCommandBuffer commandBuffer) const
-    {
-        //② 交给采样：TRANSFER_DST → SHADER_READ_ONLY。
-        //拷贝的写要在 TRANSFER 阶段完成；采样读发生在片元着色器
-        VkImageMemoryBarrier2 barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = m_image.GetImage();
-
-        //与上一段相同的单 mip 单层范围
-        barrier.subresourceRange =
-        {
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1
-        };
-        barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-        barrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-        barrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
-        barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-
-        VkDependencyInfo dependencyInfo{};
-        dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dependencyInfo.imageMemoryBarrierCount = 1;
-        dependencyInfo.pImageMemoryBarriers = &barrier;
-        vkCmdPipelineBarrier2(commandBuffer, &dependencyInfo);
-    }
-
-    void DoodleTexture::RecordCopyBufferToImage(VkCommandBuffer commandBuffer,
-                                                VkBuffer sourceBuffer,
-                                                uint32_t width,
-                                                uint32_t height) const
-    {
-        //bufferRowLength / bufferImageHeight 填 0 表示紧密排列；
-        //区域是整张图从 (0,0) 开始
-        VkBufferImageCopy2 copyRegion{};
-        copyRegion.sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2;
-        copyRegion.bufferOffset = 0;
-        copyRegion.bufferRowLength = 0;
-        copyRegion.bufferImageHeight = 0;
-        copyRegion.imageSubresource =
-        {
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .mipLevel = 0,
-            .baseArrayLayer = 0,
-            .layerCount = 1
-        };
-        copyRegion.imageOffset = {0, 0, 0};
-        copyRegion.imageExtent = {width, height, 1};
-
-        VkCopyBufferToImageInfo2 copyInfo{};
-        copyInfo.sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2;
-        copyInfo.srcBuffer = sourceBuffer;
-        copyInfo.dstImage = m_image.GetImage();
-        copyInfo.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        copyInfo.regionCount = 1;
-        copyInfo.pRegions = &copyRegion;
-        vkCmdCopyBufferToImage2(commandBuffer, &copyInfo);
     }
 
     void DoodleTexture::CreateSampler()
     {
-        VkSamplerCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        createInfo.magFilter = VK_FILTER_LINEAR;
-        createInfo.minFilter = VK_FILTER_LINEAR;
-        createInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-        createInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        createInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        createInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        createInfo.mipLodBias = 0.0f;
-        //各向异性是可选特性，本项目的 VkPhysicalDeviceFeatures 全零（没开 samplerAnisotropy），
-        //所以这里必须关掉，maxAnisotropy 也就没有意义
-        createInfo.anisotropyEnable = VK_FALSE;
-        createInfo.maxAnisotropy = 1.0f;
-        createInfo.compareEnable = VK_FALSE;
-        createInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-        createInfo.minLod = 0.0f;
-        //只有一级 mip，上界也取 0；将来生成 mip 时这里要跟着 levelCount 走
-        createInfo.maxLod = 0.0f;
-        createInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-        createInfo.unnormalizedCoordinates = VK_FALSE;
+        constexpr VkSamplerCreateInfo createInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = VK_FILTER_LINEAR,
+            .minFilter = VK_FILTER_LINEAR,
+            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+            .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .mipLodBias = 0.0f,
+            //各向异性是可选特性，本项目的 VkPhysicalDeviceFeatures 全零（没开 samplerAnisotropy），
+            //所以这里必须关掉，maxAnisotropy 也就没有意义
+            .anisotropyEnable = VK_FALSE,
+            .maxAnisotropy = 1.0f,
+            .compareEnable = VK_FALSE,
+            .compareOp = VK_COMPARE_OP_ALWAYS,
+            .minLod = 0.0f,
+            //只有一级 mip，上界也取 0；将来生成 mip 时这里要跟着 levelCount 走
+            .maxLod = 0.0f,
+            .borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+            .unnormalizedCoordinates = VK_FALSE
+        };
 
         if (vkCreateSampler(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_sampler) != VK_SUCCESS)
         {

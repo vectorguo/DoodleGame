@@ -6,8 +6,9 @@
 
 #include <array>
 
-#include "DoodleCommandBuffer.h"
+#include "DoodleCommandManager.h"
 #include "DoodleDepthImages.h"
+#include "DoodleDescriptorManager.h"
 #include "DoodleGraphicsBuffer.h"
 #include "DoodleGraphicsPipeline.h"
 #include "DoodleSwapChain.h"
@@ -240,29 +241,6 @@ namespace Doodle
          */
         void UpdateUniformBuffer(const uint32_t frameIndex, const DoodleDrawContext& context);
 
-        /**
-         * 创建描述符池
-         *
-         * 容量按「每在途帧一个 uniform buffer 描述符、一个集合」报；
-         * 池本身不绑定队列族，也不是管线对象
-         */
-        void CreateDescriptorPool();
-
-        /**
-         * 销毁描述符池
-         *
-         * 池里的描述符集随池一起失效，不需要逐个释放；必须先于 UBO 与图形管线销毁
-         */
-        void DestroyDescriptorPool();
-
-        /**
-         * 从池里分配每帧一个描述符集，并把各帧 UBO 写到 binding 0
-         *
-         * 前置条件：池、UBO 和图形管线都已初始化。集合会一直持有这些缓冲句柄，
-         * 所以交换链重建时不需要重建集合
-         */
-        void CreateDescriptorSets();
-
     private:
         /**
          * 窗口，在 Initialize 时绑定
@@ -300,9 +278,9 @@ namespace Doodle
         DoodleGraphicsPipeline m_graphicsPipeline;
 
         /**
-         * 命令缓冲层：录制时引用上述各层，须排在图形管线之后
+         * 命令管理层：录制时引用上述各层，须排在图形管线之后
          */
-        DoodleCommandBuffer m_commandBuffer;
+        DoodleCommandManager m_commandManager;
 
         /**
          * 每帧一块 uniform 缓冲，HostVisible 类型
@@ -314,20 +292,11 @@ namespace Doodle
         std::array<DoodleGraphicsBuffer, MAX_FRAMES_IN_FLIGHT> m_uniformBuffers;
 
         /**
-         * 描述符池：为每帧的描述符集提供分配空间
+         * 描述符管理器：每帧 UBO 的 set 0 与材质纹理的 set 1
          *
-         * 归门面所有，而不是图形管线层：它服务的是每帧 UBO 的接线，
-         * 与管线配置无关。销毁时必须排在 UBO 和图形管线之前
+         * 排在 UBO 之后（要缓冲句柄）、同步对象之前；销毁时排在 UBO 与图形管线之前
          */
-        VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-
-        /**
-         * 每帧一个描述符集，各自把该帧的 UBO 接到 binding 0
-         *
-         * 集合的句柄随池释放，不需要单独销毁；与 m_uniformBuffers 使用同一个
-         * frameIndex 取用
-         */
-        std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_descriptorSets{};
+        DoodleDescriptorManager m_descriptorManager;
 
         /**
          * 同步对象层：帧信号量与栅栏

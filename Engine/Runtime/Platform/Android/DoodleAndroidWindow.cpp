@@ -330,13 +330,13 @@ namespace Doodle
 
     VkResult DoodleAndroidWindow::CreateSurface(VkInstance instance, VkSurfaceKHR* pSurface) const
     {
-        VkAndroidSurfaceCreateInfoKHR createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
-        createInfo.pNext = nullptr;
-        createInfo.flags = 0;
-        //取当下的那个窗口。Suspend 之后又 Resume 时，这里拿到的是新窗口 ——
-        //本对象一直没换，换的是它底下的 window 指针
-        createInfo.window = m_pApp->window;
+        const VkAndroidSurfaceCreateInfoKHR createInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR,
+            //取当下的那个窗口。Suspend 之后又 Resume 时，这里拿到的是新窗口 ——
+            //本对象一直没换，换的是它底下的 window 指针
+            .window = m_pApp->window
+        };
 
         //Android 上 libvulkan.so 是系统库，这个入口直接可用，
         //不需要像桌面那样通过 vkGetInstanceProcAddr 取

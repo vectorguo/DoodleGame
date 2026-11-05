@@ -458,12 +458,12 @@ namespace Doodle
 
     VkResult DoodleWindowsWindow::CreateSurface(VkInstance instance, VkSurfaceKHR* pSurface) const
     {
-        VkWin32SurfaceCreateInfoKHR createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-        createInfo.pNext = nullptr;
-        createInfo.flags = 0;
-        createInfo.hinstance = GetModuleHandleW(nullptr);
-        createInfo.hwnd = m_hWnd;
+        const VkWin32SurfaceCreateInfoKHR createInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+            .hinstance = GetModuleHandleW(nullptr),
+            .hwnd = m_hWnd
+        };
 
         //Windows 上的 loader（vulkan-1.lib / vulkan-1.dll）直接导出了这个入口，
         //和 Android 一样不必经 vkGetInstanceProcAddr 去取

@@ -18,16 +18,17 @@ namespace Doodle
     class DoodleVulkanDevice;
 
     /**
-     * 命令缓冲层：把命令录下来，送到队列上
+     * 命令管理层：管理命令池与命令缓冲，把命令录下来，送到队列上
      *
      * 本层管两样东西：
      *
      * - **每帧的绘制流**（Record）：每个在途帧一个命令缓冲，反复重录不重建。
      *   交换链重建时本层也不重建 —— 本层不缓存任何上游层的句柄，
      *   录制时现取，重建后重录拿到的自然是新句柄
-     * - **传输命令池与一次性传输**：拷贝 / 上传用的池。池留在这里，因为它和绘制池
-     *   是同一种东西；「从池里分配命令缓冲、提交、等待、释放」也在这里
-     *   （BeginOneTimeTransfer / EndOneTimeTransfer）。资源类只负责录「拷什么」，
+     * - **传输命令池与传输命令**：拷贝 / 上传用的池。池留在这里，因为它和绘制池
+     *   是同一种东西；「从池里分配命令缓冲、录制、提交、等待、释放」也在这里
+     *   （BeginTransferCommand / FillBufferTransferCommand /
+     *   FillTextureTransferCommand / EndTransferCommand）。资源类只提供要拷的句柄与尺寸，
      *   谁拥有池，谁负责命令缓冲的生灭
      *
      * 生命周期与程序一致。两个命令池都只在 Initialize 里建一次；
@@ -46,44 +47,45 @@ namespace Doodle
      * 命令池与命令缓冲不拆成两个类：命令缓冲从池中分配、随池释放，
      * 两者的生命周期完全重合，没有各自独立的锚点
      */
-    class DoodleCommandBuffer
+    class DoodleCommandManager
     {
     public:
         /**
          * 构造时把自己登记为「当前那一份」，析构时注销（见 GetInstance）
          */
-        DoodleCommandBuffer();
-        ~DoodleCommandBuffer();
+        DoodleCommandManager();
+        ~DoodleCommandManager();
 
         //登记关系是一对一的：复制一份出来，s_pInstance 只会指向其中一个，
         //另一份对 GetInstance 不可见 —— 那不是这个类想要的语义
-        DoodleCommandBuffer(const DoodleCommandBuffer&) = delete;
-        DoodleCommandBuffer& operator=(const DoodleCommandBuffer&) = delete;
+        DoodleCommandManager(const DoodleCommandManager&) = delete;
+        DoodleCommandManager& operator=(const DoodleCommandManager&) = delete;
 
         /**
-         * 取当前那一份命令缓冲层；没有时返回 nullptr
+         * 取当前那一份命令管理层
          *
          * 存在的理由只有一个：`DoodleGraphicsBuffer` 的拷贝与纹理上传按功能归属
          * 在资源类上，却需要本层的传输池 —— 而池归本层管。与其让调用方沿着每一层
-         * 把引用传下来，不如给本层开一个和 DoodleApplication 同形的全局入口
+         * 把引用传下来，不如给本层开一个和 DoodleApplication / DoodleAssetManager
+         * 同形的全局入口
          *
-         * 与 DoodleApplication::GetInstance 的区别只有一处：那边返回引用
-         * （它假定调用时对象必然活着），这里返回指针 —— 因为「取不到就失败」
-         * 是拷贝失败时的既定语义，返回引用会把「取不到」变成崩溃
+         * 返回引用而不是指针：本对象是 DoodleVulkanManager 的成员，而它又是
+         * DoodleApplication 的成员，存在期与应用一致；所有合法调用（资源上传、
+         * CopyTo）都在应用生命周期内。构造之前 / 析构之后取用是未定义行为，
+         * 与 DoodleAssetManager / DoodleSceneManager 的口径一致
          *
-         * @note 和 DoodleApplication 一样，本工程同一进程只有一份。
-         * 但「取到了」不等于「能用了」：对象在 Initialize 之前就已经构造，
-         * 命令池却要到那时才有。真正的前置条件由 BeginOneTimeTransfer 自己判断
+         * @note 「取到了」不等于「能用了」：对象在 Initialize 之前就已经构造，
+         * 命令池却要到那时才有。真正的前置条件由 BeginTransferCommand 自己判断
          *
          * @note 代价要记清楚：这层依赖是**隐式**的 —— 调用点看不出它依赖命令层，
          * 也看不出命令层此刻是否可用。所以只给真正需要全局入口的地方开这个口子，
          * 别把别的层照这个模式铺开；层与层之间能注入就注入
          * （参见 DoodleAndroidWindow 为什么收引用而不是调 GetInstance）
          */
-        [[nodiscard]] static DoodleCommandBuffer* GetInstance();
+        [[nodiscard]] static DoodleCommandManager& GetInstance();
 
         /**
-         * 初始化命令缓冲层
+         * 初始化命令管理层
          * @param device 已初始化的Vulkan设备
          * @param swapChain 已初始化的交换链
          * @param graphicsPipeline 已初始化的图形管线
@@ -95,7 +97,7 @@ namespace Doodle
                         const DoodleDepthImages& depthImages);
 
         /**
-         * 销毁命令缓冲层
+         * 销毁命令管理层
          */
         void Destroy();
 
@@ -108,8 +110,11 @@ namespace Doodle
          *        材质与模型矩阵；空表示本帧只清屏不画东西 —— 那是合法状态，
          *        不是错误。用 const vector& 而不是 span：当前唯一调用方传的就是 vector，
          *        视图类型没有实际收益；出现第二种容器 / 子区间时再泛化
-         * @param descriptorSet 本帧要绑定的描述符集，必须与 frameIndex 同槽位。
+         * @param frameDescriptorSet 本帧的 set 0，必须与 frameIndex 同槽位。
          *        它把该帧的 UBO（view / proj / 主光源）接到 binding 0；所有权在门面，本层只使用
+         * @param textureDescriptorSets 每条绘制项对应的 set 1（材质纹理），
+         *        必须与 drawItems 等长、下标一一对应。集合按纹理缓存，同一张纹理
+         *        的多个绘制项会拿到同一个句柄；所有权在门面，本层只绑定
          * @return 录好的那条命令缓冲，供调用方提交
          *
          * 把句柄交回去而不是让调用方自己再按索引取一次：录的和提交的必须是同一条，
@@ -122,10 +127,11 @@ namespace Doodle
          * 塞成成员等于把「每帧都会变的东西」和「只认程序生命周期的东西」混在一起，
          * 凭空多出「重建时要不要跟着换」这种问题。「谁使用」和「谁拥有」是两件事
          *
-         * 组里每个绘制项共用同一条管线、同一份视口、同一个描述符集；
-         * 随绘制项变化的只有 localToWorld 与材质基色（push constant）、顶点 / 索引缓冲、
-         * 以及子网格下标对应的 firstIndex / indexCount。所以共用状态在循环外只设一次，
-         * 循环里只录随绘制项变的那几样。
+         * 组里每个绘制项共用同一条管线、同一份视口、同一个 set 0；
+         * 随绘制项变化的是 set 1（材质纹理）、localToWorld 与材质基色（push constant）、
+         * 顶点 / 索引缓冲，以及子网格下标对应的 firstIndex / indexCount。
+         * 所以共用状态在循环外只设一次，循环里只录随绘制项变的那几样；
+         * 连续多个绘制项共用同一张纹理时，set 1 不重复绑定
          *
          * 一个对象可能有多个子网格，收集侧会把它展开成多条绘制项 ——
          * 本层按每条项的 submeshIndex 回网格取区间，不关心它按什么材质分了段
@@ -143,35 +149,64 @@ namespace Doodle
         [[nodiscard]] VkCommandBuffer Record(const uint32_t frameIndex,
                                              const uint32_t imageIndex,
                                              const std::vector<DoodleDrawItem>& drawItems,
-                                             VkDescriptorSet descriptorSet);
+                                             VkDescriptorSet frameDescriptorSet,
+                                             const std::vector<VkDescriptorSet>& textureDescriptorSets);
 
         /**
-         * 开始一条一次性传输命令缓冲
+         * 开始一条传输命令
          *
-         * 分配 + begin 在这里做完，返回的句柄交给调用方录制。用传输池而不是
-         * 绘制池：绘制缓冲活满整个程序、反复重录；这条录一次就提交并释放。
+         * 从传输池分配一条命令缓冲并 begin，句柄记在本层；之后的
+         * FillBufferTransferCommand / FillTextureTransferCommand 都录到它上面。
+         * 用传输池而不是绘制池：绘制缓冲活满整个程序、反复重录；这条录一次就提交并释放
          *
-         * 调用方录完必须交给 EndOneTimeTransfer —— 本层不持有这条命令缓冲，
-         * 中途抛异常就没人释放了。中间只该调用不抛异常的录制函数
+         * 同一时刻只允许一条传输命令。资源上传是初始化期串行执行的，这个约束
+         * 与调用方式一致；已经有活动传输时再 Begin 属于调用顺序错误，当场抛
          *
          * @throws std::runtime_error 本层尚未 Initialize（传输池不存在），
          *         或分配 / begin 失败。失败时会释放已经分配的部分
+         * @throws std::logic_error 已经有一条传输命令在录制
          */
-        [[nodiscard]] VkCommandBuffer BeginOneTimeTransfer() const;
+        void BeginTransferCommand();
 
         /**
-         * 结束、提交并等待一条一次性传输命令缓冲，然后释放它
+         * 在当前传输命令里录一次整段 buffer → buffer 拷贝
+         *
+         * 名字与 FillTextureTransferCommand 对称：Buffer 对 Texture，一眼能看出
+         * 填的是哪类传输。两侧都从偏移 0 开始，拷贝 size 字节。
+         * size 不能写 VK_WHOLE_SIZE，VkBufferCopy 里没有这个取值
+         *
+         * @throws std::logic_error 没有活动的传输命令（没有先 Begin）
+         */
+        void FillBufferTransferCommand(VkBuffer source,
+                                       VkBuffer destination,
+                                       VkDeviceSize size);
+
+        /**
+         * 在当前传输命令里录一次纹理上传
+         *
+         * 三步：UNDEFINED → TRANSFER_DST → buffer → image 拷贝 →
+         * TRANSFER_DST → SHADER_READ_ONLY。目标固定单 mip、单层、颜色切面；
+         * 源缓冲按 RGBA8 紧密排列。将来接深度纹理 / mip / 数组纹理时再扩参数
+         *
+         * @throws std::logic_error 没有活动的传输命令（没有先 Begin）
+         */
+        void FillTextureTransferCommand(VkBuffer source,
+                                        VkImage destination,
+                                        uint32_t width,
+                                        uint32_t height);
+
+        /**
+         * 结束、提交并等待当前传输命令，然后释放它
          *
          * 等整个图形队列空闲：一次上传不追求异步，而且调用方紧接着通常要
          * 销毁中转资源，必须确认 GPU 不再引用它们。提交本身提供可见性，
          * 不需要额外内存屏障；将来把上传与绘制合进同一次提交时才要补
          *
-         * @param commandBuffer 必须来自 BeginOneTimeTransfer，且尚未提交
-         *
          * @throws std::runtime_error 本层尚未 Initialize，或 end / 提交失败。
-         *         end / 提交失败时会先释放命令缓冲再抛
+         *         end / 提交失败时会先释放命令缓冲、清空活动句柄再抛
+         * @throws std::logic_error 没有活动的传输命令（没有先 Begin）
          */
-        void EndOneTimeTransfer(VkCommandBuffer commandBuffer) const;
+        void EndTransferCommand();
 
     private:
         /**
@@ -199,6 +234,37 @@ namespace Doodle
          * 录一次布局转换：画完之后、交回呈现引擎之前，转回呈现布局
          */
         void RecordImageTransitionToPresent(VkCommandBuffer commandBuffer, const uint32_t imageIndex) const;
+
+        /**
+         * 录一次布局转换：刚建出来的图 → TRANSFER_DST
+         *
+         * 旧内容不要，源 scope 留空；dst access 只写到 TRANSFER_WRITE ——
+         * 接下来对这张图的唯一操作就是拷贝
+         *
+         * subresource 固定单 mip、单层、颜色切面 —— 与 DoodleImage 的单级单层
+         * 不变量一致；将来接 mip 时，这里和采样器的 LOD 一起改
+         */
+        void RecordImageTransitionToTransferDst(VkCommandBuffer commandBuffer, VkImage image) const;
+
+        /**
+         * 录一次布局转换：TRANSFER_DST → SHADER_READ_ONLY
+         *
+         * 拷贝的写要在 TRANSFER 阶段完成；采样读发生在片元着色器
+         */
+        void RecordImageTransitionToShaderRead(VkCommandBuffer commandBuffer, VkImage image) const;
+
+        /**
+         * 录「中转缓冲 → 整张图像」的拷贝
+         *
+         * 名字对齐 vkCmdCopyBufferToImage2：Record + 命令名。
+         * bufferRowLength / bufferImageHeight 填 0 表示紧密排列；
+         * 区域是整张图从 (0,0) 开始
+         */
+        void RecordCopyBufferToImage(VkCommandBuffer commandBuffer,
+                                     VkBuffer sourceBuffer,
+                                     VkImage destinationImage,
+                                     uint32_t width,
+                                     uint32_t height) const;
 
         /**
          * 创建命令池
@@ -239,7 +305,7 @@ namespace Doodle
         /**
          * 当前这一份，构造时登记、析构时注销，取用见 GetInstance
          */
-        static DoodleCommandBuffer* s_pInstance;
+        static DoodleCommandManager* s_pInstance;
 
         /**
          * Vulkan设备层，在 Initialize 时绑定
@@ -281,8 +347,16 @@ namespace Doodle
          * 建池时那个 VK_COMMAND_POOL_CREATE_TRANSIENT_BIT 说的正是这件事
          *
          * 不带 VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT：这里的缓冲
-         * 走的是「分配 → 录 → 提交 → 释放」，不需要重置，见 BeginOneTimeTransfer 里的注释
+         * 走的是「分配 → 录 → 提交 → 释放」，不需要重置，见 BeginTransferCommand 里的注释
          */
         VkCommandPool m_transferCommandPool = VK_NULL_HANDLE;
+
+        /**
+         * 当前活动传输命令；BeginTransferCommand 置上，EndTransferCommand 清空
+         *
+         * 同一时刻最多一条：传输都是初始化期串行上传，单句柄足够；
+         * 也正因为记在这里，Begin / End 不需要把句柄交给调用方
+         */
+        VkCommandBuffer m_transferCommandBuffer = VK_NULL_HANDLE;
     };
 }

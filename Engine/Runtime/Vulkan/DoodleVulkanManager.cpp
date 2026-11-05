@@ -12,7 +12,6 @@
 
 #include <cstdint>
 #include <stdexcept>
-#include <vector>
 
 namespace Doodle
 {
@@ -27,15 +26,14 @@ namespace Doodle
         //深度图按交换链尺寸建；图形管线要读它的格式，所以它必须排在管线之前
         m_depthImages.Initialize(m_device, m_swapChain.GetImageExtent());
         m_graphicsPipeline.Initialize(m_device, m_swapChain, m_depthImages);
-        m_commandBuffer.Initialize(m_device, m_swapChain, m_graphicsPipeline, m_depthImages);
+        m_commandManager.Initialize(m_device, m_swapChain, m_graphicsPipeline, m_depthImages);
 
         //UBO 每帧更新，走 HostVisible 类型（CPU 直接写），不走设备本地 + 中转。
         //映射由第一次 Write 建立，这里只负责分配。
-        //描述符池/集必须排在 UBO 与图形管线之后：池要分配集合，集合要读取已经建好的
-        //图形管线 set layout，写入时又要有 UBO 句柄
+        //描述符管理器要读图形管线的 set layout、写 UBO 缓冲句柄；默认白图的
+        //上传还要借命令管理器的传输池 —— 所以它排在 UBO 与命令层之后
         CreateUniformBuffers();
-        CreateDescriptorPool();
-        CreateDescriptorSets();
+        m_descriptorManager.Initialize(m_device, m_graphicsPipeline, m_uniformBuffers);
 
         m_syncObjects.Initialize(m_device, m_swapChain);
     }
@@ -56,13 +54,13 @@ namespace Doodle
 
         //按「使用者先、被使用者后」销毁。
         //
-        //命令缓冲先走，因为它录下的绘制命令可能引用描述符集；接着池走，
-        //集合随之失效；然后 UBO 才能安全销毁。图形管线持有 set layout，
-        //必须排在池之后。其余资源与这几条依赖无关，按原有逆序排列
+        //命令管理层先走，因为它录下的绘制命令可能引用描述符集；接着描述符管理器
+        //释放两组池与默认白图，然后 UBO 才能安全销毁。图形管线持有 set layout，
+        //必须排在描述符管理器之后。其余资源与这几条依赖无关，按原有逆序排列
         m_syncObjects.Destroy();
-        m_commandBuffer.Destroy();
+        m_commandManager.Destroy();
+        m_descriptorManager.Destroy();
 
-        DestroyDescriptorPool();
         DestroyUniformBuffers();
 
         m_graphicsPipeline.Destroy();
@@ -187,20 +185,29 @@ namespace Doodle
         //    用同一块 UBO 给两个在途帧共用，会在这两者之间形成读写竞争
         UpdateUniformBuffer(frameIndex, context);
 
-        //④ 录制本帧命令。命令缓冲层不缓存任何上游句柄，录制时现取，
+        //③'' 描述符管理器为本帧每条绘制项解析材质纹理集合。第一次用到的纹理
+        //在这里分配集合；没有配置纹理的材质用默认白图。结果与 drawItems 等长，
+        //录制侧按同一下标取用 —— 顺序不能错开
+        const VkDescriptorSet frameDescriptorSet = m_descriptorManager.GetFrameDescriptorSet(frameIndex);
+        const auto& textureDescriptorSets = m_descriptorManager.ResolveTextureDescriptorSets(context.drawItems);
+
+        //④ 录制本帧命令。命令管理层不缓存任何上游句柄，录制时现取，
         //   所以交换链重建之后重录拿到的自然是新句柄。
         //   它自己那条命令缓冲由它按 frameIndex 取 —— 本层交出帧索引即可，
         //   不必先取好句柄再传进去，也就没有「传错槽位」这种可能。
-        //   描述符集同理：它归本层持有，Record 只在本帧使用它
+        //   两个描述符集同理：set 0（帧 UBO）与 set 1（材质纹理）都由描述符管理器
+        //   持有，Record 只在本帧使用它们
         //
         //   返回值就是刚录好的那一条，⑤ 提交要用。提交归门面，
-        //   但「本帧录在哪一条」归命令缓冲层 —— 让它顺手交回来，两边就不可能指向不同的槽位
+        //   但「本帧录在哪一条」归命令管理层 —— 让它顺手交回来，两边就不可能指向不同的槽位
         //
         //   绘制项由调用方（应用层）从场景里收集好交进来，本层不关心它们
         //   从哪来。空列表也会录一条只做布局转换、不画东西的命令缓冲
-        const auto commandBuffer = m_commandBuffer.Record(frameIndex, imageIndex,
+        const auto commandBuffer = m_commandManager.Record(frameIndex,
+                                                          imageIndex,
                                                           context.drawItems,
-                                                          m_descriptorSets[frameIndex]);
+                                                          frameDescriptorSet,
+                                                          textureDescriptorSets);
 
         //⑤ 提交到图形队列
         //
@@ -208,19 +215,23 @@ namespace Doodle
         //信号量自己身上（原来是和信号量平行、靠下标对齐的 pWaitDstStageMask），
         //命令缓冲也收进 VkCommandBufferSubmitInfo ——
         //「两个数组下标必须一一对应」这件事从「容易写错」变成「写不出来」
-        VkCommandBufferSubmitInfo commandBufferInfo{};
-        commandBufferInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-        commandBufferInfo.commandBuffer = commandBuffer;
+        const VkCommandBufferSubmitInfo commandBufferInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+            .commandBuffer = commandBuffer
+        };
 
-        VkSemaphoreSubmitInfo waitSemaphoreInfo{};
-        waitSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-        waitSemaphoreInfo.semaphore = imageAvailableSemaphore;
         //等到图像真的可用再开始写颜色。这里选 COLOR_ATTACHMENT_OUTPUT 而不是 TOP_OF_PIPE，
         //是让顶点着色器之类不碰这张图的工作可以先跑起来。
         //这个取值必须与 RecordImageTransitionToColorAttachment 里那条屏障的 srcStageMask 一致，
         //两边对不上就会出现依赖链断裂。原来对齐的对方是渲染通道里的子通道依赖，
         //动态渲染之后换成了命令缓冲里的屏障 —— 规矩没变，位置变了
-        waitSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        const VkSemaphoreSubmitInfo waitSemaphoreInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+            .semaphore = imageAvailableSemaphore,
+            .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT
+        };
 
         //绘制完成时发出信号，供⑥的呈现等待。
         //这里按图像索引取，而不是用某个固定信号量：能 acquire 到第 imageIndex 张图，
@@ -228,21 +239,25 @@ namespace Doodle
         //此刻它必定是 unsignaled，signal 它才合法。
         //全场共用一个就会出现「上一帧的呈现还没消费掉就又被 signal」的竞争
         const auto renderFinishedSemaphore = m_syncObjects.GetRenderFinishedSemaphore(imageIndex);
-        VkSemaphoreSubmitInfo signalSemaphoreInfo{};
-        signalSemaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-        signalSemaphoreInfo.semaphore = renderFinishedSemaphore;
         //signal 这一格的 stageMask 说的是「等到哪些阶段结束才发信号」，不是「谁在等」。
         //取 ALL_COMMANDS：出口那条布局转换也被排在「本批工作结束之前」，信号量必须等它
-        signalSemaphoreInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        const VkSemaphoreSubmitInfo signalSemaphoreInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+            .semaphore = renderFinishedSemaphore,
+            .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
+        };
 
-        VkSubmitInfo2 submitInfo{};
-        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-        submitInfo.waitSemaphoreInfoCount = 1;
-        submitInfo.pWaitSemaphoreInfos = &waitSemaphoreInfo;
-        submitInfo.commandBufferInfoCount = 1;
-        submitInfo.pCommandBufferInfos = &commandBufferInfo;
-        submitInfo.signalSemaphoreInfoCount = 1;
-        submitInfo.pSignalSemaphoreInfos = &signalSemaphoreInfo;
+        const VkSubmitInfo2 submitInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+            .waitSemaphoreInfoCount = 1,
+            .pWaitSemaphoreInfos = &waitSemaphoreInfo,
+            .commandBufferInfoCount = 1,
+            .pCommandBufferInfos = &commandBufferInfo,
+            .signalSemaphoreInfoCount = 1,
+            .pSignalSemaphoreInfos = &signalSemaphoreInfo
+        };
 
         //最后一个参数把栅栏挂到这次提交上：GPU 画完时它会被置为已发出信号，
         //供下一帧的①等待
@@ -254,15 +269,16 @@ namespace Doodle
         //⑥ 把这张图像交回交换链呈现。等的是⑤里刚发出信号的那个信号量，
         //   也就是「绘制已完成」，保证屏幕上不会出现半成品。
         //呈现这边没有 sync2 版本：VkPresentInfoKHR 收的还是裸句柄，没有阶段要填
-        VkPresentInfoKHR presentInfo{};
-        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-        presentInfo.waitSemaphoreCount = 1;
-        presentInfo.pWaitSemaphores = &renderFinishedSemaphore;
-
         const VkSwapchainKHR swapChains[] = {m_swapChain.GetSwapChain()};
-        presentInfo.swapchainCount = 1;
-        presentInfo.pSwapchains = swapChains;
-        presentInfo.pImageIndices = &imageIndex;
+        const VkPresentInfoKHR presentInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &renderFinishedSemaphore,
+            .swapchainCount = 1,
+            .pSwapchains = swapChains,
+            .pImageIndices = &imageIndex
+        };
 
         const auto presentResult = vkQueuePresentKHR(m_device.GetPresentQueue(), &presentInfo);
 
@@ -410,84 +426,7 @@ namespace Doodle
         //第一次调用会在缓冲内部建立持久映射，之后每帧只是一次 memcpy
         //
         //这里只有帧级数据（相机 + 光源）。每个绘制项的 localToWorld 走 push constant，
-        //由 DoodleCommandBuffer::Record 在逐个 draw item 时推进命令缓冲
+        //由 DoodleCommandManager::Record 在逐个 draw item 时推进命令缓冲
         m_uniformBuffers[frameIndex].Write(&ubo, sizeof(ubo));
-    }
-
-    void DoodleVulkanManager::CreateDescriptorPool()
-    {
-        //每种描述符要多少：每在途帧一个 UBO
-        VkDescriptorPoolSize poolSize{};
-        poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-
-        VkDescriptorPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        //不单独释放某个集合：集合寿命与程序一致，随池一起销毁即可
-        poolInfo.flags = 0;
-        poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-        poolInfo.poolSizeCount = 1;
-        poolInfo.pPoolSizes = &poolSize;
-
-        if (vkCreateDescriptorPool(m_device.GetLogicalDevice(), &poolInfo, nullptr,
-                                   &m_descriptorPool) != VK_SUCCESS)
-        {
-            throw std::runtime_error("failed to create descriptor pool!");
-        }
-    }
-
-    void DoodleVulkanManager::DestroyDescriptorPool()
-    {
-        if (m_descriptorPool != VK_NULL_HANDLE)
-        {
-            //池销毁时，池里分配的描述符集自动失效，不需要逐个 vkFreeDescriptorSets
-            vkDestroyDescriptorPool(m_device.GetLogicalDevice(), m_descriptorPool, nullptr);
-            m_descriptorPool = VK_NULL_HANDLE;
-        }
-
-        m_descriptorSets.fill(VK_NULL_HANDLE);
-    }
-
-    void DoodleVulkanManager::CreateDescriptorSets()
-    {
-        //pSetLayouts 要求「每个集合一个布局句柄」，不会自动广播同一个布局，
-        //所以即使所有集合共用同一份布局，也要把它重复 N 次
-        const auto descriptorSetLayout = m_graphicsPipeline.GetDescriptorSetLayout();
-        std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
-
-        VkDescriptorSetAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocInfo.descriptorPool = m_descriptorPool;
-        allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
-        allocInfo.pSetLayouts = layouts.data();
-
-        m_descriptorSets.fill(VK_NULL_HANDLE);
-        if (vkAllocateDescriptorSets(m_device.GetLogicalDevice(), &allocInfo, m_descriptorSets.data()) != VK_SUCCESS)
-        {
-            throw std::runtime_error("failed to allocate descriptor sets!");
-        }
-
-        //把第 i 块 UBO 接到第 i 个集合的 binding 0。
-        //这一步是 host 侧更新，不是录制命令；集合在首次绘制前写完，之后不再改
-        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
-        {
-            VkDescriptorBufferInfo bufferInfo{};
-            bufferInfo.buffer = m_uniformBuffers[i].GetBuffer();
-            bufferInfo.offset = 0;
-            bufferInfo.range = sizeof(DoodleUniformBufferObject);
-
-            VkWriteDescriptorSet descriptorWrite{};
-            descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptorWrite.dstSet = m_descriptorSets[i];
-            descriptorWrite.dstBinding = 0;
-            descriptorWrite.dstArrayElement = 0;
-            descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            descriptorWrite.descriptorCount = 1;
-            descriptorWrite.pBufferInfo = &bufferInfo;
-            descriptorWrite.pImageInfo = nullptr;
-            descriptorWrite.pTexelBufferView = nullptr;
-
-            vkUpdateDescriptorSets(m_device.GetLogicalDevice(), 1, &descriptorWrite, 0, nullptr);
-        }
     }
 }
