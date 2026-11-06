@@ -239,17 +239,64 @@ set(DOODLE_APP_ANDROID_SOURCES
 # 这是构建的一步，不是手动步骤。
 # 原先的安排是「改完 GLSL 手动跑 Shaders/compile.sh」，它有个很坏的失败模式：
 # 忘了跑 → 悄悄用着上一次的旧字节码 → 画面不对但没有任何报错，很难查到根上。
-# 现在把 GLSL 源码列为依赖，改了就会自动重编。
+# 现在把着色器源文件列为依赖，改了就会自动重编。
 #
-# 内嵌副本放构建目录而不是源码目录：构建产物不落到源码树里，
-# 桌面和 Android 两个构建目录也就不会互相踩
-
-set(_doodle_shader_sources
-    "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/shader.vert"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/shader.frag"
+# 所有产物都放构建目录而不是源码目录：构建产物不落到源码树里，
+# 各个构建目录（桌面 Debug / Release、Android）也就不会互相踩
+#
+# 着色器清单只在这里登记一次，而且登记的是通配符、不是文件名：
+# 一个着色器就是 Shaders/ 下同名的一组文件（lit.vert / lit.frag，以后还有
+# lit.shader.json），加删着色器就是加删文件，这里和 compile.sh 都不用改。
+# CONFIGURE_DEPENDS 让每次构建都重新核对通配结果，变了就自动重新配置 ——
+# 资源拷贝（doodle_stage_resources）靠的也是这个机制
+#
+# 扩展名集合在 compile.sh 里还有一份（它按扩展名决定编译还是原样拷贝）。
+# 两边对不上时脚本会当场报「不认识的着色器文件类型」，不会悄悄漏掉
+file(GLOB _doodle_shader_names
+    RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/Shaders"
+    CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.vert"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.shader.json"
 )
+if(NOT _doodle_shader_names)
+    message(FATAL_ERROR "Shaders/ 下没有任何着色器源文件（*.vert / *.frag / *.shader.json）")
+endif()
+list(TRANSFORM _doodle_shader_names
+    PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/"
+    OUTPUT_VARIABLE _doodle_shader_sources
+)
+
 set(_doodle_shader_output_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(_doodle_embedded_shaders "${_doodle_shader_output_dir}/DoodleEmbeddedShaders.h")
+
+# 运行时文件（.spv 与描述文件）落在这里，目录结构与运行时路径一致：
+# 运行时读 "Shaders/lit.vert.spv"，这里就是 <generated>/Shaders/lit.vert.spv。
+# 桌面构建把它整个拷到运行时目录（见 doodle_stage_shaders），内嵌副本也由它生成
+set(_doodle_shader_runtime_dir "${_doodle_shader_output_dir}/Shaders")
+
+# 着色器的文件一律放 Shaders/，Resources/ 下不能有名为 Shaders 的顶层项。
+#
+# 运行时目录里的 Shaders/ 归着色器拷贝管。桌面上资源拷贝会先删掉目的地里与
+# Resources 顶层同名的目录，着色器拷贝也是先删 Shaders/ 再拷 —— 两边会互相删掉
+# 对方的文件，最后剩哪一半取决于谁后跑。哪怕 Resources/Shaders/ 是空目录也一样：
+# 资源拷贝照删不误，而只改了资源的那次构建不会重新链接，着色器那份就补不回来。
+# Android 上它会变成 APK 里的同路径资产，着色器改走文件来源读取之后，
+# 会盖住内嵌的那一份。
+#
+# 这原本是一条只能靠人记住的约定，这里改成配置时当场报错。
+# 比较不分大小写：macOS / Windows 的文件系统默认不分，shaders/ 删的也是 Shaders/。
+# 带 CONFIGURE_DEPENDS，之后才建的目录也会在下一次构建时被发现
+file(GLOB _doodle_resource_top_entries
+    RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/Resources"
+    CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/*")
+list(TRANSFORM _doodle_resource_top_entries TOLOWER)
+if("shaders" IN_LIST _doodle_resource_top_entries)
+    message(FATAL_ERROR
+        "Resources/ 下不能有名为 Shaders 的顶层项（不分大小写，空目录也不行），着色器的文件一律放 Shaders/。\n"
+        "运行时的 Shaders/ 由着色器拷贝负责，Resources 下的同名目录会和它互相删掉对方的文件。")
+endif()
 
 # 用哪个 glslc：
 #   Android —— NDK 自带一份（shader-tools/<host>/glslc），
@@ -309,14 +356,19 @@ if(CMAKE_HOST_WIN32)
     set(_doodle_shader_script_launcher "${_doodle_bash}")
 endif()
 
+# 文件名放在命令行上，而不是让 compile.sh 自己扫目录。差别在删除：
+# 删掉一个着色器时，剩下的源文件都没有变新，单靠 DEPENDS 这一步不会重跑，
+# 被删的那个会留在内嵌副本和运行时目录里。文件名写进命令，删文件就等于
+# 命令变了，Ninja 会因此重跑（CLion 与 Android 用的都是它）
 add_custom_command(
     OUTPUT "${_doodle_embedded_shaders}"
     COMMAND ${CMAKE_COMMAND} -E env "GLSLC=${_doodle_glslc}"
             ${_doodle_shader_script_launcher}
             "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/compile.sh" "${_doodle_shader_output_dir}"
+            ${_doodle_shader_names}
     DEPENDS ${_doodle_shader_sources}
             "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/compile.sh"
-    COMMENT "Compile GLSL shaders and embed them"
+    COMMENT "Compile shaders and embed them"
     VERBATIM
 )
 list(APPEND DOODLE_SHARED_SOURCES "${_doodle_embedded_shaders}")
@@ -482,6 +534,31 @@ function(doodle_stage_resources destination)
     add_dependencies(DoodleGame doodle_stage_resources)
 endfunction()
 
+# ---- 运行时着色器：构建目录里的 generated/Shaders/ 整个跟着可执行文件走 ----
+#
+# 与上面的资源拷贝是一对，目的地同样由调用方传进来：macOS 是
+# .app/Contents/Resources，Windows 是可执行文件旁边。运行时按 "Shaders/lit.vert.spv"
+# 这样的相对路径找（DoodleShaderModule::ReadFile），所以拷过去的是 Shaders/ 这一层目录。
+#
+# 直接从构建目录拷，只有运行时文件：GLSL 源码和 compile.sh 不跟着程序走，
+# 构建也不往源码树里写任何东西。
+#
+# 先删再拷：copy_directory 只增不删，删掉的着色器会在目的地活下来，
+# 运行时优先命中陈旧副本 —— 这正是踩过的那个坑。
+#
+# 挂 POST_BUILD，不像资源那样用 stamp：着色器一改，内嵌副本就重新生成，
+# DoodleShaderModule.cpp 跟着重编、重新链接，POST_BUILD 一定会跑；把 .app 或
+# 输出目录整个删掉也会触发重新链接。stamp 在「目的地没了、输入没变」时会认为不用拷
+function(doodle_stage_shaders destination)
+    add_custom_command(TARGET DoodleGame POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${destination}/Shaders"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${_doodle_shader_runtime_dir}" "${destination}/Shaders"
+        COMMENT "Copy shaders into the runtime directory"
+        VERBATIM
+    )
+endfunction()
+
 if(WIN32)
     # Vulkan SDK 安装时设了 VULKAN_SDK 环境变量，FindVulkan 按它找头文件和 vulkan-1.lib。
     # 运行时的 vulkan-1.dll 由显卡驱动装进系统目录，不用随程序拷贝 ——
@@ -592,28 +669,15 @@ if(WIN32)
     #
     # 对应 macOS 往 .app/Contents/Resources 里拷的那两份。Windows 没有包结构，
     # 按惯例和可执行文件放在一起：
-    #   <输出目录>/Shaders/*.spv
-    #   <输出目录>/Scenes/
+    #   <输出目录>/Shaders/            着色器的运行时文件
+    #   <输出目录>/Scenes/、Art/ ……   Resources/ 整棵
     #
-    # 着色器只拷 .spv，而且直接从构建目录拷。macOS 那边要先把 .spv 摆进源码树的 Shaders/，
-    # 是因为 CLion 的工作目录是工程根目录；这边调试工作目录就是输出目录，
-    # 不需要往源码树里写东西。从别的目录启动时 DoodleShaderModule 找不到这两个文件，
-    # 会退到编进二进制的内嵌副本，那份同样是本次构建的产物，不会过期
-    #
-    # 和 macOS 同理，两份都先删再拷：copy_directory 只增不删，源码侧删掉的文件
-    # 会在输出目录里活下来，运行时优先命中陈旧副本
-    add_custom_command(TARGET DoodleGame POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:DoodleGame>/Shaders"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:DoodleGame>/Shaders"
-        COMMAND ${CMAKE_COMMAND} -E copy
-            "${_doodle_shader_output_dir}/vert.spv"
-            "${_doodle_shader_output_dir}/frag.spv"
-            "$<TARGET_FILE_DIR:DoodleGame>/Shaders"
-        COMMENT "Copy shaders next to DoodleGame.exe"
-        VERBATIM
-    )
+    # 调试工作目录就是输出目录（见上面的 VS_DEBUGGER_WORKING_DIRECTORY），按相对路径
+    # 直接命中。从别的目录启动时 DoodleShaderModule 找不到这些文件，会退到编进
+    # 二进制的内嵌副本，那份同样是本次构建的产物，不会过期
+    doodle_stage_shaders("$<TARGET_FILE_DIR:DoodleGame>")
 
-    # Scenes / Art / Materials 全在 Resources/ 下，整棵搬过去
+    # Scenes / Art 全在 Resources/ 下，整棵搬过去
     doodle_stage_resources("$<TARGET_FILE_DIR:DoodleGame>")
     return()
 endif()
@@ -796,68 +860,17 @@ if(APPLE)
         )
     endforeach()
 
-    # 把刚编好的 SPIR-V 摆到**运行时真正会去读**的目录。
+    # 着色器的运行时文件拷进包内 Resources/Shaders/。
     #
-    # 着色器字节码有三个可能的来源，查找顺序见 DoodleShaderModule::ReadFile：
-    #   ① 进程当前工作目录下的路径 —— CLion 里跑工程时工作目录就是工程根目录，
-    #      于是命中的是 Shaders/ 下的那一份
-    #   ② <可执行文件目录>/../Resources/Shaders/ —— Finder 双击时走这条
-    #   ③ 编进二进制的内嵌副本 —— Android 只能走这条
+    # 运行时按相对路径找（查找顺序见 DoodleShaderModule::ReadFile）。GLFW 初始化时
+    # 会把进程工作目录切到 .app/Contents/Resources（GLFW_COCOA_CHDIR_RESOURCES，默认开），
+    # 而建窗口排在建管线之前 —— 所以不论从 CLion、终端还是 Finder 启动，相对路径
+    # 命中的都是包内这一份（实测过进程的工作目录）。工程根目录下的 Shaders/ 只放
+    # 源文件，运行时不会去读它，构建也不往那里写东西。
     #
-    # 上面那个 add_custom_command 把 .spv 生成在**构建目录**里（内嵌副本也从那儿来）。
-    # 构建不往 ① ② 写的话，那两个位置就只能靠人手动放 —— 而一改着色器源码，
-    # 手动放的那份就悄悄过期，没有任何报错，程序照着旧的画。这里显式摆过去，
-    # 让 ① 永远是最新的；下面那条 copy_directory 再把它带进包的 ②。
-    #
-    # 只在桌面上做，两个理由：
-    #   - Android 运行时够不着文件系统（APK 里的东西不是普通文件），它走 ③
-    #   - 两个平台用的 glslc 不是同一份（这边 PATH 上的，Android 那边 NDK 自带的），
-    #     编出来的字节并不相同。让 Android 也写这里会互相覆盖，
-    #     最后编了哪个平台，Shaders/ 里就是哪个平台的字节码
-    #
-    # 产物落在源码树里是刻意的 —— 它是「运行时数据」而不是构建中间物，
-    # 运行时就认这个路径。.gitignore 里已经排除了 *.spv
-    add_custom_command(
-        OUTPUT
-            "${CMAKE_SOURCE_DIR}/Shaders/vert.spv"
-            "${CMAKE_SOURCE_DIR}/Shaders/frag.spv"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${_doodle_shader_output_dir}/vert.spv"
-            "${CMAKE_SOURCE_DIR}/Shaders/vert.spv"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${_doodle_shader_output_dir}/frag.spv"
-            "${CMAKE_SOURCE_DIR}/Shaders/frag.spv"
-        DEPENDS "${_doodle_embedded_shaders}"
-        COMMENT "Stage shader SPIR-V into Shaders/ for the desktop runtime"
-        VERBATIM
-    )
-
-    add_custom_target(doodle_stage_shaders ALL
-        DEPENDS
-            "${CMAKE_SOURCE_DIR}/Shaders/vert.spv"
-            "${CMAKE_SOURCE_DIR}/Shaders/frag.spv"
-    )
-
-    # 摆位必须排在包内拷贝之前，否则拷进包里的还是上一轮的旧文件
-    add_dependencies(DoodleGame doodle_stage_shaders)
-
-    # 把 Shaders/ 拷进 .app 的 Contents/Resources/，让包自带着色器字节码。
-    # 运行时查找顺序见上（① 工作目录 → ② 包内 → ③ 内嵌）。
-    # 之所以放在包内 Resources 而不是可执行文件旁边，是遵循 macOS 的包约定。
-    # copy_directory 会把 .vert/.frag 源码一并拷进去，体积可忽略；
-    # 若以后不想随包分发源码，改成只拷 *.spv 即可
-    #
-    # 先整个删掉再拷：copy_directory 只增不删，目标端多出来的文件会一直留着。
-    # 这正是踩过的那个坑 —— 源码侧删掉的旧 .spv，在包里活了下来，
-    # 而运行时先找到包里那份，于是「删了却还在生效」
-    add_custom_command(TARGET DoodleGame POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E rm -rf
-            "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Shaders"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_SOURCE_DIR}/Shaders"
-            "$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources/Shaders"
-        COMMENT "Copy Shaders into DoodleGame.app/Contents/Resources/Shaders"
-    )
+    # 放在包内 Resources 而不是可执行文件旁边，是遵循 macOS 的包约定。
+    # 只在桌面上拷：Android 运行时够不着文件系统（APK 里的东西不是普通文件），走内嵌副本
+    doodle_stage_shaders("$<TARGET_BUNDLE_CONTENT_DIR:DoodleGame>/Resources")
 
     # 场景、模型（Art/）、材质等全在 Resources/ 下，整棵搬进包内。
     #

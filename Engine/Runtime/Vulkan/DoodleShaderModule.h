@@ -36,17 +36,19 @@ namespace Doodle
          * 从 SPIR-V 文件创建着色器模块
          *
          * 路径解析顺序（取第一个能取到的）：
-         *   1. shaderPath 本身 —— 相对「进程当前工作目录」。开发时走这条，
-         *      需把工作目录设为工程根目录（CLion 的 Run Configuration）
+         *   1. shaderPath 本身 —— 相对「进程当前工作目录」。macOS 上 GLFW 初始化时
+         *      已把工作目录切到 .app/Contents/Resources，命中的是包内那份；
+         *      Windows 上 F5 与双击启动时，工作目录就是可执行文件所在目录
          *   2. <可执行文件目录>/../Resources/shaderPath —— macOS .app 包内。
-         *      从 Finder 双击启动时工作目录是 /，走这条
+         *      平常与第 1 条是同一个文件；工作目录没被切过去时
+         *      （例如关掉了 GLFW_COCOA_CHDIR_RESOURCES）由它兜住
          *   3. 编进二进制的副本 —— Android 端只能走这条。
          *      详解见 ReadFile
          *
          * 调用方须在管线创建完成后调用 vkDestroyShaderModule 销毁。
          *
          * @param pDevice 逻辑设备
-         * @param shaderPath SPIR-V 文件路径，如 "Shaders/vert.spv"
+         * @param shaderPath SPIR-V 文件路径，如 "Shaders/lit.vert.spv"
          * @return 着色器模块
          * @throw std::runtime_error 全都取不到、或模块创建失败时抛出
          */
@@ -74,11 +76,10 @@ namespace Doodle
          *
          * 第三条是给 Android 准备的：APK 里的文件不是文件系统里的文件，
          * 进程工作目录也不是工程目录，前两条一条都走不通。
-         * 副本由构建过程生成（改了 GLSL 重新构建即可），所以它总是最新的；
-         * 桌面端第一条若能命中，说明有人手动跑了 Shaders/compile.sh 把新产物
-         * 放到了工作目录里，那边的更近，优先用它是对的
+         * 桌面端前两条读到的文件与内嵌副本出自同一次构建（构建把同一批文件
+         * 拷到运行时目录，见 CMakeLists.txt 的 doodle_stage_shaders），字节相同
          *
-         * @param filename 文件路径，同时充当内嵌表的键，如 "Shaders/vert.spv"
+         * @param filename 文件路径，同时充当内嵌表的键，如 "Shaders/lit.vert.spv"
          * @return 文件的全部字节
          * @throw std::runtime_error 全都取不到时抛出，消息里列出尝试过的路径
          */

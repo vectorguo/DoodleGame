@@ -177,8 +177,8 @@ namespace Doodle
         //着色器模块用局部变量管住寿命。vkCreateGraphicsPipelines 是拷贝语义：
         //它把编译结果存进管线对象，之后不再引用模块，所以函数返回前销毁即可。
         //这正是 DoodleShaderModule 做成静态工具类而不是一层的原因
-        const VkShaderModule vertShaderModule = DoodleShaderModule::CreateShaderModule(pDevice, "Shaders/vert.spv");
-        const VkShaderModule fragShaderModule = DoodleShaderModule::CreateShaderModule(pDevice, "Shaders/frag.spv");
+        const VkShaderModule vertShaderModule = DoodleShaderModule::CreateShaderModule(pDevice, "Shaders/lit.vert.spv");
+        const VkShaderModule fragShaderModule = DoodleShaderModule::CreateShaderModule(pDevice, "Shaders/lit.frag.spv");
 
         const VkPipelineShaderStageCreateInfo vertShaderStageInfo
         {

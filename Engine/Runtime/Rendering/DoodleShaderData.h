@@ -32,7 +32,7 @@ namespace Doodle
     /**
      * 每帧送进着色器的帧级数据：相机变换 + 主光源
      *
-     * 布局必须与 Shaders/shader.vert / shader.frag 里的 uniform block 逐成员对应：
+     * 布局必须与 Shaders/lit.vert / lit.frag 里的 uniform block 逐成员对应：
      *
      *     layout(set = 0, binding = 0, std140) uniform UniformBufferObject
      *     {

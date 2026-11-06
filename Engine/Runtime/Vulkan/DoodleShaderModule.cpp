@@ -118,15 +118,18 @@ namespace Doodle
         // Android 上必然走到这里，而且是常态而非异常：APK 里的东西不是文件系统
         // 里的文件，std::ifstream 打不开，进程工作目录也不是工程目录。
         // 副本由 Shaders/compile.sh 生成，键就是这里的 filename
-        for (const auto& shader : EmbeddedShaders::kShaders)
+        for (const auto& file : EmbeddedShaders::kFiles)
         {
-            if (filename == shader.pPath)
+            if (filename == file.pPath)
             {
-                const auto* pBegin = reinterpret_cast<const char*>(shader.pData);
-                return std::vector<char>(pBegin, pBegin + shader.size);
+                const auto* pBegin = reinterpret_cast<const char*>(file.pData);
+                return std::vector<char>(pBegin, pBegin + file.size);
             }
         }
 
-        throw std::runtime_error("failed to open file: " + filename + triedPaths);
+        // 三处都落空。最常见的原因是名字写错或漏改（产物名 = 源文件名 + .spv），
+        // 所以内嵌表这一处也列出来 —— 只看到两条文件路径的话，容易误以为是工作目录不对
+        throw std::runtime_error("failed to open file: " + filename + triedPaths +
+                                 "\n  tried embedded: " + filename + " (no such entry)");
     }
 }
