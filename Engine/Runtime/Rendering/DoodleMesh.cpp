@@ -16,10 +16,12 @@ namespace Doodle
     {
     }
 
-    void DoodleMesh::Initialize(const DoodleVulkanDevice& device,
-                                const std::vector<Vertex>& vertices,
-                                const std::vector<uint32_t>& indices,
-                                const std::vector<DoodleSubmesh>& submeshes)
+    void DoodleMesh::InitializeBuffers(const DoodleVulkanDevice& device,
+                                       const void* vertexData,
+                                       const VkDeviceSize vertexDataSize,
+                                       const EVertexFormat vertexFormat,
+                                       const std::vector<uint32_t>& indices,
+                                       const std::vector<DoodleSubmesh>& submeshes)
     {
         // 先校验，后上传：本类的析构不销毁 GPU 资源，上传到一半抛异常会留下
         // 没人释放的缓冲。子网格是绘制端唯一的分段依据，区间错了画面上会缺块，
@@ -53,15 +55,19 @@ namespace Doodle
         }
 
         m_vertexBuffer.Initialize(device,
-                                  vertices.size() * sizeof(Vertex),
+                                  vertexDataSize,
                                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                                   DoodleGraphicsBuffer::EMemoryType::DeviceLocal,
-                                  vertices.data());
+                                  vertexData);
         m_indexBuffer.Initialize(device,
                                  indices.size() * sizeof(uint32_t),
                                  VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                                  DoodleGraphicsBuffer::EMemoryType::DeviceLocal,
                                  indices.data());
+
+        //两份缓冲都建成之后才记格式：中途抛出时网格仍是未初始化状态，
+        //不会出现「格式已写入、缓冲却缺一份」的半截对象
+        m_vertexFormat = vertexFormat;
 
         // 区间是 CPU 侧数据，拷一份随网格保存：调用方的导入结果
         // 在 Create 返回后就销毁了

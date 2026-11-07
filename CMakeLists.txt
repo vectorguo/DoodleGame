@@ -156,6 +156,7 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Rendering/DoodleShaderData.h
     Engine/Runtime/Rendering/DoodleSubmesh.h
     Engine/Runtime/Rendering/DoodleMaterial.h
+    Engine/Runtime/Rendering/DoodleRenderState.h
     Engine/Runtime/Rendering/DoodleDrawContext.h
     Engine/Runtime/Rendering/DoodleCamera.cpp
     Engine/Runtime/Rendering/DoodleCamera.h
@@ -164,6 +165,7 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Core/DoodleBuiltinComponentRegistration.h
     Engine/Runtime/Core/DoodleBuiltinComponentRegistration.cpp
     Engine/Runtime/Utility/Singleton.h
+    Engine/Runtime/Utility/DoodleHash.h
 )
 
 # macOS 专属：窗口与文件来源实现

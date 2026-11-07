@@ -20,7 +20,7 @@
 namespace Doodle
 {
     /**
-     * 一份网格资产：顶点缓冲 + 索引缓冲 + 子网格区间
+     * 一份网格资产：顶点缓冲 + 索引缓冲 + 子网格区间 + 顶点格式标签
      *
      * 放在 Rendering：它属于「画什么」里的几何内容；Vulkan 侧的
      * DoodleGraphicsBuffer 才是「怎么存」的显存机制。本类按值持有那份
@@ -39,9 +39,13 @@ namespace Doodle
      * 由 DoodleMeshRenderer 按槽引用共享材质资产。同一份网格可以被多个对象共用、
      * 各自配不同材质资产，资产缓存不会和外观绑死。
      *
+     * 顶点格式跟着网格走：Initialize 从顶点类型（TVertex::kVertexFormat）取得
+     * 格式并保存在这里，绘制端按它选管线（管线缓存的键里含这一维）。本类不
+     * 理解格式的内存布局 —— 那是 DoodleVertex.h 的事，这里只记一个枚举值。
+     *
      * 资产路径与「运行时动态创建」的约定在基类 DoodleAsset 里：文件资产的
      * 路径就是 loader 的缓存键，空串表示动态创建、不能序列化。本类只关心
-     * 网格自己的资源与子网格表。
+     * 网格自己的资源、顶点格式与子网格表。
      *
      * 不可复制、不可移动（基类 DoodleAsset 已禁止）：两个 DoodleMesh 对象会
      * 各自销毁同一对 VkBuffer。使用方拿到的是 const 指针（非拥有）：文件资产的
@@ -71,8 +75,20 @@ namespace Doodle
         /**
          * 把两份数据与子网格区间送上设备
          *
+         * 顶点类型是模板参数，但只有这一层是泛型的：所有校验与上传都在
+         * InitializeBuffers 里做一次，模板只负责把 vector 拆成
+         * 「首地址 + 字节数」，再把类型自带的格式标签递过去。
+         *
+         * 为什么不是每种顶点结构一个重载：重载会把同一段逻辑抄 N 遍，
+         * 而类型之间真正不同的只有 sizeof 和 kVertexFormat 两件事。
+         * 为什么 DoodleMesh 本身不是模板类：资产管理器、loader、网格池
+         * 与序列化都要一个具体类型，泛型只能停在入口这一层。
+         *
+         * TVertex 必须声明 kVertexFormat（见 DoodleVertex.h）：少了它编译不过，
+         * 随便传一个 vector<uint32_t> 也编译不过
+         *
          * @param device 已初始化的 Vulkan 设备，且命令管理层的传输池已经建好
-         * @param vertices 顶点数据，按 Vertex 的布局排列
+         * @param vertices 顶点数据，按 TVertex 的布局排列
          * @param indices 索引数据，每个值都必须小于 vertices.size()
          * @param submeshes 按材质切好的索引区间；必须有序、首尾相接、覆盖整个
          *        indices；materialIndex 从 0 开始连续分配
@@ -82,16 +98,25 @@ namespace Doodle
          *        不能在上传一半时抛出而留下无主的缓冲
          *
          * 收 const vector& 而不是 span：当前唯一调用方（DoodleMeshLoader）传的
-         * 就是 DoodleFbxMeshData 的 vector，视图类型没有实际收益；出现第二种
-         * 容器 / 子区间时再泛化
+         * 就是导入结果的 vector，视图类型没有实际收益；出现第二种容器 /
+         * 子区间时再泛化
          *
          * @note 内部会提交一次拷贝并等待完成，只能在初始化期调用，
          *       不得与在途的帧并发 —— 见 DoodleGraphicsBuffer::CopyTo
          */
+        template <typename TVertex>
         void Initialize(const DoodleVulkanDevice& device,
-                        const std::vector<Vertex>& vertices,
+                        const std::vector<TVertex>& vertices,
                         const std::vector<uint32_t>& indices,
-                        const std::vector<DoodleSubmesh>& submeshes);
+                        const std::vector<DoodleSubmesh>& submeshes)
+        {
+            InitializeBuffers(device,
+                              vertices.data(),
+                              vertices.size() * sizeof(TVertex),
+                              TVertex::kVertexFormat,
+                              indices,
+                              submeshes);
+        }
 
         /**
          * 销毁两份缓冲
@@ -115,6 +140,18 @@ namespace Doodle
         [[nodiscard]] VkBuffer GetIndexBuffer() const
         {
             return m_indexBuffer.GetBuffer();
+        }
+
+        /**
+         * 顶点格式：这份网格的顶点缓冲按哪种布局组织
+         *
+         * 绘制端按它选管线（管线缓存的键里含这一维），所以格式跟着网格走，
+         * 不只跟着管线走。Initialize 时由 TVertex::kVertexFormat 写入；
+         * 在此之前读到的是枚举的 0 值，和缓冲为空一样属于「未初始化」
+         */
+        [[nodiscard]] EVertexFormat GetVertexFormat() const
+        {
+            return m_vertexFormat;
         }
 
         /**
@@ -167,6 +204,30 @@ namespace Doodle
         }
 
     private:
+        /**
+         * 模板入口的唯一实现：校验子网格，再把两份数据送上设备
+         *
+         * 收 void* + 字节数而不是某个顶点类型的 vector：这里是类型擦除的边界，
+         * 也是「泛型只占一层」的原因 —— 校验、描述、上传都只有这一份
+         *
+         * @param vertexData 顶点数据首地址，按 vertexFormat 的布局排列
+         * @param vertexDataSize 顶点数据的字节数
+         */
+        void InitializeBuffers(const DoodleVulkanDevice& device,
+                               const void* vertexData,
+                               const VkDeviceSize vertexDataSize,
+                               const EVertexFormat vertexFormat,
+                               const std::vector<uint32_t>& indices,
+                               const std::vector<DoodleSubmesh>& submeshes);
+
+    private:
+        /**
+         * 顶点格式标签，Initialize 时从 TVertex::kVertexFormat 写入
+         *
+         * Destroy 不改它：那时缓冲已经空了，格式和空句柄一样不指向任何数据
+         */
+        EVertexFormat m_vertexFormat = EVertexFormat::PosNormalUv;
+
         /**
          * 顶点缓冲，走设备本地显存
          */

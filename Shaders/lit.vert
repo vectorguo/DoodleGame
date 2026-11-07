@@ -1,8 +1,8 @@
 #version 450
 
 // 顶点着色器：对每个顶点调用一次 main。
-// 顶点数据已搬进 C++（Runtime/Vulkan/DoodleVertex.h 的 struct Vertex），
-// 由顶点缓冲送来。location 与管线里属性描述的 location 一一对应。
+// 顶点数据由 C++ 侧的 PosNormalUvVertex（Rendering/DoodleVertex.h）定义，
+// 经顶点缓冲送来。location 与管线里属性描述的 location 一一对应。
 
 // 顶点属性输入。location 编号必须与 C++ 侧 VkVertexInputAttributeDescription
 // 的 location 相同 —— 变量名可以随便取，编号是两边唯一的对接口径

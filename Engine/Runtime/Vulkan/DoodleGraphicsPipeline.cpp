@@ -47,7 +47,7 @@ namespace Doodle
         //stageFlags 必须覆盖真正读它的阶段：顶点阶段读 view / proj，
         //片元阶段读光源字段。少写片元阶段的话，片元里读到的是未定义值，
         //校验层会在绘制时报 stage 不匹配 —— 声明得准，问题就不会跑到画面上
-        const VkDescriptorSetLayoutBinding uboLayoutBinding
+        constexpr VkDescriptorSetLayoutBinding uboLayoutBinding
         {
             .binding = 0,
             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -86,7 +86,7 @@ namespace Doodle
         //与 set 0 分开的理由是更新频率和数量：set 0 每帧一份 UBO，随帧轮转；
         //这里每个材质一张纹理，按资产共享。混进同一个集合意味着每张纹理
         //都要复制 N 份 UBO，或者每帧重写所有材质集合
-        const VkDescriptorSetLayoutBinding textureLayoutBinding
+        constexpr VkDescriptorSetLayoutBinding textureLayoutBinding
         {
             .binding = 0,
             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -212,27 +212,26 @@ namespace Doodle
             .pDynamicStates = dynamicStates.data()
         };
 
-        //顶点输入：两份描述都从 Vertex 类型上取。管线只吃描述，不关心数据来自哪
+        //顶点输入：按顶点格式与实例格式取整份描述。管线只吃描述，不关心数据来自哪
+        //实例轴目前只有 None，产出的就是单条逐顶点流，与改造前逐字节一致
         //
-        //这两个是按值返回的局部量，取它们的地址喂给管线即可。
+        //返回值是按值的局部量，取数组地址喂给管线即可。
         //VkPipelineVertexInputStateCreateInfo 里存的是裸指针、不拷贝内容，
-        //所以它们必须活到 vkCreateGraphicsPipelines 返回为止 —— 局部量正好满足：
-        //创建调用就在本函数里，两个变量的寿命完整覆盖它。
+        //所以它必须活到 vkCreateGraphicsPipelines 返回为止 —— 局部量正好满足：
+        //创建调用就在本函数里，寿命完整覆盖它。
         //（这也是为什么不能把描述做成返回临时对象引用的函数：出了那个函数就悬空了）
-        const auto bindingDescription = Vertex::GetBindingDescription();
-        const auto attributeDescriptions = Vertex::GetAttributeDescriptions();
-
+        const DoodleVertexInput vertexInput = DoodleVertexInput::Describe(EVertexFormat::PosNormalUv, EInstanceFormat::None);
         const VkPipelineVertexInputStateCreateInfo vertexInputInfo
         {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-            .vertexBindingDescriptionCount = 1,
-            .pVertexBindingDescriptions = &bindingDescription,
-            .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
-            .pVertexAttributeDescriptions = attributeDescriptions.data()
+            .vertexBindingDescriptionCount = static_cast<uint32_t>(vertexInput.bindings.size()),
+            .pVertexBindingDescriptions = vertexInput.bindings.data(),
+            .vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInput.attributes.size()),
+            .pVertexAttributeDescriptions = vertexInput.attributes.data()
         };
 
         //输入装配：每 3 个顶点组成一个三角形
-        const VkPipelineInputAssemblyStateCreateInfo inputAssembly
+        constexpr VkPipelineInputAssemblyStateCreateInfo inputAssembly
         {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
             .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
@@ -240,7 +239,7 @@ namespace Doodle
         };
 
         //视口与剪裁走动态状态，这里只填数量，pViewports / pScissors 留空
-        const VkPipelineViewportStateCreateInfo viewportState
+        constexpr VkPipelineViewportStateCreateInfo viewportState
         {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
             .viewportCount = 1,
@@ -251,7 +250,7 @@ namespace Doodle
         //但顶点着色器用 GLM 投影时做了 Y 翻转（proj[1][1] *= -1）——
         //那一步把屏幕空间的绕序整体反了过来，所以这里的 frontFace 取逆时针。
         //frontFace、投影约定与顶点顺序三者必须一起看；只改其中一处，画面会整片消失
-        const VkPipelineRasterizationStateCreateInfo rasterizer
+        constexpr VkPipelineRasterizationStateCreateInfo rasterizer
         {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
             .depthClampEnable = VK_FALSE,
@@ -264,7 +263,7 @@ namespace Doodle
         };
 
         //多重采样：先关闭
-        const VkPipelineMultisampleStateCreateInfo multisampling
+        constexpr VkPipelineMultisampleStateCreateInfo multisampling
         {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
             .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
@@ -272,7 +271,7 @@ namespace Doodle
         };
 
         //颜色混合：不透明，直接覆盖写入
-        const VkPipelineColorBlendAttachmentState colorBlendAttachment
+        constexpr VkPipelineColorBlendAttachmentState colorBlendAttachment
         {
             .blendEnable = VK_FALSE,
             .colorWriteMask =
@@ -320,7 +319,7 @@ namespace Doodle
         //深度／模板状态。声明了 depthAttachmentFormat 之后，这一格必须是有效指针 ——
         //规范为 renderPass 为空的情形专门写了这条约束。两处必须同一次改完：
         //只填格式不给状态，管线建不出来；只给状态不填格式，校验层要到绘制时才报
-        const VkPipelineDepthStencilStateCreateInfo depthStencil
+        constexpr VkPipelineDepthStencilStateCreateInfo depthStencil
         {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
             .depthTestEnable = VK_TRUE,

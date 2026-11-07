@@ -65,7 +65,7 @@ namespace Doodle
      * 为什么显式写 alignas：
      * - uniform block 按 std140 排布，mat4 / vec4 必须落在 16 字节边界上；
      * - 本项目不能全局定义 GLM_FORCE_DEFAULT_ALIGNED_GENTYPES ——
-     *   DoodleVertex.h 依赖 glm::vec3 是 12 字节、Vertex 是 32 字节，
+     *   DoodleVertex.h 依赖 glm::vec3 是 12 字节、PosNormalUvVertex 是 32 字节，
      *   那类宏会把顶点布局一起改掉；
      * - 所以这里不用宏，直接在结构体上把对齐写死，并用 offsetof 检查。
      *

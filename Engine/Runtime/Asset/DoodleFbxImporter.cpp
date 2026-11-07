@@ -280,7 +280,7 @@ namespace
 
                         for (int corner = 0; corner < 3; ++corner)
                         {
-                            Doodle::Vertex vertex{};
+                            Doodle::PosNormalUvVertex vertex{};
                             vertex.pos = positions[corner];
                             vertex.normal = normals[corner];
                             vertex.uv = uvs[corner];
@@ -300,7 +300,7 @@ namespace
 
                 // part.index 与 mesh.materials / node.materials 的下标一一对应
                 const ufbx_material* pMaterial = ResolveNodeMaterial(node, mesh, part.index);
-                const auto materialIt = std::find(materialSlotKeys.begin(), materialSlotKeys.end(), pMaterial);
+                const auto materialIt = std::ranges::find(materialSlotKeys, pMaterial);
                 uint32_t materialIndex;
                 if (materialIt != materialSlotKeys.end())
                 {

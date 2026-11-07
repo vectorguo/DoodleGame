@@ -40,9 +40,9 @@ namespace Doodle
          *
          * 不复用是为了绕开 FBX 的法线/UV 分裂属性：同一个位置在不同面上
          * 可能有不同法线或 UV，逐角点复制最直接。第一版先接受这份冗余，
-         * 等顶点格式与材质确定后再优化
+         * 等做顶点去重时再优化
          */
-        std::vector<Vertex> vertices;
+        std::vector<PosNormalUvVertex> vertices;
 
         /**
          * 顶点索引，与 vertices 一一对应（0, 1, 2, ...）
