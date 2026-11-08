@@ -29,7 +29,7 @@ namespace Doodle
      *
      * 本类不读文件、不认识门面、也不是单例：字节由要管线的一方读好传进来，
      * 设备与布局都是参数。同一份输入建几次都一样，谁来建、建几条由
-     * DoodlePipelineCache 决定 —— 本类不再是「全工程那一条管线」
+     * 持有它的 pass（DoodleRenderPass）决定 —— 本类不再是「全工程那一条管线」
      *
      * 所有管线共用 set 0 布局与 push constant 范围，是为了布局兼容：Vulkan 规定
      * 两个管线布局只有在 set 0..N 的布局都相同、且 push constant 范围也相同时，

@@ -24,7 +24,7 @@ namespace Doodle
         m_device.Initialize(window);
         m_swapChain.Initialize(m_device, window);
 
-        //深度图按交换链尺寸建。图形管线只吃这两个附件的格式，不吃对象本身，
+        //深度图按交换链尺寸建。前向 pass 只吃这两个附件的格式，不吃对象本身，
         //所以它排在后面，只把 pass 配置传进去
         m_depthImages.Initialize(m_device, m_swapChain.GetImageExtent());
 
@@ -38,14 +38,19 @@ namespace Doodle
         CreateUniformBuffers();
         m_descriptorManager.Initialize(m_device, m_uniformBuffers);
 
-        //管线最后建：它要描述符管理器的 set 0 / set 1 布局。
-        //驱动编译缓存这一步先不接（VK_NULL_HANDLE），第 3 步随管线缓存一起加
-        m_forwardPassConfig = MakeForwardPassConfig();
-        m_graphicsPipeline.Initialize(m_device,
-                                      VK_NULL_HANDLE,
-                                      m_descriptorManager.GetFrameDescriptorSetLayout(),
-                                      m_forwardPassConfig,
-                                      CreateLitShaderDescription());
+        //驱动编译缓存先建：每次建管线都把它传给 vkCreateGraphicsPipelines
+        m_pipelineCompileCache.Initialize(m_device, {});
+
+        //前向 pass：绑定 set 0 布局、附件配置与驱动编译缓存，此时还没有管线
+        m_forwardPass.Initialize(m_device,
+                                 m_pipelineCompileCache.GetPipelineCache(),
+                                 m_descriptorManager.GetFrameDescriptorSetLayout(),
+                                 m_swapChain,
+                                 m_depthImages);
+
+        //现在只有 lit 一个着色器：先向前向 pass 要一条，之后每帧直接用它。
+        //引用由前向 pass 持有，格式变化原地重建时指针不变
+        m_pForwardPipeline = &m_forwardPass.GetPipeline(CreateLitShaderDescription());
 
         m_syncObjects.Initialize(m_device, m_swapChain);
     }
@@ -66,12 +71,17 @@ namespace Doodle
 
         //按「使用者先、被使用者后」销毁。
         //
-        //命令管理层先走，因为它录下的绘制命令可能引用描述符集；接着管线拆掉 ——
+        //命令管理层先走，因为它录下的绘制命令可能引用描述符集；接着前向 pass 拆掉 ——
         //它的管线布局引用描述符管理器的两个 set 布局，必须排在描述符管理器之前；
         //描述符管理器释放两组池与默认白图后，UBO 才能安全销毁
         m_syncObjects.Destroy();
         m_commandManager.Destroy();
-        m_graphicsPipeline.Destroy();
+
+        //前向 pass 先拆（它拥有所有管线），再拆驱动编译缓存；管线布局引用
+        //描述符管理器的两个 set 布局，所以两者都排在描述符管理器之前
+        m_forwardPass.Destroy();
+        m_pipelineCompileCache.Destroy();
+        m_pForwardPipeline = nullptr;
         m_descriptorManager.Destroy();
 
         DestroyUniformBuffers();
@@ -218,7 +228,7 @@ namespace Doodle
         const auto commandBuffer = m_commandManager.Record(frameIndex,
                                                           imageIndex,
                                                           context.drawItems,
-                                                          m_graphicsPipeline,
+                                                          *m_pForwardPipeline,
                                                           frameDescriptorSet,
                                                           textureDescriptorSets);
 
@@ -311,16 +321,6 @@ namespace Doodle
         }
     }
 
-    DoodlePipelinePassConfig DoodleVulkanManager::MakeForwardPassConfig() const
-    {
-        return
-        {
-            .colorFormats = {m_swapChain.GetImageFormat()},
-            .depthFormat = m_depthImages.GetFormat(),
-            .sampleCount = VK_SAMPLE_COUNT_1_BIT
-        };
-    }
-
     DoodlePipelineShaderDescription DoodleVulkanManager::CreateLitShaderDescription() const
     {
         return
@@ -362,10 +362,10 @@ namespace Doodle
         //
         //管线不随每次重建而重建：它把附件格式编译进去了，但尺寸不影响它
         //（视口与剪裁是动态状态）。绝大多数重建是缩放窗口，格式不变；
-        //重建完交换链与深度图后拿新的 pass 配置与成员里记的那份一比，
-        //变了才让管线原地重建 —— 换格式（比如拖到另一块显示器、Android 切后台）
-        //必须有这条路，而不是「罕见就不写」。原地重建只换 VkPipeline，
-        //对象地址与管线布局不变，持有它的引用不受影响
+        //重建完交换链与深度图后由前向 pass 拿新的附件配置与自己记的那份一比，
+        //变了才原地重建所有管线 —— 换格式（比如拖到另一块显示器、
+        //Android 切后台）必须有这条路，而不是「罕见就不写」。原地重建只换
+        //VkPipeline，对象地址与管线布局不变，持有它的引用不受影响
         //
         //命令缓冲也不重建：它不缓存任何上游句柄，每帧录制时现取，
         //重建后重录拿到的自然是新的
@@ -373,12 +373,7 @@ namespace Doodle
         //深度图的尺寸跟着交换链走，所以它必须在这里重建
         m_depthImages.Initialize(m_device, m_swapChain.GetImageExtent());
 
-        const DoodlePipelinePassConfig passConfig = MakeForwardPassConfig();
-        if (passConfig != m_forwardPassConfig)
-        {
-            m_graphicsPipeline.Rebuild(VK_NULL_HANDLE, passConfig, CreateLitShaderDescription());
-            m_forwardPassConfig = passConfig;
-        }
+        m_forwardPass.RebuildIfPassConfigChanged(m_swapChain, m_depthImages);
 
         m_syncObjects.Initialize(m_device, m_swapChain);
 

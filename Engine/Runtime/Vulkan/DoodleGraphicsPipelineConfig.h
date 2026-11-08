@@ -28,9 +28,9 @@ namespace Doodle
      *
      * 动态渲染之后管线不再绑某个渲染通道对象，而是在创建时声明附件的格式与采样数；
      * 录制时 vkCmdBeginRendering 给的附件必须与这里一致。同一种 pass 配置下的
-     * 管线由同一个管线缓存实例持有（见 DoodlePipelineCache）
+     * 管线由同一个 pass 持有（见 DoodleRenderPass）
      *
-     * 判等用默认的逐成员比较：交换链重建后门面拿新旧两份一比，就知道管线要不要重建
+     * 判等用默认的逐成员比较：交换链重建后 pass 拿新旧两份一比，就知道管线要不要重建
      */
     struct DoodlePipelinePassConfig
     {

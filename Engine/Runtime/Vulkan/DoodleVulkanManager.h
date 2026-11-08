@@ -9,8 +9,10 @@
 #include "DoodleCommandManager.h"
 #include "DoodleDepthImages.h"
 #include "DoodleDescriptorManager.h"
+#include "DoodleForwardPass.h"
 #include "DoodleGraphicsBuffer.h"
 #include "DoodleGraphicsPipeline.h"
+#include "DoodlePipelineCompileCache.h"
 #include "DoodleSwapChain.h"
 #include "DoodleSyncObjects.h"
 #include "DoodleVulkanConfig.h"
@@ -46,7 +48,7 @@ namespace Doodle
          * 桌面不会调到（窗口与程序同寿）
          *
          * 保留的是与表面无关的那几层：Instance、物理/逻辑设备、队列、
-         * 图形管线、命令池、uniform 缓冲与描述符资源。重建它们代价太大，
+         * 前向 pass 的管线、命令池、uniform 缓冲与描述符资源。重建它们代价太大，
          * 而且它们的寿命本来就不挂在窗口上
          *
          * @note 期间不得调用 DrawFrame
@@ -152,22 +154,6 @@ namespace Doodle
         }
 
         /**
-         * 获取图形管线
-         */
-        [[nodiscard]] DoodleGraphicsPipeline& GetGraphicsPipeline()
-        {
-            return m_graphicsPipeline;
-        }
-
-        /**
-         * 获取图形管线
-         */
-        [[nodiscard]] const DoodleGraphicsPipeline& GetGraphicsPipeline() const
-        {
-            return m_graphicsPipeline;
-        }
-
-        /**
          * 获取同步对象层
          */
         [[nodiscard]] DoodleSyncObjects& GetSyncObjects()
@@ -185,17 +171,10 @@ namespace Doodle
 
     private:
         /**
-         * 当前前向主 pass 的附件配置：颜色格式来自交换链、深度格式来自深度图组
-         *
-         * 交换链重建后拿新的一份与成员里记的这份比对，变了才让管线原地重建
-         */
-        [[nodiscard]] DoodlePipelinePassConfig MakeForwardPassConfig() const;
-
-        /**
          * lit 的着色器侧描述：两份字节码 + set 1 布局 + 默认渲染状态
          *
-         * 第 2 步还没有着色器资产，门面自己读两份 spv 拼描述；第 3 步起
-         * 由材质带着自己的着色器向管线缓存要管线，这个函数随之删除
+         * 着色器资产落地前，门面自己读两份 spv 拼描述；之后由材质带着自己的
+         * 着色器向前向 pass 要管线，这个函数随之删除
          */
         [[nodiscard]] DoodlePipelineShaderDescription CreateLitShaderDescription() const;
 
@@ -203,9 +182,10 @@ namespace Doodle
          * 重建交换链，以及所有随它一起失效的层
          *
          * 顺序：交换链 → 深度图 → 同步对象，与 Initialize 同序、与 Destroy 反序。
-         * 图形管线不重建 —— 它按值收下了颜色与深度格式，不持有这两个对象的任何句柄。
-         * 只有格式真的变了才需要重建，那是极罕见的情况（把窗口拖到另一块
-         * 不同色域的显示器上），代价却是把管线整个重编译一遍。理由详见实现
+         * 前向 pass 的管线不随尺寸重建 —— 管线按值收下了颜色与深度格式，不持有
+         * 这两个对象的任何句柄。只有格式真的变了才需要重建，那是极罕见的情况
+         * （把窗口拖到另一块不同色域的显示器上），代价却是把管线整个重编译一遍。
+         * 判断由 DoodleForwardPass::RebuildIfPassConfigChanged 自己做
          *
          * 末尾统一清 m_windowResized：重建完成即代表积压的 resize 通知已兑现。
          * 不放在各调用点，是因为 acquire 提前返回那条路也要求这一刻就兑现它 ——
@@ -280,24 +260,14 @@ namespace Doodle
         /**
          * 深度图组：每帧一张，随交换链重建
          *
-         * 排在交换链之后（要它的尺寸）、图形管线之前（管线要它的格式）。
+         * 排在交换链之后（要它的尺寸）、前向 pass 之前（pass 要它的格式）。
          * 它与交换链同锚不同寿：尺寸跟着窗口变，但它不是呈现目标，
          * 不与呈现引擎打交道
          */
         DoodleDepthImages m_depthImages;
 
         /**
-         * 前向主 pass 当前的附件配置；交换链重建后与新的比对，变了才重建管线
-         */
-        DoodlePipelinePassConfig m_forwardPassConfig;
-
-        /**
-         * 图形管线层：只按值收下附件格式与着色器描述，不持有交换链 / 深度图的句柄
-         */
-        DoodleGraphicsPipeline m_graphicsPipeline;
-
-        /**
-         * 命令管理层：录制时引用上述各层，须排在图形管线之后
+         * 命令管理层：录制时引用设备 / 交换链 / 深度图；管线按帧由 DrawFrame 传进去
          */
         DoodleCommandManager m_commandManager;
 
@@ -313,9 +283,31 @@ namespace Doodle
         /**
          * 描述符管理器：每帧 UBO 的 set 0 与材质纹理的 set 1
          *
-         * 排在 UBO 之后（要缓冲句柄）、同步对象之前；销毁时排在 UBO 与图形管线之前
+         * 排在 UBO 之后（要缓冲句柄）、所有管线之前（管线要它的两个 set 布局）；
+         * 销毁时排在所有管线之后、UBO 之前
          */
         DoodleDescriptorManager m_descriptorManager;
+
+        /**
+         * 驱动编译缓存：全进程一个，所有 pass 共用
+         *
+         * 排在描述符管理器之后（它不依赖布局）、前向 pass 之前（建管线时要用它）
+         */
+        DoodlePipelineCompileCache m_pipelineCompileCache;
+
+        /**
+         * 前向主 pass：拥有这一 pass 下的所有管线
+         *
+         * 排在描述符管理器与驱动编译缓存之后（要 set 0 布局与编译缓存），
+         * 所有管线使用者之前。以后阴影、延迟各加一个 pass；数量多了再交给
+         * 渲染图统一持有
+         */
+        DoodleForwardPass m_forwardPass;
+
+        /**
+         * 当前 lit 管线，指向前向 pass 里的管线；格式变化原地重建时指针不变
+         */
+        const DoodleGraphicsPipeline* m_pForwardPipeline = nullptr;
 
         /**
          * 同步对象层：帧信号量与栅栏
