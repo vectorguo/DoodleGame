@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 #include <vulkan/vulkan_core.h>
@@ -23,8 +24,10 @@ namespace Doodle
      * 把它做成层会把寿命从「一次管线创建」拉长到「整个程序」，只会
      * 凭空多出销毁顺序、交换链重建时要不要重建之类的异常路径。
      *
-     * 将来若出现「多条管线共享同一份模块」，宿主应该是 DoodleGraphicsPipeline
-     * 那一层，仍然不是独立的一层。
+     * 读文件与建模块是两件事、两个入口：建模块只收字节，不关心字节从哪来 ——
+     * DoodleGraphicsPipeline 拿着字节建管线，自己不做任何文件读写；
+     * 读文件（ReadFile）由要管线的一方调用。多条管线共用同一份字节码时
+     * （同一着色器配不同渲染状态），各自建各自的临时模块，模块仍不是独立的一层。
      */
     class DoodleShaderModule
     {
@@ -33,26 +36,39 @@ namespace Doodle
         DoodleShaderModule() = delete;
 
         /**
-         * 从 SPIR-V 文件创建着色器模块
-         *
-         * 路径解析顺序（取第一个能取到的）：
-         *   1. shaderPath 本身 —— 相对「进程当前工作目录」。macOS 上 GLFW 初始化时
-         *      已把工作目录切到 .app/Contents/Resources，命中的是包内那份；
-         *      Windows 上 F5 与双击启动时，工作目录就是可执行文件所在目录
-         *   2. <可执行文件目录>/../Resources/shaderPath —— macOS .app 包内。
-         *      平常与第 1 条是同一个文件；工作目录没被切过去时
-         *      （例如关掉了 GLFW_COCOA_CHDIR_RESOURCES）由它兜住
-         *   3. 编进二进制的副本 —— Android 端只能走这条。
-         *      详解见 ReadFile
+         * 用 SPIR-V 字节码创建着色器模块
          *
          * 调用方须在管线创建完成后调用 vkDestroyShaderModule 销毁。
          *
          * @param pDevice 逻辑设备
-         * @param shaderPath SPIR-V 文件路径，如 "Shaders/lit.vert.spv"
+         * @param bytecode SPIR-V 字节码，通常来自 ReadFile
          * @return 着色器模块
-         * @throw std::runtime_error 全都取不到、或模块创建失败时抛出
+         * @throw std::runtime_error 字节码为空、长度不是 4 的倍数，或模块创建失败
          */
-        [[nodiscard]] static VkShaderModule CreateShaderModule(VkDevice pDevice, const std::string& shaderPath);
+        [[nodiscard]] static VkShaderModule CreateShaderModule(VkDevice pDevice, const std::vector<std::byte>& bytecode);
+
+        /**
+         * 读取整个 SPIR-V 文件
+         *
+         * 按候选顺序逐个尝试，取第一个能取到的：
+         *   1. filename 本身 —— 相对「进程当前工作目录」。macOS 上 GLFW 初始化时
+         *      已把工作目录切到 .app/Contents/Resources，命中的是包内那份；
+         *      Windows 上 F5 与双击启动时，工作目录就是可执行文件所在目录
+         *   2. <可执行文件目录>/../Resources/filename —— macOS .app 包内。
+         *      平常与第 1 条是同一个文件；工作目录没被切过去时
+         *      （例如关掉了 GLFW_COCOA_CHDIR_RESOURCES）由它兜住
+         *   3. 编进二进制的副本
+         *
+         * 第三条是给 Android 准备的：APK 里的文件不是文件系统里的文件，
+         * 进程工作目录也不是工程目录，前两条一条都走不通。
+         * 桌面端前两条读到的文件与内嵌副本出自同一次构建（构建把同一批文件
+         * 拷到运行时目录，见 CMakeLists.txt 的 doodle_stage_shaders），字节相同
+         *
+         * @param filename 文件路径，同时充当内嵌表的键，如 "Shaders/lit.vert.spv"
+         * @return 文件的全部字节
+         * @throw std::runtime_error 全都取不到时抛出，消息里列出尝试过的路径
+         */
+        [[nodiscard]] static std::vector<std::byte> ReadFile(const std::string& filename);
 
     private:
         /**
@@ -65,24 +81,5 @@ namespace Doodle
          * 从别处启动时落到编进二进制的副本（与 .spv 出自同一次构建）
          */
         [[nodiscard]] static std::string GetExecutableDirectory();
-
-        /**
-         * 读取整个 SPIR-V 文件
-         *
-         * 按候选顺序逐个尝试，取第一个能取到的：
-         *   1. filename 本身 —— 相对「进程当前工作目录」
-         *   2. <可执行文件目录>/../Resources/filename —— macOS .app 包内
-         *   3. 编进二进制的副本
-         *
-         * 第三条是给 Android 准备的：APK 里的文件不是文件系统里的文件，
-         * 进程工作目录也不是工程目录，前两条一条都走不通。
-         * 桌面端前两条读到的文件与内嵌副本出自同一次构建（构建把同一批文件
-         * 拷到运行时目录，见 CMakeLists.txt 的 doodle_stage_shaders），字节相同
-         *
-         * @param filename 文件路径，同时充当内嵌表的键，如 "Shaders/lit.vert.spv"
-         * @return 文件的全部字节
-         * @throw std::runtime_error 全都取不到时抛出，消息里列出尝试过的路径
-         */
-        [[nodiscard]] static std::vector<char> ReadFile(const std::string& filename);
     };
 }

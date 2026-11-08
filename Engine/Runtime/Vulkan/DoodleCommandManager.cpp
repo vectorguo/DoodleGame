@@ -42,12 +42,10 @@ namespace Doodle
 
     void DoodleCommandManager::Initialize(const DoodleVulkanDevice& device,
                                          const DoodleSwapChain& swapChain,
-                                         const DoodleGraphicsPipeline& graphicsPipeline,
                                          const DoodleDepthImages& depthImages)
     {
         m_pDevice = &device;
         m_pSwapChain = &swapChain;
-        m_pGraphicsPipeline = &graphicsPipeline;
         m_pDepthImages = &depthImages;
 
         //命令缓冲从池中分配，池必须先建出来
@@ -423,6 +421,7 @@ namespace Doodle
     VkCommandBuffer DoodleCommandManager::Record(const uint32_t frameIndex,
                                                 const uint32_t imageIndex,
                                                 const std::vector<DoodleDrawItem>& drawItems,
+                                                const DoodleGraphicsPipeline& graphicsPipeline,
                                                 VkDescriptorSet frameDescriptorSet,
                                                 const std::vector<VkDescriptorSet>& textureDescriptorSets)
     {
@@ -518,7 +517,7 @@ namespace Doodle
         vkCmdBeginRendering(commandBuffer, &renderingInfo);
 
         //绑定管线
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pGraphicsPipeline->GetGraphicsPipeline());
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline.GetGraphicsPipeline());
 
         //视口与剪裁在管线层被声明为动态状态，没有烘焙进管线，只能在这里补上。
         //交换链尺寸变化时只影响这里，不用重建管线
@@ -549,7 +548,7 @@ namespace Doodle
         vkCmdBindDescriptorSets(
             commandBuffer,
             VK_PIPELINE_BIND_POINT_GRAPHICS,
-            m_pGraphicsPipeline->GetPipelineLayout(),
+            graphicsPipeline.GetPipelineLayout(),
             0,
             1,
             &frameDescriptorSet,
@@ -580,7 +579,7 @@ namespace Doodle
                 vkCmdBindDescriptorSets(
                     commandBuffer,
                     VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    m_pGraphicsPipeline->GetPipelineLayout(),
+                    graphicsPipeline.GetPipelineLayout(),
                     1,
                     1,
                     &textureDescriptorSet,
@@ -590,9 +589,8 @@ namespace Doodle
             }
 
             //localToWorld 与材质基色每个绘制项一份，走 push constant。数据块的布局
-            //由 DoodlePushConstantObject 钉住，大小直接用 sizeof，布局改了这里
-            //自动跟上。stageFlags 必须与管线布局创建时声明的那段范围一致 ——
-            //少写片元阶段仍然「是范围的子集」，校验层不会报，但片元会读到旧值
+            //由 DoodlePushConstantObject 钉住，阶段 / 偏移 / 大小取管线层的
+            //kPushConstantRange —— 管线布局与这里只认同一份定义，改一处不会漏另一处
             //
             //push 的是这条命令缓冲的当前值，下一条 push 直接覆盖 ——
             //不需要每绘制项一块 UBO，也不需要等 GPU 用完上一份
@@ -603,10 +601,10 @@ namespace Doodle
             };
             vkCmdPushConstants(
                 commandBuffer,
-                m_pGraphicsPipeline->GetPipelineLayout(),
-                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                0,
-                sizeof(DoodlePushConstantObject),
+                graphicsPipeline.GetPipelineLayout(),
+                DoodleGraphicsPipeline::kPushConstantRange.stageFlags,
+                DoodleGraphicsPipeline::kPushConstantRange.offset,
+                DoodleGraphicsPipeline::kPushConstantRange.size,
                 &pushConstants);
 
             //绑定顶点缓冲。这里的 binding 编号 0 指回管线顶点输入描述里的 binding = 0 ——

@@ -5,6 +5,7 @@
 #include "DoodleVulkanManager.h"
 
 #include "../Platform/DoodleWindow.h"
+#include "DoodleShaderModule.h"
 #include "DoodleVulkanUtils.h"
 #include "Rendering/DoodleCamera.h"
 #include "Rendering/DoodleLight.h"
@@ -23,17 +24,28 @@ namespace Doodle
         m_device.Initialize(window);
         m_swapChain.Initialize(m_device, window);
 
-        //深度图按交换链尺寸建；图形管线要读它的格式，所以它必须排在管线之前
+        //深度图按交换链尺寸建。图形管线只吃这两个附件的格式，不吃对象本身，
+        //所以它排在后面，只把 pass 配置传进去
         m_depthImages.Initialize(m_device, m_swapChain.GetImageExtent());
-        m_graphicsPipeline.Initialize(m_device, m_swapChain, m_depthImages);
-        m_commandManager.Initialize(m_device, m_swapChain, m_graphicsPipeline, m_depthImages);
+
+        //命令层先建：描述符管理器的默认白图上传要借它的传输池。
+        //它只记设备 / 交换链 / 深度图；管线按帧由 DrawFrame 传进 Record
+        m_commandManager.Initialize(m_device, m_swapChain, m_depthImages);
 
         //UBO 每帧更新，走 HostVisible 类型（CPU 直接写），不走设备本地 + 中转。
         //映射由第一次 Write 建立，这里只负责分配。
-        //描述符管理器要读图形管线的 set layout、写 UBO 缓冲句柄；默认白图的
-        //上传还要借命令管理器的传输池 —— 所以它排在 UBO 与命令层之后
+        //描述符管理器要写 UBO 缓冲句柄，并建出两个 set 布局
         CreateUniformBuffers();
-        m_descriptorManager.Initialize(m_device, m_graphicsPipeline, m_uniformBuffers);
+        m_descriptorManager.Initialize(m_device, m_uniformBuffers);
+
+        //管线最后建：它要描述符管理器的 set 0 / set 1 布局。
+        //驱动编译缓存这一步先不接（VK_NULL_HANDLE），第 3 步随管线缓存一起加
+        m_forwardPassConfig = MakeForwardPassConfig();
+        m_graphicsPipeline.Initialize(m_device,
+                                      VK_NULL_HANDLE,
+                                      m_descriptorManager.GetFrameDescriptorSetLayout(),
+                                      m_forwardPassConfig,
+                                      CreateLitShaderDescription());
 
         m_syncObjects.Initialize(m_device, m_swapChain);
     }
@@ -54,16 +66,16 @@ namespace Doodle
 
         //按「使用者先、被使用者后」销毁。
         //
-        //命令管理层先走，因为它录下的绘制命令可能引用描述符集；接着描述符管理器
-        //释放两组池与默认白图，然后 UBO 才能安全销毁。图形管线持有 set layout，
-        //必须排在描述符管理器之后。其余资源与这几条依赖无关，按原有逆序排列
+        //命令管理层先走，因为它录下的绘制命令可能引用描述符集；接着管线拆掉 ——
+        //它的管线布局引用描述符管理器的两个 set 布局，必须排在描述符管理器之前；
+        //描述符管理器释放两组池与默认白图后，UBO 才能安全销毁
         m_syncObjects.Destroy();
         m_commandManager.Destroy();
+        m_graphicsPipeline.Destroy();
         m_descriptorManager.Destroy();
 
         DestroyUniformBuffers();
 
-        m_graphicsPipeline.Destroy();
         m_depthImages.Destroy();
         m_swapChain.Destroy();
         m_device.Destroy();
@@ -206,6 +218,7 @@ namespace Doodle
         const auto commandBuffer = m_commandManager.Record(frameIndex,
                                                           imageIndex,
                                                           context.drawItems,
+                                                          m_graphicsPipeline,
                                                           frameDescriptorSet,
                                                           textureDescriptorSets);
 
@@ -298,6 +311,29 @@ namespace Doodle
         }
     }
 
+    DoodlePipelinePassConfig DoodleVulkanManager::MakeForwardPassConfig() const
+    {
+        return
+        {
+            .colorFormats = {m_swapChain.GetImageFormat()},
+            .depthFormat = m_depthImages.GetFormat(),
+            .sampleCount = VK_SAMPLE_COUNT_1_BIT
+        };
+    }
+
+    DoodlePipelineShaderDescription DoodleVulkanManager::CreateLitShaderDescription() const
+    {
+        return
+        {
+            .vertexBytecode = DoodleShaderModule::ReadFile("Shaders/lit.vert.spv"),
+            .fragmentBytecode = DoodleShaderModule::ReadFile("Shaders/lit.frag.spv"),
+            .materialSetLayout = m_descriptorManager.GetTextureDescriptorSetLayout(),
+            .renderState = {},
+            .vertexFormat = EVertexFormat::PosNormalUv,
+            .instanceFormat = EInstanceFormat::None
+        };
+    }
+
     void DoodleVulkanManager::RecreateSwapChain()
     {
         //窗口像素尺寸为 0（桌面上的最小化）时建不出交换链，在这里阻塞到能画为止。
@@ -324,18 +360,26 @@ namespace Doodle
 
         //按依赖正序创建，顺序与 Initialize 里这几层的一致。
         //
-        //图形管线不在这里重建。它把颜色与深度格式按值编译进了管线，格式真变了
-        //它就不再匹配 —— 但那个格式要变，得把窗口拖到另一块不同色域的显示器上，
-        //是极罕见的情况；而重建代价是把管线整个重编译一遍（几十毫秒）。
-        //为一次窗口缩放付这个钱不值得。真到要处理的那天，判据是这里比对格式变没变，
-        //变了就重建管线；现在不写，是不给它留一条没人走的路径
+        //管线不随每次重建而重建：它把附件格式编译进去了，但尺寸不影响它
+        //（视口与剪裁是动态状态）。绝大多数重建是缩放窗口，格式不变；
+        //重建完交换链与深度图后拿新的 pass 配置与成员里记的那份一比，
+        //变了才让管线原地重建 —— 换格式（比如拖到另一块显示器、Android 切后台）
+        //必须有这条路，而不是「罕见就不写」。原地重建只换 VkPipeline，
+        //对象地址与管线布局不变，持有它的引用不受影响
         //
         //命令缓冲也不重建：它不缓存任何上游句柄，每帧录制时现取，
         //重建后重录拿到的自然是新的
         m_swapChain.Initialize(m_device, *m_pWindow);
-        //深度图的尺寸跟着交换链走，所以它必须在这里重建；它的格式不会因缩放而变，
-        //图形管线因此不必跟着重建
+        //深度图的尺寸跟着交换链走，所以它必须在这里重建
         m_depthImages.Initialize(m_device, m_swapChain.GetImageExtent());
+
+        const DoodlePipelinePassConfig passConfig = MakeForwardPassConfig();
+        if (passConfig != m_forwardPassConfig)
+        {
+            m_graphicsPipeline.Rebuild(VK_NULL_HANDLE, passConfig, CreateLitShaderDescription());
+            m_forwardPassConfig = passConfig;
+        }
+
         m_syncObjects.Initialize(m_device, m_swapChain);
 
         //到这里交换链已经照当前窗口尺寸建好了，积压的 resize 通知就算兑现。
@@ -380,7 +424,7 @@ namespace Doodle
     void DoodleVulkanManager::UpdateUniformBuffer(const uint32_t frameIndex,
                                                   const DoodleDrawContext& context)
     {
-        DoodleUniformBufferObject ubo{};
+        DoodleUniformBufferObject ubo;
 
         //view 由相机从宿主 Transform 现算：相机不存位置 / 朝向，
         //移动它所在的对象，画面自然跟着变

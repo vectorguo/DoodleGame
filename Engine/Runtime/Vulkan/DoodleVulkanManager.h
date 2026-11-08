@@ -185,6 +185,21 @@ namespace Doodle
 
     private:
         /**
+         * 当前前向主 pass 的附件配置：颜色格式来自交换链、深度格式来自深度图组
+         *
+         * 交换链重建后拿新的一份与成员里记的这份比对，变了才让管线原地重建
+         */
+        [[nodiscard]] DoodlePipelinePassConfig MakeForwardPassConfig() const;
+
+        /**
+         * lit 的着色器侧描述：两份字节码 + set 1 布局 + 默认渲染状态
+         *
+         * 第 2 步还没有着色器资产，门面自己读两份 spv 拼描述；第 3 步起
+         * 由材质带着自己的着色器向管线缓存要管线，这个函数随之删除
+         */
+        [[nodiscard]] DoodlePipelineShaderDescription CreateLitShaderDescription() const;
+
+        /**
          * 重建交换链，以及所有随它一起失效的层
          *
          * 顺序：交换链 → 深度图 → 同步对象，与 Initialize 同序、与 Destroy 反序。
@@ -272,8 +287,12 @@ namespace Doodle
         DoodleDepthImages m_depthImages;
 
         /**
-         * 图形管线层：只读引用设备层、交换链层（取颜色附件格式）与深度图组
-         * （取深度格式），须排在交换链与深度图组之后
+         * 前向主 pass 当前的附件配置；交换链重建后与新的比对，变了才重建管线
+         */
+        DoodlePipelinePassConfig m_forwardPassConfig;
+
+        /**
+         * 图形管线层：只按值收下附件格式与着色器描述，不持有交换链 / 深度图的句柄
          */
         DoodleGraphicsPipeline m_graphicsPipeline;
 

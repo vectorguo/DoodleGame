@@ -6,44 +6,99 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include "DoodleGraphicsPipelineConfig.h"
+#include "Rendering/DoodleRenderState.h"
+#include "Rendering/DoodleShaderData.h"
+
 namespace Doodle
 {
-    //三者只在接口签名与成员指针里出现，完整定义留给源文件
-    class DoodleDepthImages;
-    class DoodleSwapChain;
+    //只在接口签名与成员指针里出现，完整定义留给源文件
     class DoodleVulkanDevice;
 
     /**
-     * 图形管线层：着色器与固定功能状态编译成的不可变绘制配置
+     * 一条图形管线：按参数建出来的管线布局 + 管线
      *
-     * 只读引用设备层、交换链层与深度图组，生命周期须短于 DoodleSwapChain。
+     * 只拥有这两样东西。一条管线由三部分输入决定：
+     * - 着色器侧描述（DoodlePipelineShaderDescription）：字节码、set 1 布局、
+     *   渲染状态、顶点与实例格式；
+     * - pass 侧配置（DoodlePipelinePassConfig）：附件格式与采样数；
+     * - 全局共享：set 0 布局（描述符管理器持有，全工程一个）、push constant
+     *   范围（kPushConstantRange）、驱动编译缓存（VkPipelineCache）。
      *
-     * 交换链在这里只出一件东西：颜色附件格式；深度图组也只出一件东西：深度格式。
-     * 两者都是 Initialize 时读一次、编译进管线，之后不再读。所以交换链重建不必
-     * 重建本层：重建不换格式，管线里编译进去的那份照样是对的
+     * 前两样是管线的创建输入，定义在 DoodleGraphicsPipelineConfig.h（原因见该文件开头）。
      *
-     * 引用交换链不是为尺寸：视口与剪裁走动态状态，创建管线时不消费它
+     * 本类不读文件、不认识门面、也不是单例：字节由要管线的一方读好传进来，
+     * 设备与布局都是参数。同一份输入建几次都一样，谁来建、建几条由
+     * DoodlePipelineCache 决定 —— 本类不再是「全工程那一条管线」
+     *
+     * 所有管线共用 set 0 布局与 push constant 范围，是为了布局兼容：Vulkan 规定
+     * 两个管线布局只有在 set 0..N 的布局都相同、且 push constant 范围也相同时，
+     * 才对 set N 兼容。共用这两样，录制时换管线不必重新绑定 set 0
+     *
+     * 不可复制：复制一份就是两个对象各自去销毁同一组句柄
      */
     class DoodleGraphicsPipeline
     {
     public:
-        /**
-         * 初始化图形管线
-         * @param device 已初始化的Vulkan设备
-         * @param swapChain 已初始化的交换链，取颜色附件格式用
-         * @param depthImages 已初始化的深度图组，取深度格式用
-         */
-        void Initialize(const DoodleVulkanDevice& device,
-                        const DoodleSwapChain& swapChain,
-                        const DoodleDepthImages& depthImages);
+        DoodleGraphicsPipeline() = default;
+
+        DoodleGraphicsPipeline(const DoodleGraphicsPipeline&) = delete;
+        DoodleGraphicsPipeline& operator=(const DoodleGraphicsPipeline&) = delete;
 
         /**
-         * 销毁图形管线
+         * 建管线布局与管线
+         *
+         * @param device 已初始化的 Vulkan 设备
+         * @param pipelineCompileCache 驱动编译缓存，可为 VK_NULL_HANDLE（不用缓存）
+         * @param frameSetLayout set 0 布局：整帧共享的 UBO。必须是全工程那一个句柄，
+         *        否则与其它管线的布局不兼容
+         * @param passConfig 附件格式与采样数
+         * @param shaderDescription 着色器侧描述；只在本次调用期间读取，不保存
+         *
+         * @throw std::invalid_argument 描述本身不合法（字节码为空、
+         *        深度偏移因子不是有限值……）
+         * @throw std::runtime_error 布局 / 模块 / 管线创建失败
+         *
+         * @note 前置条件：尚未初始化。失败时已经建出来的部分会被收掉，
+         *       对象回到未初始化状态
+         */
+        void Initialize(const DoodleVulkanDevice& device,
+                        VkPipelineCache pipelineCompileCache,
+                        VkDescriptorSetLayout frameSetLayout,
+                        const DoodlePipelinePassConfig& passConfig,
+                        const DoodlePipelineShaderDescription& shaderDescription);
+
+        /**
+         * 换一套 pass 配置，重建管线本身；管线布局与对象地址不变
+         *
+         * 附件格式只影响管线：布局里是 set 布局与 push constant 范围，与格式无关。
+         * 所以布局原样保留（也就不再读 set 1 布局），持有本对象引用的一方不受影响。
+         * 先建新的、成功了再拆旧的：建失败时旧管线原样可用，异常向上抛
+         *
+         * 由管线缓存在附件格式变化时调用
+         *
+         * @param pipelineCompileCache 驱动编译缓存，可为 VK_NULL_HANDLE
+         * @param passConfig 新的附件格式与采样数
+         * @param shaderDescription 必须与 Initialize 时那份内容相同（管线缓存条目里存的副本）
+         *
+         * @throw std::logic_error 尚未初始化
+         * @throw std::runtime_error 模块 / 管线创建失败
+         *
+         * @note 前置条件：GPU 已空闲 —— 旧管线可能还被在途的命令引用着
+         */
+        void Rebuild(VkPipelineCache pipelineCompileCache,
+                     const DoodlePipelinePassConfig& passConfig,
+                     const DoodlePipelineShaderDescription& shaderDescription);
+
+        /**
+         * 销毁管线与管线布局
+         *
+         * 可以重复调用：句柄为空的部分直接跳过。前置条件：GPU 不再引用这条管线
          */
         void Destroy();
 
         /**
-         * 获取管线布局Handle
+         * 管线布局：录制时绑定描述符集、推 push constant 都要用它来解释
          */
         [[nodiscard]] VkPipelineLayout GetPipelineLayout() const
         {
@@ -51,29 +106,7 @@ namespace Doodle
         }
 
         /**
-         * 获取描述符集布局（set 0）：整帧共享的 UBO
-         *
-         * 门面创建描述符集时需要它。布局的所有权仍在本层：调用方只读，
-         * 不能销毁，也不应该把它缓存到生命周期更长的地方
-         */
-        [[nodiscard]] VkDescriptorSetLayout GetDescriptorSetLayout() const
-        {
-            return m_descriptorSetLayout;
-        }
-
-        /**
-         * 获取纹理描述符集布局（set 1）：每个材质一张 combined image sampler
-         *
-         * 门面按纹理创建描述符集时用它。与 set 0 分开，是因为 UBO 按帧轮转、
-         * 纹理按资产共享，两者的更新频率和数量都不同
-         */
-        [[nodiscard]] VkDescriptorSetLayout GetTextureDescriptorSetLayout() const
-        {
-            return m_textureDescriptorSetLayout;
-        }
-
-        /**
-         * 获取图形管线Handle
+         * 图形管线
          */
         [[nodiscard]] VkPipeline GetGraphicsPipeline() const
         {
@@ -82,45 +115,18 @@ namespace Doodle
 
     private:
         /**
-         * 创建描述符集布局（set 0）
+         * 检查着色器侧描述里 Vulkan 不会替我们检查、或者检查了也只报在别处的那几条
          *
-         * 它声明 binding 0 是一个顶点与片元阶段都可见的 uniform buffer。
-         * 必须在 CreatePipelineLayout 之前完成 —— 管线布局会引用它
+         * @throw std::invalid_argument 不合法
          */
-        void CreateDescriptorSetLayout();
+        static void ValidateShaderDescription(const DoodlePipelineShaderDescription& shaderDescription);
 
         /**
-         * 销毁 set 0 描述符集布局，并把句柄置空
+         * 建管线布局：set 0（+ set 1）与 kPushConstantRange
          *
-         * 调用前必须确认描述符池已经销毁：集合从池里分配，池先走，
-         * 布局才能安全销毁。顺序由 DoodleVulkanManager::Destroy 保证
+         * materialSetLayout 为空时只有 set 0
          */
-        void DestroyDescriptorSetLayout();
-
-        /**
-         * 创建纹理描述符集布局（set 1）
-         *
-         * binding 0 是一个片元阶段可见的 combined image sampler。
-         * 与 set 0 一样，必须在 CreatePipelineLayout 之前完成
-         */
-        void CreateTextureDescriptorSetLayout();
-
-        /**
-         * 销毁 set 1 描述符集布局，并把句柄置空
-         *
-         * 调用前必须确认纹理描述符池已经销毁
-         */
-        void DestroyTextureDescriptorSetLayout();
-
-        /**
-         * 创建管线布局
-         *
-         * 管线布局引用两个描述符集布局：set 0 是整帧共享的 view / proj 与主光源，
-         * set 1 是逐材质的纹理。同时声明 DoodlePushConstantObject 的 push constant
-         * 范围 —— 数据块与布局断言在 Rendering/DoodleShaderData.h，这里按同一布局
-         * 就地写范围。仍在创建图形管线之前完成。
-         */
-        void CreatePipelineLayout();
+        void CreatePipelineLayout(VkDescriptorSetLayout frameSetLayout, VkDescriptorSetLayout materialSetLayout);
 
         /**
          * 销毁管线布局，并把句柄置空
@@ -128,17 +134,60 @@ namespace Doodle
         void DestroyPipelineLayout();
 
         /**
-         * 创建图形管线
+         * 按 pass 配置与着色器侧描述建一条管线，返回句柄
          *
-         * 前置条件：m_pipelineLayout 已创建、m_graphicsPipeline 必须为空。
-         * 重建时请走 Destroy 后重新 Initialize
+         * 返回句柄而不是直接写成员：调用方决定什么时候装上它。
+         * 前置条件：m_pipelineLayout 已创建
          */
-        void CreateGraphicsPipeline();
+        [[nodiscard]] VkPipeline CreateGraphicsPipeline(VkPipelineCache pipelineCompileCache,
+                                                        const DoodlePipelinePassConfig& passConfig,
+                                                        const DoodlePipelineShaderDescription& shaderDescription) const;
 
         /**
          * 销毁图形管线，并把句柄置空
          */
         void DestroyGraphicsPipeline();
+
+        /**
+         * ECullMode → VkCullModeFlags
+         */
+        [[nodiscard]] static VkCullModeFlags ToVkCullMode(ECullMode cullMode);
+
+        /**
+         * ECompareOp → VkCompareOp
+         */
+        [[nodiscard]] static VkCompareOp ToVkCompareOp(ECompareOp compareOp);
+
+        /**
+         * EPrimitiveTopology → VkPrimitiveTopology
+         */
+        [[nodiscard]] static VkPrimitiveTopology ToVkPrimitiveTopology(EPrimitiveTopology topology);
+
+        /**
+         * 一个颜色附件的混合设置：EBlendMode 展开成 Vulkan 的混合因子
+         */
+        [[nodiscard]] static VkPipelineColorBlendAttachmentState MakeColorBlendAttachment(EBlendMode blendMode);
+
+    public:
+        /**
+         * 全工程唯一的 push constant 范围：所有管线布局都用它，录制时
+         * vkCmdPushConstants 也用它
+         *
+         * 只定义这一次。管线布局与 push 两边各写一份的话，改阶段时漏改一处，
+         * push 的 stageFlags 与布局里的范围就对不上（VUID-vkCmdPushConstants-offset-01795 /
+         * -01796）；范围不同的两个管线布局也不再兼容，换管线时 set 0 会失效。
+         *
+         * 内容这一步不变：localToWorld 在顶点阶段读、baseColor 在片元阶段读，
+         * 所以阶段同时覆盖两者；大小直接取 DoodlePushConstantObject，布局改了自动跟上
+         * （数据块与偏移断言在 Rendering/DoodleShaderData.h）。80 字节，低于规范保证的
+         * maxPushConstantsSize 下限 128
+         */
+        static constexpr VkPushConstantRange kPushConstantRange
+        {
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            .offset = 0,
+            .size = sizeof(DoodlePushConstantObject)
+        };
 
     private:
         /**
@@ -147,33 +196,7 @@ namespace Doodle
         const DoodleVulkanDevice* m_pDevice = nullptr;
 
         /**
-         * 交换链层，在 Initialize 时绑定，取颜色附件格式用
-         */
-        const DoodleSwapChain* m_pSwapChain = nullptr;
-
-        /**
-         * 深度图组，在 Initialize 时绑定，取深度格式用
-         */
-        const DoodleDepthImages* m_pDepthImages = nullptr;
-
-        /**
-         * 描述符集布局（set 0）：整帧共享的 view / proj 与主光源
-         *
-         * 它是管线接口的一部分：管线布局引用它，门面用它分配描述符集。
-         * 寿命与图形管线相同，销毁顺序为：管线 → 管线布局 → 本布局
-         */
-        VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
-
-        /**
-         * 描述符集布局（set 1）：材质纹理
-         *
-         * 每张纹理一个描述符集，按材质槽引用；与 set 0 分开，避免把每帧数据
-         * 复制进每张纹理的集合
-         */
-        VkDescriptorSetLayout m_textureDescriptorSetLayout = VK_NULL_HANDLE;
-
-        /**
-         * 管线布局
+         * 管线布局：set 0（+ set 1）与 kPushConstantRange
          */
         VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
 

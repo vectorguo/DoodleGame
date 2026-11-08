@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <string>
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -20,27 +21,33 @@
 
 namespace Doodle
 {
-    VkShaderModule DoodleShaderModule::CreateShaderModule(VkDevice pDevice, const std::string& shaderPath)
+    VkShaderModule DoodleShaderModule::CreateShaderModule(VkDevice pDevice, const std::vector<std::byte>& bytecode)
     {
-        const auto code = ReadFile(shaderPath);
-
         // SPIR-V 是 32 位字流：codeSize 以「字节」计，pCode 却是 uint32_t*。
         // 单位不一致是这一处的常见困惑点，推论有两条：
-        //   1. codeSize 必须是 4 的倍数（合法的 glslc 产物天然满足，
-        //      手动补过 '\0' 就会破坏）
+        //   1. codeSize 必须是 4 的倍数，且不能为 0（VUID-VkShaderModuleCreateInfo-codeSize-08735 /
+        //      -01085）。合法的 glslc 产物天然满足；被截断、手动补过 '\0'、或者读错了文件
+        //      都会破坏它 —— 在这里拦下来，比让驱动去解析一段半截的字流好查得多
         //   2. pCode 须满足 uint32_t 对齐 —— std::vector 的默认分配器
         //      保证最坏情况对齐，所以下面的转换是安全的
+        if (bytecode.empty() || bytecode.size() % sizeof(uint32_t) != 0)
+        {
+            throw std::runtime_error("failed to create shader module: SPIR-V size " +
+                                     std::to_string(bytecode.size()) +
+                                     " is not a positive multiple of 4");
+        }
+
         const VkShaderModuleCreateInfo createInfo
         {
             .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-            .codeSize = code.size(),
-            .pCode = reinterpret_cast<const uint32_t*>(code.data())
+            .codeSize = bytecode.size(),
+            .pCode = reinterpret_cast<const uint32_t*>(bytecode.data())
         };
 
         VkShaderModule shaderModule = VK_NULL_HANDLE;
         if (vkCreateShaderModule(pDevice, &createInfo, nullptr, &shaderModule) != VK_SUCCESS)
         {
-            throw std::runtime_error("failed to create shader module: " + shaderPath);
+            throw std::runtime_error("failed to create shader module!");
         }
         return shaderModule;
     }
@@ -74,7 +81,7 @@ namespace Doodle
 #endif
     }
 
-    std::vector<char> DoodleShaderModule::ReadFile(const std::string& filename)
+    std::vector<std::byte> DoodleShaderModule::ReadFile(const std::string& filename)
     {
         // 候选路径，顺序即优先级
         std::vector<std::string> candidates = {filename};
@@ -105,11 +112,16 @@ namespace Doodle
             }
 
             const auto fileSize = static_cast<size_t>(file.tellg());
-            std::vector<char> buffer(fileSize);
+            std::vector<std::byte> buffer(fileSize);
 
             file.seekg(0);
-            file.read(buffer.data(), static_cast<std::streamsize>(fileSize));
-            file.close();
+            file.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(fileSize));
+
+            // 打开了却没读满：把半截字节码交出去，报错会落在建模块那里，和根因对不上
+            if (!file)
+            {
+                throw std::runtime_error("failed to read file: " + candidate);
+            }
             return buffer;
         }
 
@@ -122,8 +134,8 @@ namespace Doodle
         {
             if (filename == file.pPath)
             {
-                const auto* pBegin = reinterpret_cast<const char*>(file.pData);
-                return std::vector<char>(pBegin, pBegin + file.size);
+                const auto* pBegin = reinterpret_cast<const std::byte*>(file.pData);
+                return std::vector<std::byte>(pBegin, pBegin + file.size);
             }
         }
 

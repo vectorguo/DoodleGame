@@ -76,6 +76,7 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Vulkan/DoodleSwapChain.h
     Engine/Runtime/Vulkan/DoodleGraphicsPipeline.cpp
     Engine/Runtime/Vulkan/DoodleGraphicsPipeline.h
+    Engine/Runtime/Vulkan/DoodleGraphicsPipelineConfig.h
         Engine/Runtime/Vulkan/DoodleCommandManager.cpp
     Engine/Runtime/Vulkan/DoodleCommandManager.h
     Engine/Runtime/Vulkan/DoodleDescriptorManager.cpp

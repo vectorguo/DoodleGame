@@ -34,7 +34,8 @@ namespace Doodle
      * 生命周期与程序一致。两个命令池都只在 Initialize 里建一次；
      * 交换链重建时本层不重建，见上
      *
-     * 只读引用设备层、交换链层与图形管线层，生命周期须短于 DoodleSwapChain
+     * 只读引用设备层、交换链层与深度图组，生命周期须短于 DoodleSwapChain。
+     * 图形管线由调用方按帧传进 Record，本层不保存它的引用
      *
      * 动态渲染之后本层多担一件事：渲染目标的布局转换。
      * 渲染通道时代那是驱动在通道边界自动做的，现在三条屏障都写在这里
@@ -88,12 +89,10 @@ namespace Doodle
          * 初始化命令管理层
          * @param device 已初始化的Vulkan设备
          * @param swapChain 已初始化的交换链
-         * @param graphicsPipeline 已初始化的图形管线
          * @param depthImages 已初始化的深度图组，按 frameIndex 取本帧那一张
          */
         void Initialize(const DoodleVulkanDevice& device,
                         const DoodleSwapChain& swapChain,
-                        const DoodleGraphicsPipeline& graphicsPipeline,
                         const DoodleDepthImages& depthImages);
 
         /**
@@ -110,6 +109,8 @@ namespace Doodle
          *        材质与模型矩阵；空表示本帧只清屏不画东西 —— 那是合法状态，
          *        不是错误。用 const vector& 而不是 span：当前唯一调用方传的就是 vector，
          *        视图类型没有实际收益；出现第二种容器 / 子区间时再泛化
+         * @param graphicsPipeline 本帧共用的图形管线。所有权在门面，本层只使用；
+         *        管线可能在交换链重建时原地换过 VkPipeline，所以每帧现传，不缓存
          * @param frameDescriptorSet 本帧的 set 0，必须与 frameIndex 同槽位。
          *        它把该帧的 UBO（view / proj / 主光源）接到 binding 0；所有权在门面，本层只使用
          * @param textureDescriptorSets 每条绘制项对应的 set 1（材质纹理），
@@ -146,9 +147,10 @@ namespace Doodle
          *
          * 名字不带 CommandBuffer：类名已经交代了宾语，重复一遍不带来信息
          */
-        [[nodiscard]] VkCommandBuffer Record(const uint32_t frameIndex,
-                                             const uint32_t imageIndex,
+        [[nodiscard]] VkCommandBuffer Record(uint32_t frameIndex,
+                                             uint32_t imageIndex,
                                              const std::vector<DoodleDrawItem>& drawItems,
+                                             const DoodleGraphicsPipeline& graphicsPipeline,
                                              VkDescriptorSet frameDescriptorSet,
                                              const std::vector<VkDescriptorSet>& textureDescriptorSets);
 
@@ -316,11 +318,6 @@ namespace Doodle
          * 交换链层，在 Initialize 时绑定，取渲染区域尺寸、图像与图像视图用
          */
         const DoodleSwapChain* m_pSwapChain = nullptr;
-
-        /**
-         * 图形管线层，在 Initialize 时绑定
-         */
-        const DoodleGraphicsPipeline* m_pGraphicsPipeline = nullptr;
 
         /**
          * 深度图组，在 Initialize 时绑定，按 frameIndex 取本帧那一张
