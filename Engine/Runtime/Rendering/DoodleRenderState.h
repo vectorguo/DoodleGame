@@ -17,7 +17,7 @@ namespace Doodle
      * 剔除哪一面
      *
      * 哪一面算正面不在这里选：frontFace 和投影的 Y 翻转、顶点顺序绑在一起，
-     * 是全局约定（逆时针为正面，见 DoodleGraphicsPipeline 里光栅化那段）
+     * 是全局约定（逆时针为正面，见 DoodleVulkanPipelineObject 里光栅化那段）
      */
     enum class ECullMode : std::uint8_t
     {
@@ -41,7 +41,7 @@ namespace Doodle
      * 比较方式：新片元的值与附件里已有的值怎么比，通过才继续
      *
      * 现在只有深度测试用它。取值与 Vulkan 的 VkCompareOp 一一对应，
-     * 转换在 DoodleGraphicsPipeline 里
+     * 转换在 DoodleVulkanPipelineObject 里
      */
     enum class ECompareOp : std::uint8_t
     {
@@ -60,7 +60,7 @@ namespace Doodle
      *
      * 只给常用的四种效果，不开放 Vulkan 的全部混合因子：材质作者选的是效果，
      * 不是一组因子。每种对应的因子与 Unity URP 的同名模式一致，见
-     * DoodleGraphicsPipeline::MakeColorBlendAttachment
+     * DoodleVulkanPipelineObject::MakeColorBlendAttachment
      */
     enum class EBlendMode : std::uint8_t
     {
@@ -106,7 +106,7 @@ namespace Doodle
      *
      * 放在 Rendering：它描述「这个着色器怎么画」，是着色器资产的一部分
      * （由 Shaders/ 下的 *.shader.json 的 renderState 写出来），不碰任何 Vulkan 类型；
-     * 翻译成 Vk* 结构是 DoodleGraphicsPipeline 的事。
+     * 翻译成 Vk* 结构是 DoodleVulkanPipelineObject 的事。
      *
      * 全部烘焙进管线，不走 Vulkan 1.3 的扩展动态状态：MoltenVK 与 Android
      * 驱动上烘焙更稳，而且管线数只取决于「着色器 × 渲染状态 × pass」，
@@ -123,7 +123,7 @@ namespace Doodle
      * 它是管线缓存查找键的一部分，所以要能判等、能算哈希（见 GetHashValue）。
      * 判等用默认的逐成员比较：以后加字段时自动参与比较，
      * 不会出现「两份不同的状态被当成同一条管线」。两个浮点因子必须是有限值 ——
-     * NaN 不等于自己，会让同一份状态每次都查不到；DoodleGraphicsPipeline
+     * NaN 不等于自己，会让同一份状态每次都查不到；DoodleVulkanPipelineObject
      * 建管线时会拦下来
      */
     struct DoodleRenderState

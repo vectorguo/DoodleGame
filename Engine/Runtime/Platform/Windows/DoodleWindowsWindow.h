@@ -71,7 +71,7 @@ namespace Doodle
 
         [[nodiscard]] bool IsCloseRequested() const override;
 
-        [[nodiscard]] DoodleInput::RawState GetRawInputState() const override;
+        [[nodiscard]] DoodleInputRawState GetRawInputState() const override;
 
         void SetCursorCaptured(const bool captured) override;
 
@@ -110,7 +110,7 @@ namespace Doodle
         /**
          * 本帧输入快照，由 PumpEvents 刷新
          */
-        DoodleInput::RawState m_input;
+        DoodleInputRawState m_input;
 
         /**
          * 窗口是否拥有键盘焦点

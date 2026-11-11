@@ -32,12 +32,15 @@ namespace Doodle
         //同一槽位下一次被用到之前，帧栅栏已经保证了上一次使用完成
         for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
         {
-            m_images[i].Initialize(device,
-                                   extent.width,
-                                   extent.height,
-                                   m_depthFormat,
-                                   VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-                                   aspectMask);
+            m_images[i].Initialize(
+            {
+                .device = device,
+                .width = extent.width,
+                .height = extent.height,
+                .format = m_depthFormat,
+                .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                .aspectFlags = aspectMask
+            });
         }
     }
 

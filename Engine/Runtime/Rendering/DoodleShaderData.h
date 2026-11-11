@@ -22,7 +22,7 @@ namespace Doodle
      * - DoodlePushConstantObject：每条绘制项一份，随 vkCmdPushConstants 推送。
      *
      * 放在 Rendering 而不是 Vulkan：数据形状归渲染域；把 UBO 写进哪块缓冲、
-     * 把 push constant 推到哪条命令，归 DoodleVulkanManager / DoodleCommandManager。
+     * 把 push constant 推到哪条命令，归 DoodleRenderPipeline / DoodleCommandManager。
      * 两块数据放在同一个头里，是因为它们总被同一条管线与同一次录制一起消费，
      * 且都不依赖 Vulkan。
      *
@@ -50,7 +50,7 @@ namespace Doodle
      * localToWorld 与材质基色不在这里：它们每个绘制项都不一样，装在 UBO 里
      * 就得每个绘制项一块缓冲、或者每帧按绘制项重写同一块缓冲。它们走
      * push constant（见下面的 DoodlePushConstantObject 与
-     * DoodleGraphicsPipeline 的范围声明），UBO 只装整帧共享的数据 ——
+     * DoodleVulkanPipelineObject 的范围声明），UBO 只装整帧共享的数据 ——
      * 一次写入，本帧所有绘制项共用
      *
      * 光源用 vec4 而不是 vec3：std140 里 vec3 的对齐是 16、占 16 字节，

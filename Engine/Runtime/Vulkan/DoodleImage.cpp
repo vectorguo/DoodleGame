@@ -13,18 +13,13 @@
 
 namespace Doodle
 {
-    void DoodleImage::Initialize(const DoodleVulkanDevice& device,
-                                 const uint32_t width,
-                                 const uint32_t height,
-                                 const VkFormat format,
-                                 const VkImageUsageFlags usage,
-                                 const VkImageAspectFlags aspectFlags)
+    void DoodleImage::Initialize(const DoodleImageInitInfo& info)
     {
-        m_pDevice = &device;
-        m_format = format;
+        m_pDevice = &info.device;
+        m_format = info.format;
 
-        CreateImage(width, height, usage);
-        CreateImageView(aspectFlags);
+        CreateImage(info.width, info.height, info.usage);
+        CreateImageView(info.aspectFlags);
     }
 
     void DoodleImage::Destroy()

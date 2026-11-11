@@ -1,5 +1,5 @@
 //
-//  DoodlePipelineCompileCache.h
+//  DoodleVulkanPipelineCompileCache.h
 //  Doodle
 //
 //  Created by 郭智 on 2026/11/6.
@@ -25,7 +25,7 @@ namespace Doodle
      * 编译结果 —— 同样的着色器与状态再建一条管线（换个渲染状态、格式变了
      * 原地重建）时，驱动可以跳过编译。
      *
-     * 全进程只有一个，由门面持有，所有 pass 共用，每次调用
+     * 全进程只有一个，由 DoodleRenderPipeline 持有，所有 pass 共用，每次调用
      * vkCreateGraphicsPipelines 都传进去。建的时候不带
      * VK_PIPELINE_CACHE_CREATE_EXTERNALLY_SYNCHRONIZED_BIT，所以它是内部同步的：
      * 以后后台线程并行建管线，多个线程同时用它不需要外面再加锁。
@@ -43,14 +43,14 @@ namespace Doodle
      * 已经建好的管线 —— 管线只在创建那一刻读它 —— 但 pass 的管线原地重建时
      * 还要用，所以让它活得比 pass 久。
      */
-    class DoodlePipelineCompileCache
+    class DoodleVulkanPipelineCompileCache
     {
     public:
-        DoodlePipelineCompileCache() = default;
+        DoodleVulkanPipelineCompileCache() = default;
 
         //句柄的生死在本类手里：复制一份就是两个对象各自去销毁同一个句柄
-        DoodlePipelineCompileCache(const DoodlePipelineCompileCache&) = delete;
-        DoodlePipelineCompileCache& operator=(const DoodlePipelineCompileCache&) = delete;
+        DoodleVulkanPipelineCompileCache(const DoodleVulkanPipelineCompileCache&) = delete;
+        DoodleVulkanPipelineCompileCache& operator=(const DoodleVulkanPipelineCompileCache&) = delete;
 
         /**
          * 建驱动编译缓存

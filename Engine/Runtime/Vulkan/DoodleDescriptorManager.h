@@ -23,12 +23,12 @@ namespace Doodle
     class DoodleVulkanDevice;
 
     /**
-     * 描述符管理器：两个描述符集布局、每帧 UBO 描述符集与材质纹理描述符集
+     * 描述符管理器：两个描述符集布局、frame UBO 描述符集与材质纹理描述符集
      *
      * 本类拥有两个 set 布局、两组池、对应的集合、默认 1×1 白图与纹理集合缓存：
      *
-     * - set 0：每帧一个 UBO 集合，按 frameIndex 轮转。它的布局是全工程唯一的
-     *   那一个句柄 —— 所有管线布局都用它（见 DoodleGraphicsPipeline 的类注释：
+     * - set 0（frame UBO 描述符集）：每帧一个集合，按 frameIndex 轮转。它的布局是全工程唯一的
+     *   那一个句柄 —— 所有管线布局都用它（见 DoodleVulkanPipelineObject 的类注释：
      *   set 0 布局与 push constant 范围都相同，管线之间才对 set 0 兼容，
      *   换管线时不必重新绑定 set 0）。集合本来就由本类分配，布局跟着集合走；
      * - set 1：每张纹理一个集合，按 DoodleTexture 指针缓存；没有纹理的材质
@@ -39,11 +39,11 @@ namespace Doodle
      *
      * 它不拥有 UBO 缓冲、纹理资产与管线：UBO 句柄在 Initialize 时传入，
      * 纹理由资产系统保证寿命，管线拿着两个布局句柄去建自己的管线布局。
-     * 生命周期由 DoodleVulkanManager 管理：Initialize 排在 UBO 与命令管理器之后、
+     * 生命周期由 DoodleRenderPipeline 管理：Initialize 排在 UBO 与命令管理器之后、
      * 所有管线之前（管线要读布局）；销毁排在所有管线之后、UBO 之前。
      *
      * 每帧的纹理集合解析结果（与 drawItems 等长）保存在内部，下一次调用
-     * ResolveTextureDescriptorSets 前有效。
+     * ResolveMaterialDescriptorSets 前有效。
      */
     class DoodleDescriptorManager
     {
@@ -55,7 +55,7 @@ namespace Doodle
          * 本类按它建 set 0 布局；DoodleShader 加载时也拿它核对着色器反射出来的 set 0 ——
          * 布局定义与着色器声明只在这里写一次
          */
-        static constexpr VkDescriptorSetLayoutBinding kFrameBinding
+        static constexpr VkDescriptorSetLayoutBinding kFrameUboBinding
         {
             .binding = 0,
             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -67,7 +67,7 @@ namespace Doodle
         /**
          * 本类 set 1 布局的唯一绑定：binding 0，一张在片元阶段采样的 combined image sampler
          *
-         * 第 3 步之前，set 1 的集合仍由本类按纹理分配（见 ResolveTextureDescriptorSets），
+         * 第 3 步之前，set 1 的集合仍由本类按纹理分配（见 ResolveMaterialDescriptorSets），
          * 而每个着色器资产按反射结果建自己的 set 1 布局。两边的布局句柄不同，
          * 但 Vulkan 认为定义相同的布局彼此兼容 —— 本类分配的集合因此能绑到任何一个
          * 着色器的管线上。前提是定义真的相同，所以 DoodleShader 加载时拿它核对；
@@ -83,17 +83,17 @@ namespace Doodle
         };
 
         /**
-         * 建两个描述符集布局、两组描述符池、每帧 UBO 集合与默认白图
+         * 建两个描述符集布局、两组描述符池、frame UBO 集合与默认白图
          *
          * 前置条件：
          * - UBO 缓冲已经建好（集合要写入它们的句柄）；
          * - 命令管理器已经初始化（默认白图要借它的传输池上传）。
          *
          * @param device 已初始化的 Vulkan 设备
-         * @param uniformBuffers 每帧一块的 UBO，数量必须等于 MAX_FRAMES_IN_FLIGHT
+         * @param frameUbos 每帧一块的 UBO，数量必须等于 MAX_FRAMES_IN_FLIGHT
          */
         void Initialize(const DoodleVulkanDevice& device,
-                        const std::array<DoodleGraphicsBuffer, MAX_FRAMES_IN_FLIGHT>& uniformBuffers);
+                        const std::array<DoodleGraphicsBuffer, MAX_FRAMES_IN_FLIGHT>& frameUbos);
 
         /**
          * 销毁两组池、默认白图与所有集合句柄，最后销毁两个布局
@@ -104,14 +104,14 @@ namespace Doodle
         void Destroy();
 
         /**
-         * set 0 的描述符集布局：整帧共享的 UBO
+         * frame UBO 的描述符集布局：整帧共享的 UBO
          *
          * 全工程只有这一个句柄，每条管线的布局都用它。所有权在本类：
          * 调用方只读，不能销毁
          */
-        [[nodiscard]] VkDescriptorSetLayout GetFrameDescriptorSetLayout() const
+        [[nodiscard]] VkDescriptorSetLayout GetFrameUboDescriptorSetLayout() const
         {
-            return m_frameDescriptorSetLayout;
+            return m_frameUboDescriptorSetLayout;
         }
 
         /**
@@ -120,18 +120,18 @@ namespace Doodle
          * 本类按它分配纹理集合。管线不用它建布局 —— 管线用的是各自着色器资产
          * 按反射建的那一份，定义与它相同
          */
-        [[nodiscard]] VkDescriptorSetLayout GetTextureDescriptorSetLayout() const
+        [[nodiscard]] VkDescriptorSetLayout GetMaterialDescriptorSetLayout() const
         {
-            return m_textureDescriptorSetLayout;
+            return m_materialDescriptorSetLayout;
         }
 
         /**
-         * 取本帧的 set 0
+         * 取本帧的 set 0（frame UBO 描述符集）
          *
          * @param frameIndex 在途帧索引，取值 0 .. MAX_FRAMES_IN_FLIGHT-1；
-         *        由门面按与 UBO / 命令缓冲同一个索引轮转给出
+         *        由渲染管线按与 UBO / 命令缓冲同一个索引轮转给出
          */
-        [[nodiscard]] VkDescriptorSet GetFrameDescriptorSet(uint32_t frameIndex) const;
+        [[nodiscard]] VkDescriptorSet GetFrameUboDescriptorSet(uint32_t frameIndex) const;
 
         /**
          * 为每条绘制项解析 set 1，返回与 drawItems 等长的集合数组
@@ -141,7 +141,7 @@ namespace Doodle
          *
          * @param drawItems 本帧的绘制项；pMaterial 必须非空（收集侧保证）
          */
-        [[nodiscard]] const std::vector<VkDescriptorSet>& ResolveTextureDescriptorSets(const std::vector<DoodleDrawItem>& drawItems);
+        [[nodiscard]] const std::vector<VkDescriptorSet>& ResolveMaterialDescriptorSets(const std::vector<DoodleDrawItem>& drawItems);
 
     private:
         /**
@@ -150,14 +150,14 @@ namespace Doodle
          * 它声明 binding 0 是一个顶点与片元阶段都可见的 uniform buffer。
          * 必须在分配每帧集合之前完成 —— 集合按它分配
          */
-        void CreateFrameDescriptorSetLayout();
+        void CreateFrameUboDescriptorSetLayout();
 
         /**
          * 建 set 1 的描述符集布局
          *
          * binding 0 是一个片元阶段可见的 combined image sampler
          */
-        void CreateTextureDescriptorSetLayout();
+        void CreateMaterialDescriptorSetLayout();
 
         /**
          * 销毁一个描述符集布局，并把句柄置空；句柄为空时什么都不做
@@ -194,19 +194,19 @@ namespace Doodle
         void DestroyDescriptorPool(VkDescriptorPool& descriptorPool) const;
 
         /**
-         * 创建每帧 UBO 的描述符池
+         * 创建 frame UBO 的描述符池
          */
-        void CreateFrameDescriptorPool();
+        void CreateFrameUboDescriptorPool();
 
         /**
-         * 销毁每帧 UBO 的描述符池，并清空集合句柄
+         * 销毁 frame UBO 的描述符池，并清空集合句柄
          */
-        void DestroyFrameDescriptorPool();
+        void DestroyFrameUboDescriptorPool();
 
         /**
          * 分配每帧一个 set 0，并把各帧 UBO 写到 binding 0
          */
-        void CreateFrameDescriptorSets(const std::array<DoodleGraphicsBuffer, MAX_FRAMES_IN_FLIGHT>& uniformBuffers);
+        void CreateFrameUboDescriptorSets(const std::array<DoodleGraphicsBuffer, MAX_FRAMES_IN_FLIGHT>& frameUbos);
 
         /**
          * 追加一块纹理描述符池；池满时再由 GetOrCreateTextureDescriptorSet 调用
@@ -242,13 +242,13 @@ namespace Doodle
         const DoodleVulkanDevice* m_pDevice = nullptr;
 
         /**
-         * set 0 的描述符集布局：整帧共享的 view / proj 与主光源
+         * frame UBO 的描述符集布局：整帧共享的 view / proj 与主光源
          *
          * 全工程只有这一个句柄：每帧集合按它分配，每条管线的布局也都引用它。
          * 管线布局只在创建时读一次布局，但这里仍让它活得比所有管线久 ——
-         * 销毁顺序由门面保证
+         * 销毁顺序由 DoodleRenderPipeline 保证
          */
-        VkDescriptorSetLayout m_frameDescriptorSetLayout = VK_NULL_HANDLE;
+        VkDescriptorSetLayout m_frameUboDescriptorSetLayout = VK_NULL_HANDLE;
 
         /**
          * set 1 的描述符集布局：材质纹理（一张 combined image sampler）
@@ -256,17 +256,17 @@ namespace Doodle
          * 每张纹理一个集合，按材质槽引用；与 set 0 分开，避免把每帧数据
          * 复制进每张纹理的集合
          */
-        VkDescriptorSetLayout m_textureDescriptorSetLayout = VK_NULL_HANDLE;
+        VkDescriptorSetLayout m_materialDescriptorSetLayout = VK_NULL_HANDLE;
 
         /**
-         * 每帧 UBO 的描述符池
+         * frame UBO 描述符集的池
          */
-        VkDescriptorPool m_frameDescriptorPool = VK_NULL_HANDLE;
+        VkDescriptorPool m_frameUboDescriptorPool = VK_NULL_HANDLE;
 
         /**
-         * 每帧一个 set 0，各自把该帧的 UBO 接到 binding 0
+         * 每帧一个 set 0（frame UBO 描述符集），各自把该帧的 UBO 接到 binding 0
          */
-        std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_frameDescriptorSets{};
+        std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_frameUboDescriptorSets{};
 
         /**
          * 纹理描述符池块。按需增长：一块满了就追加下一块
@@ -294,9 +294,9 @@ namespace Doodle
         /**
          * 本帧每条绘制项对应的纹理集合，与 drawItems 等长
          *
-         * 只在两次 ResolveTextureDescriptorSets 之间有效；集合本身由
+         * 只在两次 ResolveMaterialDescriptorSets 之间有效；集合本身由
          * m_textureDescriptorSets 持有
          */
-        std::vector<VkDescriptorSet> m_frameTextureDescriptorSets;
+        std::vector<VkDescriptorSet> m_drawItemMaterialDescriptorSets;
     };
 }

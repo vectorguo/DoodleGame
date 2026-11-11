@@ -14,12 +14,22 @@
 
 namespace Doodle
 {
+    void DoodleRenderPass::Initialize(const DoodleRenderPassInitInfo& initInfo, const DoodleVulkanPipelinePassConfig& passConfig)
+    {
+        const std::lock_guard lock(m_mutex);
+
+        m_pDevice = &initInfo.device;
+        m_pipelineCompileCache = initInfo.pipelineCompileCache;
+        m_frameUboDescriptorSetLayout = initInfo.frameUboDescriptorSetLayout;
+        m_passConfig = passConfig;
+    }
+
     void DoodleRenderPass::Destroy()
     {
         {
             const std::lock_guard lock(m_mutex);
 
-            //条目里的管线是显式 Destroy 的：DoodleGraphicsPipeline 的析构不收句柄
+            //条目里的管线是显式 Destroy 的：DoodleVulkanPipelineObject 的析构不收句柄
             DestroyPipelines();
         }
 
@@ -28,12 +38,12 @@ namespace Doodle
         OnDestroy();
 
         const std::lock_guard lock(m_mutex);
-        m_frameSetLayout = VK_NULL_HANDLE;
+        m_frameUboDescriptorSetLayout = VK_NULL_HANDLE;
         m_pipelineCompileCache = VK_NULL_HANDLE;
         m_pDevice = nullptr;
     }
 
-    void DoodleRenderPass::RebuildPipelines(const DoodlePipelinePassConfig& passConfig)
+    void DoodleRenderPass::RebuildPipelines(const DoodleVulkanPipelinePassConfig& passConfig)
     {
         const std::lock_guard lock(m_mutex);
 
@@ -47,7 +57,7 @@ namespace Doodle
         m_passConfig = passConfig;
     }
 
-    const DoodleGraphicsPipeline& DoodleRenderPass::GetPipeline(const DoodlePipelineShaderDescription& shaderDescription)
+    const DoodleVulkanPipelineObject& DoodleRenderPass::GetPipeline(const DoodleVulkanPipelineShaderDescription& shaderDescription)
     {
         //哈希放在锁外算：字节码有几 KB，没必要让别的线程等这一段
         const std::size_t keyHash = HashKey(shaderDescription);
@@ -74,26 +84,13 @@ namespace Doodle
         return m_pipelineItems.size();
     }
 
-    DoodlePipelinePassConfig DoodleRenderPass::GetPassConfig() const
+    DoodleVulkanPipelinePassConfig DoodleRenderPass::GetPassConfig() const
     {
         const std::lock_guard lock(m_mutex);
         return m_passConfig;
     }
 
-    void DoodleRenderPass::Initialize(const DoodleVulkanDevice& device,
-                                      VkPipelineCache pipelineCompileCache,
-                                      VkDescriptorSetLayout frameSetLayout,
-                                      const DoodlePipelinePassConfig& passConfig)
-    {
-        const std::lock_guard lock(m_mutex);
-
-        m_pDevice = &device;
-        m_pipelineCompileCache = pipelineCompileCache;
-        m_frameSetLayout = frameSetLayout;
-        m_passConfig = passConfig;
-    }
-
-    std::size_t DoodleRenderPass::HashKey(const DoodlePipelineShaderDescription& shaderDescription)
+    std::size_t DoodleRenderPass::HashKey(const DoodleVulkanPipelineShaderDescription& shaderDescription)
     {
         //两段字节码各自哈希再按顺序混：同一份字节换个阶段，结果也不同
         std::size_t seed = 0;
@@ -105,8 +102,8 @@ namespace Doodle
         return seed;
     }
 
-    bool DoodleRenderPass::IsSameKey(const DoodlePipelineShaderDescription& lhs,
-                                     const DoodlePipelineShaderDescription& rhs)
+    bool DoodleRenderPass::IsSameKey(const DoodleVulkanPipelineShaderDescription& lhs,
+                                     const DoodleVulkanPipelineShaderDescription& rhs)
     {
         //vector<std::byte> 的 == 就是逐字节比对；set 1 布局不在这里，理由见类注释
         return lhs.vertexBytecode == rhs.vertexBytecode
@@ -118,7 +115,7 @@ namespace Doodle
 
     DoodleRenderPass::PipelineItem& DoodleRenderPass::CreatePipelineItem(
         const std::size_t keyHash,
-        const DoodlePipelineShaderDescription& shaderDescription)
+        const DoodleVulkanPipelineShaderDescription& shaderDescription)
     {
         //先把条目放进表、再建管线：放表这一步只可能因为内存不足失败，
         //那时还什么都没建；建管线失败就把刚放进去的条目摘掉 —— 两条失败路径都不留
@@ -130,11 +127,14 @@ namespace Doodle
 
         try
         {
-            inserted->second->pipeline.Initialize(*m_pDevice,
-                                                  m_pipelineCompileCache,
-                                                  m_frameSetLayout,
-                                                  m_passConfig,
-                                                  inserted->second->shaderDescription);
+            inserted->second->pipeline.Initialize(
+            {
+                .device = *m_pDevice,
+                .pipelineCompileCache = m_pipelineCompileCache,
+                .frameUboDescriptorSetLayout = m_frameUboDescriptorSetLayout,
+                .passConfig = m_passConfig,
+                .shaderDescription = inserted->second->shaderDescription
+            });
         }
         catch (...)
         {

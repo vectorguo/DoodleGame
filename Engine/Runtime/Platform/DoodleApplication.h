@@ -12,7 +12,7 @@
 #include "Asset/DoodleAssetManager.h"
 #include "Scene/DoodleSceneManager.h"
 #include "Rendering/DoodleDrawItem.h"
-#include "Vulkan/DoodleVulkanManager.h"
+#include "Vulkan/DoodleRenderManager.h"
 
 namespace Doodle
 {
@@ -25,10 +25,10 @@ namespace Doodle
     class DoodleScene;
 
     /**
-     * 应用对象：驱动帧循环、按顺序起停 Vulkan 与其他应用级服务
+     * 应用对象：驱动帧循环、按顺序起停渲染子系统与其他应用级服务
      *
      * 各平台共用这一个「当前应用」的概念，所以它得同时是两件事：
-     * 平台无关的那半边（持有文件系统、资产管理器、Vulkan 子系统、场景管理器，
+     * 平台无关的那半边（持有文件系统、资产管理器、渲染子系统、场景管理器，
      * 接收窗口的尺寸通知、被 C 回调经 GetInstance 找到），以及一套现成的
      * 生命周期默认实现。
      *
@@ -38,18 +38,18 @@ namespace Doodle
      *
      * Initialize / Run / Destroy 三个虚函数带一套默认实现，适用条件是
      * **窗口与程序同寿**：循环每次都是「泵事件 → 画一帧」，不需要判断窗口还在不在，
-     * 也没有 Suspend / Resume。
+     * 也没有表面丢失 / 恢复的处理。
      *
      * 不满足这条的平台覆盖它们 —— 目前是 Android：那边的窗口会消失又回来，
      * 事件泵还必须自己做阻塞 / 非阻塞的取舍（见 DoodleAndroidWindow::PumpEvents），
      * 所以它的三个生命周期函数在
      * Runtime/Platform/Android/DoodleAndroidApplication.h 里另有实现。
      *
-     * 覆盖时有四条硬要求：Vulkan、资产管理器与启动内容的启动顺序收在
+     * 覆盖时有四条硬要求：渲染子系统、资产管理器与启动内容的启动顺序收在
      * InitializeRuntime 里，别绕开它自己拼；销毁顺序收在 DestroyRuntime 里
-     * （场景 → 资产管理器 → Vulkan），场景引用着网格、网格缓冲必须先于设备释放；
+     * （场景 → 资产管理器 → 渲染子系统），场景引用着网格、网格缓冲必须先于设备释放；
      * 文件系统在 Initialize 里建好，资产管理器在第一次 InitializeRuntime 时
-     * 初始化，之后跨 Android 的 Suspend / Resume 一直存在；Run 进入循环前要调
+     * 初始化，之后跨 Android 的切后台 / 回前台一直存在；Run 进入循环前要调
      * ResetFrameClock，Tick 才有起点。除此之外时刻表随平台定，
      * 这正是「窗口与程序同寿」这条前提失效时唯一需要重写的东西
      */
@@ -96,18 +96,18 @@ namespace Doodle
         }
 
         /**
-         * 建窗口，然后按顺序起 Vulkan 各层并加载启动内容
+         * 建窗口，然后按顺序起渲染子系统并加载启动内容
          *
          * 默认实现，前提是窗口与程序同寿。顺序不能反：表面建在窗口上，
          * 窗口得先有
          *
-         * 窗口一出世就紧接着起 Vulkan，中间没有留给事件循环的缝 ——
+         * 窗口一出世就紧接着起渲染子系统，中间没有留给事件循环的缝 ——
          * 尺寸变化回调因此不可能赶在交换链建好之前置位「需要重建」，
          * 第一帧那次白重建从「靠注释提醒别踩」变成了「没机会踩」。
-         * 这条保证只属于本默认实现：覆盖它的平台（Android）里窗口先于 Vulkan
+         * 这条保证只属于本默认实现：覆盖它的平台（Android）里窗口先于渲染子系统
          * 单独存在，那条缝是存在的，得自己处理
          *
-         * 文件来源也在这里建好；Vulkan、资产管理器与启动内容的启动链收在
+         * 文件来源也在这里建好；渲染子系统、资产管理器与启动内容的启动链收在
          * InitializeRuntime 里，它们都必须在窗口存在后才能起
          *
          * @note 必须先调，且只调一次：Run 与 Destroy 都假设窗口已经在了
@@ -126,10 +126,10 @@ namespace Doodle
         virtual void Run();
 
         /**
-         * 按依赖倒序销毁：场景 → 资产管理器 → Vulkan → 文件系统 / 窗口
+         * 按依赖倒序销毁：场景 → 资产管理器 → 渲染子系统 → 文件系统 / 窗口
          *
          * 场景里的 MeshRenderer 引用着网格，场景必须最先拆；网格缓冲是设备
-         * 资源，资产管理器必须先于 Vulkan 释放（销毁资产前还要等 GPU 空闲）；
+         * 资源，资产管理器必须先于渲染子系统释放（销毁资产前还要等 GPU 空闲）；
          * 交换链、表面都依附于窗口，窗口先没的话，销毁它们就是拿着一个
          * 已经作废的句柄去用；文件系统最后放，资产管理器在析构兜底路径上
          * 还可能读它
@@ -144,9 +144,9 @@ namespace Doodle
          * 由平台的窗口实现直接调用（macOS 见 DoodleMacWindow::FramebufferSizeCallback，
          * Windows 见 DoodleWindowsWindow 窗口过程里的 WM_SIZE），
          * 本对象不自己监听窗口事件。
-         * 只记标志、不在回调里当场重建，理由见 DoodleVulkanManager::NotifyWindowResized
+         * 只记标志、不在回调里当场重建，理由见 DoodleRenderManager::OnWindowResized
          */
-        void NotifyWindowResized();
+        void OnWindowResized();
 
         /**
          * 场景管理器
@@ -165,7 +165,7 @@ namespace Doodle
          *
          * 游戏层读取资源统一走这里：Load<DoodleMesh>(key)、
          * Load<DoodleSceneData>(path) …… 具体 loader 由资产管理器内部注册，
-         * 调用方不需要知道。生命周期由本对象持有，Destroy 时先于 Vulkan 拆。
+         * 调用方不需要知道。生命周期由本对象持有，Destroy 时先于渲染子系统拆。
          * 游戏层也可以不经过应用对象，直接调 DoodleAssetManager::GetInstance()
          * 取同一份。
          */
@@ -185,10 +185,10 @@ namespace Doodle
         void InitializeFileSystem();
 
         /**
-         * 起运行时的后半段：Vulkan → 资产管理器 → 启动内容
+         * 起运行时的后半段：渲染子系统 → 资产管理器 → 启动内容
          *
-         * 前置：窗口与文件系统都已就绪。窗口以引用交出去，Vulkan 各层只借不放
-         * （见 DoodleVulkanManager::Initialize），持有者仍在本类
+         * 前置：窗口与文件系统都已就绪。窗口以引用交出去，渲染子系统只借不放
+         * （见 DoodleRenderManager::Initialize），持有者仍在本类
          *
          * 覆盖生命周期的平台也用这个，别自己按别的顺序拼：这条启动链的顺序
          * 只在这里维护。Android 上它不在 Initialize 里，而是等第一次
@@ -197,13 +197,13 @@ namespace Doodle
         void InitializeRuntime();
 
         /**
-         * 销毁 InitializeRuntime 建立的一切：场景 → 资产管理器 → Vulkan
+         * 销毁 InitializeRuntime 建立的一切：场景 → 资产管理器 → 渲染子系统
          *
          * 场景必须先走：组件里的 MeshRenderer 引用着资产管理器的网格，
-         * OnDestroy 要跑在资产还活着的时候。资产又必须先于 Vulkan，网格缓冲
+         * OnDestroy 要跑在资产还活着的时候。资产又必须先于渲染子系统，网格缓冲
          * 是设备资源。
          *
-         * Vulkan 可能从未起来过（Android 一次窗口都没拿到），所以是否等 GPU
+         * 渲染子系统可能从未起来过（Android 一次窗口都没拿到），所以是否等 GPU
          * 空闲、是否拆设备由运行时状态决定；场景与资产的销毁不依赖它，未初始化
          * 时也是安全的空操作。覆盖 Destroy 的平台直接调用本函数即可
          */
@@ -212,7 +212,7 @@ namespace Doodle
         /**
          * 释放平台文件来源
          *
-         * 排在 Vulkan 与资产管理器之后：资产管理器在析构兜底路径上还可能
+         * 排在渲染子系统与资产管理器之后：资产管理器在析构兜底路径上还可能
          * 读它。覆盖 Destroy 的平台也用它
          */
         void DestroyFileSystem();
@@ -230,7 +230,8 @@ namespace Doodle
         void ResetFrameClock();
 
         /**
-         * 推进一帧：先推进时间与输入快照，再按帧时长更新场景，最后画一帧
+         * 推进一帧：先推进时间与输入快照，再按帧时长更新场景，然后收集绘制项
+         * 并交给渲染子系统。主相机缺失由 DoodleRenderManager::Render 判断并跳过本帧。
          *
          * 帧时长由 DoodleTime 算好（steady_clock 求差、按 maximumDeltaTime 钳
          * 上限、乘 timeScale），本函数只负责按帧边界推进一次；组件更新时
@@ -264,7 +265,7 @@ namespace Doodle
         /**
          * 加载启动场景
          *
-         * 由 InitializeRuntime 在 Vulkan 与资产管理器都就绪后调用。整个应用
+         * 由 InitializeRuntime 在渲染子系统与资产管理器都就绪后调用。整个应用
          * 生命周期里只有这一条调用路径，而 InitializeRuntime 本身就是一次性的
          * （资产管理器的 Initialize 重复调用会抛错），所以不需要再记一个
          * 「已加载」标志 —— 那面旗子只有在本函数可能被重复调用时才有意义
@@ -276,11 +277,10 @@ namespace Doodle
          *
          * 遍历所有存活场景的存活对象，取每个对象的第一个 MeshRenderer：
          * 组件停用、网格为空的对象跳过。model 取收集那一刻 Transform 的矩阵，
-         * 所以本函数必须排在场景 Update 之后、DrawFrame 之前。
+         * 所以本函数必须排在场景 Update 之后、Render 之前。
          *
          * 相机与主光源不在这里找：它们由 DoodleCamera / DoodleLight 自己
-         * 维护，取用时直接问 DoodleCamera::GetMainCamera() 与
-         * DoodleLight::GetMainLight()，本函数只负责绘制项。
+         * 维护，现在由 DoodleRenderManager::Render 取用；本函数只负责绘制项。
          *
          * 结果写进 m_reusableDrawItems；三个容器都是跨帧重复使用的，
          * 稳态下不再分配。绘制顺序就是遍历顺序：场景创建顺序 → 对象创建顺序 →
@@ -292,7 +292,7 @@ namespace Doodle
         /**
          * 窗口
          *
-         * 由 CreateWindow 交出来，本类接住并负责到底：Destroy 里在 Vulkan 之后释放，
+         * 由 CreateWindow 交出来，本类接住并负责到底：Destroy 里在渲染子系统之后释放，
          * 而 Initialize 半路抛异常时，成员自己的析构也会兜住 —— 用 unique_ptr
          * 而不是裸指针就是为了后一条路。类型是接口而不是某个具体窗口 ——
          * 本类不该知道窗口是哪来的
@@ -311,16 +311,16 @@ namespace Doodle
         std::unique_ptr<DoodleFileSystem> m_pFileSystem;
 
         /**
-         * Vulkan子系统
+         * 渲染子系统：Vulkan 后端 + 渲染管线
          */
-        DoodleVulkanManager m_vulkanManager;
+        DoodleRenderManager m_renderManager;
 
         /**
          * 资产管理器
          *
-         * 声明在 Vulkan 之后、场景管理器之前：逆序析构时先于 Vulkan 释放，
+         * 声明在渲染子系统之后、场景管理器之前：逆序析构时先于渲染子系统释放，
          * 晚于场景释放。场景里的 MeshRenderer 引用着网格，顺序不能反。
-         * 正常路径由 Destroy 显式按「场景 → 资产管理器 → Vulkan」拆
+         * 正常路径由 Destroy 显式按「场景 → 资产管理器 → 渲染子系统」拆
          */
         DoodleAssetManager m_assetManager;
 
@@ -338,23 +338,12 @@ namespace Doodle
          * 运行时是否已经起来
          *
          * InitializeRuntime 成功返回时置位，DestroyRuntime 拆完后清空。
-         * 覆盖生命周期的平台用它区分首次启动与 Resume；DestroyRuntime 也据此
+         * 覆盖生命周期的平台用它区分首次启动与回前台；DestroyRuntime 也据此
          * 决定要不要等 GPU 空闲、拆 Vulkan。场景与资产的销毁不依赖它
          */
         bool m_runtimeInitialized = false;
 
     private:
-        /**
-         * 每帧收集绘制项时重复使用的暂存容器
-         *
-         * 三个都不拥有任何东西：场景与对象的指针只是遍历结果，绘制项里的
-         * 网格指针归 MeshLibrary。每帧 clear 后重新填入，容量保留，
-         * 稳态下不再分配。绘制项只在本次 Tick 内使用，DrawFrame 录完命令即可丢弃
-         */
-        std::vector<DoodleScene*> m_reusableScenes;
-        std::vector<DoodleGameObject*> m_reusableGameObjects;
-        std::vector<DoodleDrawItem> m_reusableDrawItems;
-
         /**
          * 当前实例，由构造置位、析构清空，成对维护
          *
@@ -362,5 +351,16 @@ namespace Doodle
          * 不设成保护的 —— 子类没有碰它的理由，置位与清空的时机只有构造和析构
          */
         static DoodleApplication* s_pInstance;
+
+        /**
+         * 每帧收集绘制项时重复使用的暂存容器
+         *
+         * 三个都不拥有任何东西：场景与对象的指针只是遍历结果，绘制项里的
+         * 网格指针归 MeshLibrary。每帧 clear 后重新填入，容量保留，
+         * 稳态下不再分配。绘制项只在本次 Tick 内使用，Render 录完命令即可丢弃
+         */
+        std::vector<DoodleScene*> m_reusableScenes;
+        std::vector<DoodleGameObject*> m_reusableGameObjects;
+        std::vector<DoodleDrawItem> m_reusableDrawItems;
     };
 }

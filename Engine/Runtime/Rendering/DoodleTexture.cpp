@@ -38,12 +38,15 @@ namespace Doodle
 
         try
         {
-            m_image.Initialize(device,
-                               width,
-                               height,
-                               kTextureFormat,
-                               VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                               VK_IMAGE_ASPECT_COLOR_BIT);
+            m_image.Initialize(
+            {
+                .device = device,
+                .width = width,
+                .height = height,
+                .format = kTextureFormat,
+                .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                .aspectFlags = VK_IMAGE_ASPECT_COLOR_BIT
+            });
 
             UploadPixels(width, height, pixels, size);
             CreateSampler();

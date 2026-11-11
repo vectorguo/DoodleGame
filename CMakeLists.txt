@@ -74,15 +74,17 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Vulkan/DoodleVulkanDevice.h
     Engine/Runtime/Vulkan/DoodleSwapChain.cpp
     Engine/Runtime/Vulkan/DoodleSwapChain.h
-    Engine/Runtime/Vulkan/DoodleGraphicsPipeline.cpp
-    Engine/Runtime/Vulkan/DoodleGraphicsPipeline.h
-    Engine/Runtime/Vulkan/DoodleGraphicsPipelineConfig.h
+    Engine/Runtime/Vulkan/DoodleVulkanPipelineObject.cpp
+    Engine/Runtime/Vulkan/DoodleVulkanPipelineObject.h
+    Engine/Runtime/Vulkan/DoodleVulkanPipelineConfig.h
     Engine/Runtime/Vulkan/DoodleForwardPass.cpp
     Engine/Runtime/Vulkan/DoodleForwardPass.h
     Engine/Runtime/Vulkan/DoodleRenderPass.cpp
     Engine/Runtime/Vulkan/DoodleRenderPass.h
-    Engine/Runtime/Vulkan/DoodlePipelineCompileCache.cpp
-    Engine/Runtime/Vulkan/DoodlePipelineCompileCache.h
+    Engine/Runtime/Vulkan/DoodleRenderPipeline.cpp
+    Engine/Runtime/Vulkan/DoodleRenderPipeline.h
+    Engine/Runtime/Vulkan/DoodleVulkanPipelineCompileCache.cpp
+    Engine/Runtime/Vulkan/DoodleVulkanPipelineCompileCache.h
         Engine/Runtime/Vulkan/DoodleCommandManager.cpp
     Engine/Runtime/Vulkan/DoodleCommandManager.h
     Engine/Runtime/Vulkan/DoodleDescriptorManager.cpp
@@ -95,6 +97,8 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Vulkan/DoodleDepthImages.h
     Engine/Runtime/Vulkan/DoodleImage.cpp
     Engine/Runtime/Vulkan/DoodleImage.h
+    Engine/Runtime/Vulkan/DoodleRenderManager.cpp
+    Engine/Runtime/Vulkan/DoodleRenderManager.h
     Engine/Runtime/Vulkan/DoodleVulkanManager.cpp
     Engine/Runtime/Vulkan/DoodleVulkanManager.h
     Engine/Runtime/Vulkan/DoodleShaderModule.cpp
@@ -104,9 +108,10 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Vulkan/DoodleVulkanUtils.h
     Engine/Runtime/Vulkan/QueueFamilySelection.h
     Engine/Runtime/Vulkan/SwapChainSupportDetails.h
+    Engine/Runtime/Input/DoodleInput.cpp
+    Engine/Runtime/Input/DoodleInput.h
+    Engine/Runtime/Input/DoodleInputRawState.h
     Engine/Runtime/Platform/DoodleWindow.h
-    Engine/Runtime/Platform/DoodleInput.cpp
-    Engine/Runtime/Platform/DoodleInput.h
     Engine/Runtime/Platform/DoodleFileSystem.cpp
     Engine/Runtime/Platform/DoodleFileSystem.h
     Engine/Runtime/Platform/DoodleApplication.cpp
@@ -164,7 +169,7 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Rendering/DoodleSubmesh.h
     Engine/Runtime/Rendering/DoodleMaterial.h
     Engine/Runtime/Rendering/DoodleRenderState.h
-    Engine/Runtime/Rendering/DoodleDrawContext.h
+    Engine/Runtime/Rendering/DoodleFrameContext.h
     Engine/Runtime/Rendering/DoodleCamera.cpp
     Engine/Runtime/Rendering/DoodleCamera.h
     Engine/Runtime/Rendering/DoodleLight.h

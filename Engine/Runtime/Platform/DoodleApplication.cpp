@@ -7,7 +7,7 @@
 
 #include "DoodleApplication.h"
 #include "DoodleFileSystem.h"
-#include "DoodleInput.h"
+#include "Input/DoodleInput.h"
 #include "DoodlePackageRegistration.h"
 #include "DoodleWindow.h"
 
@@ -15,8 +15,6 @@
 #include "Core/DoodleBuiltinComponentRegistration.h"
 #include "Core/DoodleTime.h"
 #include "Rendering/DoodleCamera.h"
-#include "Rendering/DoodleDrawContext.h"
-#include "Rendering/DoodleLight.h"
 #include "Rendering/DoodleMesh.h"
 #include "Rendering/DoodleMeshRenderer.h"
 #include "Scene/DoodleScene.h"
@@ -64,7 +62,7 @@ namespace Doodle
 
     void DoodleApplication::Initialize()
     {
-        //窗口先于 Vulkan：表面建在窗口上
+        //窗口先于渲染子系统：表面建在窗口上
         m_pWindow = CreateWindow();
         if (m_pWindow == nullptr)
         {
@@ -73,7 +71,7 @@ namespace Doodle
             throw std::runtime_error("DoodleApplication: window is null");
         }
 
-        // 文件来源不依赖窗口，先建好；Vulkan、资产与内容由 InitializeRuntime 接手
+        // 文件来源不依赖窗口，先建好；渲染子系统、资产与内容由 InitializeRuntime 接手
         InitializeFileSystem();
         InitializeRuntime();
     }
@@ -93,7 +91,7 @@ namespace Doodle
 
     void DoodleApplication::Destroy()
     {
-        // 运行时（场景 → 资产 → Vulkan）由 DestroyRuntime 统一拆。
+        // 运行时（场景 → 资产 → 渲染子系统）由 DestroyRuntime 统一拆。
         // 文件系统与窗口在它之后释放：资产管理器在析构兜底路径上还可能读文件，
         // 交换链、表面则依附于窗口
         DestroyRuntime();
@@ -101,9 +99,9 @@ namespace Doodle
         m_pWindow.reset();
     }
 
-    void DoodleApplication::NotifyWindowResized()
+    void DoodleApplication::OnWindowResized()
     {
-        m_vulkanManager.NotifyWindowResized();
+        m_renderManager.OnWindowResized();
     }
 
     void DoodleApplication::InitializeFileSystem()
@@ -129,9 +127,9 @@ namespace Doodle
         // Android 从后台回来不走本函数，那一半由窗口在失焦时清空
         DoodleInput::Reset();
 
-        // 前置：窗口与文件系统已经就绪。传给 Vulkan 各层的是引用：
+        // 前置：窗口与文件系统已经就绪。传给渲染子系统的是引用：
         // 它们只借不放，窗口的持有者仍在本类
-        m_vulkanManager.Initialize(*m_pWindow);
+        m_renderManager.Initialize(*m_pWindow);
 
         // 资产管理器的内建 loader 只需要文件来源与设备。上传用的传输池由
         // DoodleGraphicsBuffer / DoodleTexture 自己通过 DoodleCommandManager
@@ -140,12 +138,12 @@ namespace Doodle
         m_assetManager.Initialize(
      {
             .fileSystem = *m_pFileSystem,
-            .device = m_vulkanManager.GetDevice()
+            .device = m_renderManager.GetDevice()
         });
 
         // 内容加载放在这里：macOS / Windows 的 Initialize 与 Android 首次
         // APP_CMD_INIT_WINDOW 都经过 InitializeRuntime，这是各平台唯一共同的
-        // 「Vulkan 已就绪」时点
+        // 「渲染子系统已就绪」时点
         LoadStartupScene();
 
         // 全部成功才算运行时起来：中途抛异常时保持 false，后续 DestroyRuntime
@@ -157,7 +155,7 @@ namespace Doodle
     {
         // 退出时可能还按着右键：先恢复光标，再清空全局输入快照。
         // 放在这里而不是某个平台分支里，桌面与 Android 走同一条收尾路径；
-        // 窗口此刻仍然有效，Vulkan 与场景都还没拆
+        // 窗口此刻仍然有效，渲染子系统与场景都还没拆
         if (m_pWindow != nullptr)
         {
             m_pWindow->SetCursorCaptured(false);
@@ -168,12 +166,12 @@ namespace Doodle
         // 资产还活着时跑完。销毁是显式的，不把回调留给成员析构
         m_sceneManager.DestroyReally();
 
-        // 网格缓冲可能还被在途帧引用：Vulkan 起来过才需要等一次。
+        // 网格缓冲可能还被在途帧引用：渲染子系统起来过才需要等一次。
         // 等完之后先销毁资产、再拆命令缓冲，是规范允许的顺序：executable 状态的
         // 命令缓冲只要不再提交、也不是 pending，就不阻止它引用的 buffer 先销毁
         if (m_runtimeInitialized)
         {
-            m_vulkanManager.WaitIdle();
+            m_renderManager.WaitForGpuIdle();
         }
 
         // 资产是纯 CPU 侧 / 幂等的，运行时从未起来过也要走一遍
@@ -181,7 +179,7 @@ namespace Doodle
 
         if (m_runtimeInitialized)
         {
-            m_vulkanManager.Destroy();
+            m_renderManager.Destroy();
             m_runtimeInitialized = false;
         }
     }
@@ -203,45 +201,20 @@ namespace Doodle
         DoodleTime::Update();
 
         // 输入快照每帧刷新一次，位置在场景更新之前：同一帧内所有组件看到的
-        // 是同一份状态。平台层在 PumpEvents 里已经把原始状态轮询好
-        DoodleInput::RawState rawInput = m_pWindow->GetRawInputState();
-
-        // 右键控制光标捕获。这是窗口级策略，留在应用层；FreeLook 之类的组件
-        // 只查询 DoodleInput，不碰窗口
-        if (rawInput.IsMouseButtonDown(DoodleMouseButton::Right) != rawInput.cursorCaptured)
-        {
-            m_pWindow->SetCursorCaptured(rawInput.IsMouseButtonDown(DoodleMouseButton::Right));
-
-            // 切换捕获时窗口已经把位移清零。重新取一次，避免这一帧把切换前的
-            // 旧位移算进视角
-            rawInput = m_pWindow->GetRawInputState();
-        }
-
-        DoodleInput::Update(rawInput);
+        // 是同一份状态。窗口轮询、右键捕获策略与切换后的重取都收在
+        // DoodleInput::Update 里，应用层只负责按帧边界调它
+        DoodleInput::Update(*m_pWindow);
 
         // 先更新场景，再收集本帧要画的东西，最后画：渲染读到的是本帧最新的
         // Transform，而收集夹在两者之间，拿到的是 Update 之后的一致快照
         m_sceneManager.Update();
 
-        // 主相机由 DoodleCamera 自己维护，这里只取结果。没有相机就没有
-        // view / proj：绘制项收集也只喂给 DrawFrame，所以本帧连收集一起跳过，
-        // 不做没有消费者的遍历。启动场景已经在 LoadStartupScene 里校验过
-        // 必须有一台，这里为空只可能是运行期把相机组件停用或销毁了 ——
-        // 跳过本帧，而不是拿一个假相机去画
-        const DoodleCamera* pMainCamera = DoodleCamera::GetMainCamera();
-        if (pMainCamera != nullptr)
-        {
-            CollectDrawItems();
+        // 收集本帧绘制项。相机与主光源由 DoodleRenderManager::Render 现取；
+        // 没有主相机时它直接跳过本帧（收集本身已经完成）
+        CollectDrawItems();
 
-            // 相机、光源与绘制项在本帧组成一份上下文，渲染门面只认这一份输入。
-            // 它只是栈上的引用集合：容器与组件仍归本层，DrawFrame 返回后即可复用
-            m_vulkanManager.DrawFrame(DoodleDrawContext
-            {
-                .camera = *pMainCamera,
-                .pLight = DoodleLight::GetMainLight(),
-                .drawItems = m_reusableDrawItems,
-            });
-        }
+        // 渲染并呈现本帧；相机 / 光源的缺失由渲染管理器统一判断
+        m_renderManager.Render(m_reusableDrawItems);
     }
 
     void DoodleApplication::LoadStartupScene()

@@ -2,7 +2,7 @@
 // Created by 郭智 on 2026/10/6.
 //
 
-#include "DoodleGraphicsPipeline.h"
+#include "DoodleVulkanPipelineObject.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -15,28 +15,26 @@
 
 namespace Doodle
 {
-    void DoodleGraphicsPipeline::Initialize(const DoodleVulkanDevice& device,
-                                            VkPipelineCache pipelineCompileCache,
-                                            VkDescriptorSetLayout frameSetLayout,
-                                            const DoodlePipelinePassConfig& passConfig,
-                                            const DoodlePipelineShaderDescription& shaderDescription)
+    void DoodleVulkanPipelineObject::Initialize(const DoodleVulkanPipelineInitInfo& info)
     {
         //描述不合法时什么都不建：先查，再动设备
-        ValidateShaderDescription(shaderDescription);
-        if (frameSetLayout == VK_NULL_HANDLE)
+        ValidateShaderDescription(info.shaderDescription);
+        if (info.frameUboDescriptorSetLayout == VK_NULL_HANDLE)
         {
             throw std::invalid_argument("graphics pipeline: set 0 layout is null");
         }
 
-        m_pDevice = &device;
+        m_pDevice = &info.device;
 
         //布局是管线的输入，先建布局再建管线。中途失败时把已经建出来的收掉，
         //对象回到未初始化状态 —— 管线缓存只在成功之后才收下这个对象，
         //失败的那份会被直接丢弃，没有人再来调 Destroy
         try
         {
-            CreatePipelineLayout(frameSetLayout, shaderDescription.materialSetLayout);
-            m_graphicsPipeline = CreateGraphicsPipeline(pipelineCompileCache, passConfig, shaderDescription);
+            CreatePipelineLayout(info.frameUboDescriptorSetLayout, info.shaderDescription.materialDescriptorSetLayout);
+            m_graphicsPipeline = CreateGraphicsPipeline(info.pipelineCompileCache,
+                                                        info.passConfig,
+                                                        info.shaderDescription);
         }
         catch (...)
         {
@@ -46,9 +44,9 @@ namespace Doodle
         }
     }
 
-    void DoodleGraphicsPipeline::Rebuild(VkPipelineCache pipelineCompileCache,
-                                         const DoodlePipelinePassConfig& passConfig,
-                                         const DoodlePipelineShaderDescription& shaderDescription)
+    void DoodleVulkanPipelineObject::Rebuild(VkPipelineCache pipelineCompileCache,
+                                         const DoodleVulkanPipelinePassConfig& passConfig,
+                                         const DoodleVulkanPipelineShaderDescription& shaderDescription)
     {
         if (m_pDevice == nullptr || m_pipelineLayout == VK_NULL_HANDLE)
         {
@@ -62,7 +60,7 @@ namespace Doodle
         m_graphicsPipeline = rebuiltPipeline;
     }
 
-    void DoodleGraphicsPipeline::Destroy()
+    void DoodleVulkanPipelineObject::Destroy()
     {
         if (m_pDevice == nullptr)
         {
@@ -75,7 +73,7 @@ namespace Doodle
         m_pDevice = nullptr;
     }
 
-    void DoodleGraphicsPipeline::ValidateShaderDescription(const DoodlePipelineShaderDescription& shaderDescription)
+    void DoodleVulkanPipelineObject::ValidateShaderDescription(const DoodleVulkanPipelineShaderDescription& shaderDescription)
     {
         //字节码长度由 DoodleShaderModule 检查；这里只挡掉空的，让报错说清是哪个阶段
         if (shaderDescription.vertexBytecode.empty())
@@ -95,7 +93,7 @@ namespace Doodle
         }
     }
 
-    void DoodleGraphicsPipeline::CreatePipelineLayout(VkDescriptorSetLayout frameSetLayout, VkDescriptorSetLayout materialSetLayout)
+    void DoodleVulkanPipelineObject::CreatePipelineLayout(VkDescriptorSetLayout frameUboDescriptorSetLayout, VkDescriptorSetLayout materialDescriptorSetLayout)
     {
         //set 0 负责整帧共享的数据（相机 view / proj 与主光源）；
         //set 1 负责这个着色器的材质资源（现在是一张纹理）。分成两个集合而不是一个：
@@ -108,10 +106,10 @@ namespace Doodle
         //不需要材质资源的着色器没有 set 1，布局里只放 set 0 —— 对 set 0 依旧兼容
         const VkDescriptorSetLayout setLayouts[]
         {
-            frameSetLayout,
-            materialSetLayout
+            frameUboDescriptorSetLayout,
+            materialDescriptorSetLayout
         };
-        const uint32_t setLayoutCount = materialSetLayout != VK_NULL_HANDLE ? 2 : 1;
+        const uint32_t setLayoutCount = materialDescriptorSetLayout != VK_NULL_HANDLE ? 2 : 1;
 
         const VkPipelineLayoutCreateInfo createInfo
         {
@@ -129,7 +127,7 @@ namespace Doodle
         }
     }
 
-    void DoodleGraphicsPipeline::DestroyPipelineLayout()
+    void DoodleVulkanPipelineObject::DestroyPipelineLayout()
     {
         if (m_pipelineLayout != VK_NULL_HANDLE)
         {
@@ -138,9 +136,9 @@ namespace Doodle
         }
     }
 
-    VkPipeline DoodleGraphicsPipeline::CreateGraphicsPipeline(VkPipelineCache pipelineCompileCache,
-                                                             const DoodlePipelinePassConfig& passConfig,
-                                                             const DoodlePipelineShaderDescription& shaderDescription) const
+    VkPipeline DoodleVulkanPipelineObject::CreateGraphicsPipeline(VkPipelineCache pipelineCompileCache,
+                                                             const DoodleVulkanPipelinePassConfig& passConfig,
+                                                             const DoodleVulkanPipelineShaderDescription& shaderDescription) const
     {
         const VkDevice logicalDevice = m_pDevice->GetLogicalDevice();
         const DoodleRenderState& renderState = shaderDescription.renderState;
@@ -363,7 +361,7 @@ namespace Doodle
         return graphicsPipeline;
     }
 
-    void DoodleGraphicsPipeline::DestroyGraphicsPipeline()
+    void DoodleVulkanPipelineObject::DestroyGraphicsPipeline()
     {
         if (m_graphicsPipeline != VK_NULL_HANDLE)
         {
@@ -372,7 +370,7 @@ namespace Doodle
         }
     }
 
-    VkCullModeFlags DoodleGraphicsPipeline::ToVkCullMode(const ECullMode cullMode)
+    VkCullModeFlags DoodleVulkanPipelineObject::ToVkCullMode(const ECullMode cullMode)
     {
         switch (cullMode)
         {
@@ -386,7 +384,7 @@ namespace Doodle
         throw std::invalid_argument("unknown cull mode: " + std::to_string(static_cast<int>(cullMode)));
     }
 
-    VkCompareOp DoodleGraphicsPipeline::ToVkCompareOp(const ECompareOp compareOp)
+    VkCompareOp DoodleVulkanPipelineObject::ToVkCompareOp(const ECompareOp compareOp)
     {
         switch (compareOp)
         {
@@ -410,7 +408,7 @@ namespace Doodle
         throw std::invalid_argument("unknown compare op: " + std::to_string(static_cast<int>(compareOp)));
     }
 
-    VkPrimitiveTopology DoodleGraphicsPipeline::ToVkPrimitiveTopology(const EPrimitiveTopology topology)
+    VkPrimitiveTopology DoodleVulkanPipelineObject::ToVkPrimitiveTopology(const EPrimitiveTopology topology)
     {
         switch (topology)
         {
@@ -422,7 +420,7 @@ namespace Doodle
         throw std::invalid_argument("unknown primitive topology: " + std::to_string(static_cast<int>(topology)));
     }
 
-    VkPipelineColorBlendAttachmentState DoodleGraphicsPipeline::MakeColorBlendAttachment(const EBlendMode blendMode)
+    VkPipelineColorBlendAttachmentState DoodleVulkanPipelineObject::MakeColorBlendAttachment(const EBlendMode blendMode)
     {
         //四种都写全 RGBA：混合方式只决定怎么合成，不决定写哪几个通道
         constexpr VkColorComponentFlags colorWriteMask =

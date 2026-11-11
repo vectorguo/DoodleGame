@@ -9,7 +9,6 @@
 
 #include <cmath>
 #include <stdexcept>
-#include <string>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -17,8 +16,8 @@
 #include "Core/DoodleGameObject.h"
 #include "Core/DoodleTransform.h"
 #include "Core/DoodleTime.h"
-#include "Platform/DoodleInput.h"
 #include "Core/DoodleComponentConfig.h"
+#include "Input/DoodleInput.h"
 
 namespace Doodle
 {
@@ -67,7 +66,7 @@ namespace Doodle
         DoodleTransform& transform = GetGameObject().GetTransform();
         const float deltaSeconds = DoodleTime::GetDeltaTime();
 
-        //环视：只在光标捕获（应用层按右键切换）且有位移时重建旋转。
+        //环视：只在光标捕获（DoodleInput 在帧边界按右键切换）且有位移时重建旋转。
         //没有位移时保持 Transform 原样，避免每帧把外部设置的旋转改掉
         if (DoodleInput::IsCursorCaptured())
         {

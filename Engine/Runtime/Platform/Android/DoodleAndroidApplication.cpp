@@ -125,7 +125,7 @@ namespace Doodle
                     if (m_runtimeInitialized)
                     {
                         //切后台回来：实例与设备都还在，只需把依附于表面的那几层重建
-                        m_vulkanManager.Resume(*m_pWindow);
+                        m_renderManager.OnSurfaceRecreated(*m_pWindow);
                     }
                     else
                     {
@@ -149,7 +149,7 @@ namespace Doodle
             {
                 try
                 {
-                    m_vulkanManager.Suspend();
+                    m_renderManager.OnSurfaceLost();
                 }
                 catch (const std::exception& e)
                 {
@@ -167,7 +167,7 @@ namespace Doodle
             //这个理由和桌面 resize 回调那边是同一个
             if (m_runtimeInitialized)
             {
-                NotifyWindowResized();
+                OnWindowResized();
             }
             break;
 

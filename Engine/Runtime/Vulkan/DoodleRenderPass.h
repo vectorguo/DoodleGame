@@ -11,23 +11,101 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 #include <vulkan/vulkan_core.h>
 
-#include "DoodleGraphicsPipeline.h"
+#include "DoodleVulkanPipelineObject.h"
 
 namespace Doodle
 {
     //只在接口签名与成员指针里出现，完整定义留给源文件
     class DoodleVulkanDevice;
+    class DoodleSwapChain;
+    class DoodleDepthImages;
+    struct DoodleFrameContext;
+
+    /**
+     * 一次 pass 的管线侧资源
+     *
+     * 只装这个 pass 自己需要的附件来源与描述符集；帧索引、图像索引、命令缓冲
+     * 与绘制项都在 DoodleFrameContext 里，由 Render 的第一个参数提供。
+     * 与 FrameContext 一样，只在本次 Render 期间有效。
+     *
+     * 命名口径：DoodleFrameContext 是整帧的输入与状态；本类是单个 pass 的
+     * 附件 / 描述符资源；初始化输入用 ...InitInfo。
+     */
+    struct DoodleRenderPassContext
+    {
+        /**
+         * 颜色附件的来源
+         */
+        const DoodleSwapChain& swapChain;
+
+        /**
+         * 深度附件的来源
+         */
+        const DoodleDepthImages& depthImages;
+
+        /**
+         * 本帧的 set 0：指向该在途帧 frame UBO 的描述符集
+         *
+         * 由 DoodleDescriptorManager 按 frameIndex 分配；集合在初始化时已把对应的
+         * UBO 接到 binding 0，pass 只绑不写
+         */
+        VkDescriptorSet frameUboDescriptorSet = VK_NULL_HANDLE;
+
+        /**
+         * 每条绘制项对应的 set 1，与 frameContext.drawItems 等长、下标一一对应
+         */
+        const std::vector<VkDescriptorSet>& materialDescriptorSets;
+    };
+
+    /**
+     * 初始化 pass 时由调用方提供的共享服务
+     *
+     * 里面全是借来的句柄，不归本 pass 所有，必须活得比它久。派生类原样收下
+     * 再转交给基类；以后基类要多用一项共享服务，往这里加字段即可，
+     * 各派生 pass 的 Initialize 签名与调用点都不用动。
+     *
+     * 必填项用引用：漏填直接编译不过，不需要运行期检查；可空的句柄用值 + 默认值。
+     *
+     * passConfig 不在这里：它的生产者是派生类（附件格式由派生类自己的资源决定），
+     * 不是调用方输入。放进来的话会变成「调用方填了也会被覆盖」的字段。
+     */
+    struct DoodleRenderPassInitInfo
+    {
+        /**
+         * 已初始化的 Vulkan 设备
+         */
+        const DoodleVulkanDevice& device;
+
+        /**
+         * 驱动编译缓存
+         */
+        VkPipelineCache pipelineCompileCache = VK_NULL_HANDLE;
+
+        /**
+         * frame UBO 的描述符集布局，这个 pass 的所有管线布局都用它
+         *
+         * 归属：缓冲本体是 DoodleRenderPipeline::m_frameUbos，布局与集合由
+         * DoodleDescriptorManager 持有（m_frameUboDescriptorSetLayout /
+         * m_frameUboDescriptorSets）。本 pass 只拿布局建管线布局，拿集合
+         * （DoodleRenderPassContext::frameUboDescriptorSet）在 Render 时绑定。
+         *
+         * set 0 的内容改动落在 DoodleDescriptorManager::kFrameUboBinding 与
+         * DoodleUniformBufferObject 两处，必须同步
+         */
+        VkDescriptorSetLayout frameUboDescriptorSetLayout = VK_NULL_HANDLE;
+    };
 
     /**
      * 渲染 pass 基类：持有一个 pass 配置下的全部管线
      *
      * 一个实例对应一种 pass 配置（颜色 / 深度附件格式与采样数）。具体是哪种 pass
      * 由派生类决定：DoodleForwardPass 是前向主 pass；以后阴影、延迟、后处理各派生
-     * 一个。派生类负责自己的资源与 pass 配置，基类负责「描述 → 管线」的查找、
-     * 持有与批量重建。
+     * 一个。派生类负责自己的资源、pass 配置与 Render 录制；基类负责「描述 → 管线」
+     * 的查找、持有与批量重建。
      *
      * **查找键按内容计算**：字节码内容、渲染状态、顶点格式、实例格式。哈希只用来
      * 分桶，命中后还要逐字节比对，所以哈希碰撞、对象地址被复用都不会拿错管线。
@@ -51,7 +129,7 @@ namespace Doodle
      * 届时加载线程也会来要管线。这一步直接在锁内建管线（同一时刻只编一条）；
      * 并行编译怎么做，等以后和任务系统一起定。驱动编译缓存本身是内部同步的，不拖后腿。
      *
-     * **生命周期**：由门面或渲染图持有，排在描述符管理器与驱动编译缓存之后建、
+     * **生命周期**：由 DoodleRenderPipeline 持有，排在描述符管理器与驱动编译缓存之后建、
      * 之前拆 —— 原地重建时还要用到 set 0 布局与驱动编译缓存。Destroy 先拆管线，
      * 再调派生类的 OnDestroy 拆这个 pass 自己的资源；派生类不要覆盖 Destroy。
      * 以后着色器资产会比本类先销毁，于是这里的管线布局会比着色器的 set 1 布局活得久：
@@ -72,8 +150,8 @@ namespace Doodle
          */
         struct PipelineItem
         {
-            DoodlePipelineShaderDescription shaderDescription;
-            DoodleGraphicsPipeline pipeline;
+            DoodleVulkanPipelineShaderDescription shaderDescription;
+            DoodleVulkanPipelineObject pipeline;
         };
 
     protected:
@@ -94,6 +172,22 @@ namespace Doodle
         virtual void Destroy();
 
         /**
+         * 把一个 pass 录进给定的命令缓冲
+         *
+         * 帧级数据（命令缓冲、帧 / 图像索引、绘制项）从 frameContext 取；
+         * 本 pass 的附件来源与描述符集从 passContext 取。附件怎么转布局、
+         * 用哪条管线、怎么绑描述符与顶点缓冲、发多少 draw，都是这个 pass 的事；
+         * 命令缓冲的 begin / end 与提交归 DoodleVulkanManager。
+         *
+         * @param frameContext 整帧的输入与状态；只在本次调用期间有效
+         * @param passContext 本 pass 的附件来源与描述符集；只在本次调用期间有效
+         *
+         * @note 前置条件：命令缓冲已经 begin、尚未 end；GPU 不会在本 pass
+         *       录制期间改写它引用的附件
+         */
+        virtual void Render(const DoodleFrameContext& frameContext, const DoodleRenderPassContext& passContext) = 0;
+
+        /**
          * 换一套 pass 配置，原地重建这个 pass 的每一条管线
          *
          * 附件格式变了（交换链重建换了格式、阴影图换了格式）时由派生类调用。
@@ -108,7 +202,7 @@ namespace Doodle
          *
          * @note 前置条件：GPU 已空闲 —— 旧管线可能还被在途的命令引用着
          */
-        void RebuildPipelines(const DoodlePipelinePassConfig& passConfig);
+        void RebuildPipelines(const DoodleVulkanPipelinePassConfig& passConfig);
 
         /**
          * 取一条管线；没有就建一条
@@ -120,11 +214,11 @@ namespace Doodle
          * 线程安全：哈希在锁外算，查表与创建在锁内
          *
          * @throw std::invalid_argument / std::runtime_error 描述不合法或管线建不出来，
-         *        见 DoodleGraphicsPipeline::Initialize。失败时表里不留任何东西
+         *        见 DoodleVulkanPipelineObject::Initialize。失败时表里不留任何东西
          *
          * @note 前置条件：已初始化、未 Destroy
          */
-        [[nodiscard]] const DoodleGraphicsPipeline& GetPipeline(const DoodlePipelineShaderDescription& shaderDescription);
+        [[nodiscard]] const DoodleVulkanPipelineObject& GetPipeline(const DoodleVulkanPipelineShaderDescription& shaderDescription);
 
         /**
          * 这个 pass 里有几条管线
@@ -137,26 +231,22 @@ namespace Doodle
         /**
          * 当前的 pass 配置（按值返回，取的时候在锁内）
          */
-        [[nodiscard]] DoodlePipelinePassConfig GetPassConfig() const;
+        [[nodiscard]] DoodleVulkanPipelinePassConfig GetPassConfig() const;
 
     protected:
         /**
-         * 绑定这个 pass 共用的输入；此时还没有任何管线
+         * 绑定这个 pass 共用的服务与 pass 配置；此时还没有任何管线
          *
          * 由派生类在自己的 Initialize 里调用。派生类先按自己的附件算好 passConfig，
-         * 再交给这里；基类不关心这个 pass 的颜色 / 深度附件从哪来。
+         * 再连同调用方给的共享服务一起交给这里；基类不关心这个 pass 的颜色 /
+         * 深度附件从哪来。
          *
-         * @param device 已初始化的 Vulkan 设备
-         * @param pipelineCompileCache 驱动编译缓存，必须活得比本 pass 久
-         * @param frameSetLayout set 0 布局（描述符管理器那一个），必须活得比本 pass 久
+         * @param initInfo 设备与两个共享句柄，都必须活得比本 pass 久
          * @param passConfig 这种 pass 的附件格式与采样数
          *
          * @note 前置条件：尚未初始化
          */
-        void Initialize(const DoodleVulkanDevice& device,
-                        VkPipelineCache pipelineCompileCache,
-                        VkDescriptorSetLayout frameSetLayout,
-                        const DoodlePipelinePassConfig& passConfig);
+        void Initialize(const DoodleRenderPassInitInfo& initInfo, const DoodleVulkanPipelinePassConfig& passConfig);
 
         /**
          * 派生类拆自己的资源；基类已经先把管线拆完
@@ -165,10 +255,7 @@ namespace Doodle
          * 可能在从未初始化时被调用，也可能被重复调用；实现要能处理这两种情况。
          * 默认什么都不做。
          */
-        virtual void OnDestroy()
-        {
-
-        }
+        virtual void OnDestroy() {}
 
         /**
          * 这个 pass 绑定的设备；OnDestroy 时仍然有效
@@ -184,14 +271,14 @@ namespace Doodle
          *
          * 与 IsSameKey 同口径：判等看的成员都要进哈希；set 1 布局两边都不看
          */
-        [[nodiscard]] static std::size_t HashKey(const DoodlePipelineShaderDescription& shaderDescription);
+        [[nodiscard]] static std::size_t HashKey(const DoodleVulkanPipelineShaderDescription& shaderDescription);
 
         /**
          * 两份描述是不是同一个查找键：字节码逐字节、渲染状态逐成员、
          * 顶点与实例格式，全部相等才算
          */
-        [[nodiscard]] static bool IsSameKey(const DoodlePipelineShaderDescription& lhs,
-                                            const DoodlePipelineShaderDescription& rhs);
+        [[nodiscard]] static bool IsSameKey(const DoodleVulkanPipelineShaderDescription& lhs,
+                                            const DoodleVulkanPipelineShaderDescription& rhs);
 
         /**
          * 建一条 PipelineItem 并插进表里
@@ -200,7 +287,7 @@ namespace Doodle
          * 为同一份描述各建一条）。失败时把刚插入的条目摘掉再抛
          */
         [[nodiscard]] PipelineItem& CreatePipelineItem(const std::size_t keyHash,
-                                                       const DoodlePipelineShaderDescription& shaderDescription);
+                                                       const DoodleVulkanPipelineShaderDescription& shaderDescription);
 
         /**
          * 销毁表里的每条管线并清空；调用方必须已经持有 m_mutex
@@ -219,14 +306,14 @@ namespace Doodle
         VkPipelineCache m_pipelineCompileCache = VK_NULL_HANDLE;
 
         /**
-         * set 0 布局，不持有；这个 pass 的所有管线布局都用它
+         * frame UBO 描述符集布局，不持有；这个 pass 的所有管线布局都用它
          */
-        VkDescriptorSetLayout m_frameSetLayout = VK_NULL_HANDLE;
+        VkDescriptorSetLayout m_frameUboDescriptorSetLayout = VK_NULL_HANDLE;
 
         /**
          * 这种 pass 当前的附件格式与采样数
          */
-        DoodlePipelinePassConfig m_passConfig;
+        DoodleVulkanPipelinePassConfig m_passConfig;
 
         /**
          * 查找键哈希 → 管线记录。哈希只分桶：同一个桶里可能有内容不同的记录，

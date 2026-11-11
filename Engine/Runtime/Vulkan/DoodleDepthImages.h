@@ -26,10 +26,10 @@ namespace Doodle
      * - **按帧轮转**：数量与命令缓冲、imageAvailable 信号量、帧栅栏同一个维度
      *
      * 按帧分配（而不是所有在途帧共用一张）：同一槽位下一次被用到之前，它上一次的
-     * 使用必定已经完成 —— 凭据是 DrawFrame 开头等的那个帧栅栏。所以这一组图
+     * 使用必定已经完成 —— 凭据是 BeginFrame 开头等的那个帧栅栏。所以这一组图
      * 不需要任何跨帧屏障；每帧那条屏障只负责转布局
      *
-     * 寿命锚在「窗口尺寸」上：交换链重建时由门面一并重建。
+     * 寿命锚在「窗口尺寸」上：交换链重建时由 DoodleRenderPipeline 一并重建。
      * 但它不是交换链的一部分 —— 不是呈现目标、不与呈现引擎打交道，
      * 也不随交换链格式变化
      *
@@ -58,7 +58,7 @@ namespace Doodle
          * 销毁整组深度图
          *
          * @note 前置条件：GPU 已空闲。图可能还在被在途的命令引用着，
-         * 此刻销毁是未定义行为 —— 由 DoodleVulkanManager 的 vkDeviceWaitIdle 保证
+         * 此刻销毁是未定义行为 —— 由 DoodleRenderManager 在销毁前等 GPU 空闲保证
          */
         void Destroy();
 

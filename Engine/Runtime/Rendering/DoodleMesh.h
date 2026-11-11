@@ -54,7 +54,7 @@ namespace Doodle
      * 搬运对象本身的场景
      *
      * 索引类型固定为 uint32_t：FBX 拍平后顶点数很容易越过 65535，
-     * 与 DoodleCommandManager::Record 里的 VK_INDEX_TYPE_UINT32 是同一个决定。
+     * 与 DoodleForwardPass::Render 里的 VK_INDEX_TYPE_UINT32 是同一个决定。
      * 不按模型大小分两套索引类型
      */
     class DoodleMesh : public DoodleAsset

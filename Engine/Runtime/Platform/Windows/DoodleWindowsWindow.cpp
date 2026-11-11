@@ -169,7 +169,7 @@ namespace Doodle
                     pWindow->m_input = {};
                 }
 
-                DoodleApplication::GetInstance().NotifyWindowResized();
+                DoodleApplication::GetInstance().OnWindowResized();
                 return 0;
 
             case WM_DPICHANGED:
@@ -360,7 +360,7 @@ namespace Doodle
         m_input.cursorCaptured = m_cursorCaptured;
     }
 
-    DoodleInput::RawState DoodleWindowsWindow::GetRawInputState() const
+    DoodleInputRawState DoodleWindowsWindow::GetRawInputState() const
     {
         return m_input;
     }

@@ -35,13 +35,13 @@ namespace Doodle
             s_pInstance = nullptr;
         }
 
-        // 不在析构里销毁 GPU 资产：正常路径由 DoodleApplication 先 WaitIdle、
+        // 不在析构里销毁 GPU 资产：正常路径由 DoodleApplication 先 WaitForGpuIdle、
         // 再显式 Destroy；异常退出时可能还有在途命令，此时碰 Vulkan 比把资源
         // 交给进程回收更危险。loader 对象本身由容器析构释放，它们的析构器
         // 因此不得释放设备资源 —— 那是 Destroy 的职责
     }
 
-    void DoodleAssetManager::Initialize(const DoodleAssetManagerInitContext& context)
+    void DoodleAssetManager::Initialize(const DoodleAssetManagerInitInfo& context)
     {
         if (m_pFileSystem != nullptr)
         {

@@ -83,7 +83,7 @@ namespace Doodle
      *
      * 交换链预旋转不在这里。投影只负责「显示方向 + Vulkan 裁剪空间」，
      * 预旋转是把算好的画面转到交换链图像朝向的最后一步，由渲染门面左乘
-     * （见 DoodleVulkanManager::UpdateUniformBuffer）—— 两者顺序不能换。
+     * （见 DoodleRenderPipeline::UpdateFrameUbo）—— 两者顺序不能换。
      */
     class DoodleCamera final : public DoodleComponent
     {

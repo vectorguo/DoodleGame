@@ -97,15 +97,15 @@ namespace Doodle
         //
         //桌面那份实现要阻塞等待，是因为最小化时窗口仍在、只是像素尺寸变成
         //0×0，交换链建不出来。Android 没有这个中间态：窗口没了就是
-        //ANativeWindow 直接消失，走的是驱动层的 Suspend 路径，
+        //ANativeWindow 直接消失，走的是驱动层的表面丢失路径，
         //根本不会带着一个 0×0 的窗口走到这里来
     }
 
-    DoodleInput::RawState DoodleAndroidWindow::GetRawInputState() const
+    DoodleInputRawState DoodleAndroidWindow::GetRawInputState() const
     {
         //键鼠快照在 Android 上恒为空；触摸能力是平台属性，失焦清空快照后
         //也必须保持 true，所以在返回的副本上补
-        DoodleInput::RawState state = m_input;
+        DoodleInputRawState state = m_input;
         state.touchSupported = true;
         return state;
     }
@@ -178,7 +178,7 @@ namespace Doodle
                                        const std::size_t pointerIndex,
                                        const float densityScale)
     {
-        if (m_activeTouches.size() >= DoodleInput::kMaxTouches)
+        if (m_activeTouches.size() >= DoodleInputRawState::kMaxTouches)
         {
             return;
         }
@@ -262,7 +262,7 @@ namespace Doodle
 
         for (const TouchState& touch : m_activeTouches)
         {
-            if (m_input.touchCount >= static_cast<int32_t>(DoodleInput::kMaxTouches))
+            if (m_input.touchCount >= static_cast<int32_t>(DoodleInputRawState::kMaxTouches))
             {
                 break;
             }
@@ -311,7 +311,7 @@ namespace Doodle
     VkExtent2D DoodleAndroidWindow::GetSurfaceSize() const
     {
         //前置条件：此刻有窗口。调用方只会在已经有交换链的情况下问尺寸，
-        //而交换链存在就意味着窗口在 —— 窗口没了的时候那一层已经被 Suspend 拆掉了
+        //而交换链存在就意味着窗口在 —— 窗口没了的时候那一层已经被 OnSurfaceLost 拆掉了
         return
         {
             .width = static_cast<uint32_t>(ANativeWindow_getWidth(m_pApp->window)),
@@ -333,7 +333,7 @@ namespace Doodle
         const VkAndroidSurfaceCreateInfoKHR createInfo
         {
             .sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR,
-            //取当下的那个窗口。Suspend 之后又 Resume 时，这里拿到的是新窗口 ——
+            //取当下的那个窗口。表面丢失之后又重新创建时，这里拿到的是新窗口 ——
             //本对象一直没换，换的是它底下的 window 指针
             .window = m_pApp->window
         };

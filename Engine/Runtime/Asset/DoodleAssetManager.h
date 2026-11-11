@@ -29,8 +29,11 @@ namespace Doodle
      * 应用是组合根：它知道文件系统与 Vulkan 各层，但不需要知道任何具体 loader。
      * 这里只把 loader 构造需要的服务传进来；将来新增资源类型需要更多服务时，
      * 往这个结构体加字段即可，Initialize 的调用点只有一处。
+     *
+     * 命名口径：初始化输入统一叫 ...InitInfo（与 DoodleRenderPassInitInfo /
+     * DoodleForwardPassInitInfo 一致）；运行时操作的输入才叫 ...Context。
      */
-    struct DoodleAssetManagerInitContext
+    struct DoodleAssetManagerInitInfo
     {
         const DoodleFileSystem& fileSystem;
         DoodleVulkanDevice& device;
@@ -57,8 +60,8 @@ namespace Doodle
      * 仍在 DoodleApplication 手里，本类不自己创建实例。
      *
      * 生命周期：由 DoodleApplication 持有，必须比 DoodleSceneManager 晚销毁、
-     * 比 DoodleVulkanManager 早销毁 —— 场景里的 MeshRenderer 引用着网格，
-     * 而网格缓冲必须在设备之前释放。应用在 WaitIdle 之后显式调用 Destroy；
+     * 比 DoodleRenderManager 早销毁 —— 场景里的 MeshRenderer 引用着网格，
+     * 而网格缓冲必须在设备之前释放。应用在 WaitForGpuIdle 之后显式调用 Destroy；
      * 析构不做 GPU 清理，避免异常退出时在途命令仍引用着缓冲。
      */
     class DoodleAssetManager
@@ -111,7 +114,7 @@ namespace Doodle
          * 前置条件：Vulkan 设备与命令管理层已经初始化（网格 / 纹理 loader 要上传
          * GPU 数据），文件系统对象已经存在。重复调用属于错误用法，抛 std::logic_error。
          */
-        void Initialize(const DoodleAssetManagerInitContext& context);
+        void Initialize(const DoodleAssetManagerInitInfo& context);
 
         /**
          * 销毁所有 loader 与它们持有的资产

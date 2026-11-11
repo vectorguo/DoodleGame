@@ -9,10 +9,12 @@
 
 #include <stdexcept>
 
+#include "Platform/DoodleWindow.h"
+
 namespace Doodle
 {
-    DoodleInput::RawState DoodleInput::s_current{};
-    DoodleInput::RawState DoodleInput::s_previous{};
+    DoodleInputRawState DoodleInput::s_current{};
+    DoodleInputRawState DoodleInput::s_previous{};
 
     bool DoodleInput::GetKey(const DoodleKey key)
     {
@@ -74,7 +76,25 @@ namespace Doodle
         return s_current.touchSupported;
     }
 
-    void DoodleInput::Update(const RawState& rawState)
+    void DoodleInput::Update(DoodleWindow& window)
+    {
+        DoodleInputRawState rawState = window.GetRawInputState();
+
+        //右键控制光标捕获。这是窗口级策略，收在输入层的唯一住处；
+        //FreeLook 之类的组件只查询 DoodleInput，不碰窗口
+        if (rawState.IsMouseButtonDown(kCaptureButton) != rawState.cursorCaptured)
+        {
+            window.SetCursorCaptured(rawState.IsMouseButtonDown(kCaptureButton));
+
+            //切换捕获时窗口已经把位移清零。重新取一次，避免这一帧把切换前的
+            //旧位移算进视角
+            rawState = window.GetRawInputState();
+        }
+
+        Apply(rawState);
+    }
+
+    void DoodleInput::Apply(const DoodleInputRawState& rawState)
     {
         s_previous = s_current;
         s_current = rawState;

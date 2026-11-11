@@ -56,7 +56,7 @@ namespace Doodle
         //
         //取实例不判空：回调只可能在泵事件时触发，而泵事件只发生在驱动层跑起来之后，
         //此刻实例必然有效。契约写在 DoodleApplication::GetInstance 那边
-        DoodleApplication::GetInstance().NotifyWindowResized();
+        DoodleApplication::GetInstance().OnWindowResized();
     }
 
     void DoodleMacWindow::PumpEvents()
@@ -116,7 +116,7 @@ namespace Doodle
         m_input.cursorCaptured = m_cursorCaptured;
     }
 
-    DoodleInput::RawState DoodleMacWindow::GetRawInputState() const
+    DoodleInputRawState DoodleMacWindow::GetRawInputState() const
     {
         return m_input;
     }

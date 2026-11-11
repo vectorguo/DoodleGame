@@ -10,7 +10,7 @@
 #include <vector>
 #include <vulkan/vulkan_core.h>
 
-#include "DoodleInput.h"
+#include "Input/DoodleInputRawState.h"
 
 namespace Doodle
 {
@@ -58,7 +58,7 @@ namespace Doodle
          * 桌面：窗口最小化时像素尺寸是 0×0，那样建不出交换链，
          *       只能阻塞等窗口回来。连续 resize 时也靠它把事件流消化掉
          * Android：没有「最小化」这个状态。窗口没了就是 surface 没了，
-         *       走的是驱动层的 Suspend 路径，不会走到这里来。所以实现是空的
+         *       走的是驱动层的表面丢失路径，不会走到这里来。所以实现是空的
          */
         virtual void WaitUntilDrawable() = 0;
 
@@ -78,13 +78,13 @@ namespace Doodle
         /**
          * 本帧的原始输入状态
          *
-         * 由 PumpEvents 刷新；应用层在 PumpEvents 之后取一次，喂给 DoodleInput。
+         * 由 PumpEvents 刷新；DoodleInput::Update 在帧边界取一次，推进为本帧快照。
          * 游戏层不要直接用这个结构 —— 查询入口是 DoodleInput 的静态方法。
          *
          * 各平台在这里只做「原生 API → 平台无关数据」的映射：
-         * macOS 用 GLFW，Windows 用 Win32，Android 当前返回空状态
+         * macOS 用 GLFW，Windows 用 Win32，Android 由触摸事件累加
          */
-        [[nodiscard]] virtual DoodleInput::RawState GetRawInputState() const = 0;
+        [[nodiscard]] virtual DoodleInputRawState GetRawInputState() const = 0;
 
         /**
          * 捕获 / 释放光标

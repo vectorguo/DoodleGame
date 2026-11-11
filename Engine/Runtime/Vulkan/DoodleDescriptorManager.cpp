@@ -18,17 +18,17 @@ namespace Doodle
 {
     void DoodleDescriptorManager::Initialize(
         const DoodleVulkanDevice& device,
-        const std::array<DoodleGraphicsBuffer, MAX_FRAMES_IN_FLIGHT>& uniformBuffers)
+        const std::array<DoodleGraphicsBuffer, MAX_FRAMES_IN_FLIGHT>& frameUbos)
     {
         m_pDevice = &device;
 
         //布局先建：集合按布局分配，管线布局也要读它们 —— 门面在本函数之后才建管线
-        CreateFrameDescriptorSetLayout();
-        CreateTextureDescriptorSetLayout();
+        CreateFrameUboDescriptorSetLayout();
+        CreateMaterialDescriptorSetLayout();
 
-        //每帧 UBO 的池/集合：集合引用 UBO 缓冲，所以 UBO 必须先建好
-        CreateFrameDescriptorPool();
-        CreateFrameDescriptorSets(uniformBuffers);
+        //frame UBO 的池/集合：集合引用 UBO 缓冲，所以 UBO 必须先建好
+        CreateFrameUboDescriptorPool();
+        CreateFrameUboDescriptorSets(frameUbos);
 
         //纹理集合与默认白图：默认白图上传要借命令管理器的传输池，
         //所以调用方必须先初始化命令管理器
@@ -48,41 +48,41 @@ namespace Doodle
         //每帧池引用 UBO，由门面保证先于 UBO 销毁
         DestroyTextureDescriptorPools();
         m_textureDescriptorSets.clear();
-        m_frameTextureDescriptorSets.clear();
+        m_drawItemMaterialDescriptorSets.clear();
         DestroyDefaultTexture();
 
-        DestroyFrameDescriptorPool();
+        DestroyFrameUboDescriptorPool();
 
         //布局最后拆：从它们分配的集合已经随池一起失效。管线布局只在创建时
         //读过它们，门面也已经先把管线销毁了
-        DestroyDescriptorSetLayout(m_textureDescriptorSetLayout);
-        DestroyDescriptorSetLayout(m_frameDescriptorSetLayout);
+        DestroyDescriptorSetLayout(m_materialDescriptorSetLayout);
+        DestroyDescriptorSetLayout(m_frameUboDescriptorSetLayout);
 
         m_pDevice = nullptr;
     }
 
-    VkDescriptorSet DoodleDescriptorManager::GetFrameDescriptorSet(const uint32_t frameIndex) const
+    VkDescriptorSet DoodleDescriptorManager::GetFrameUboDescriptorSet(const uint32_t frameIndex) const
     {
-        return m_frameDescriptorSets[frameIndex];
+        return m_frameUboDescriptorSets[frameIndex];
     }
 
-    const std::vector<VkDescriptorSet>& DoodleDescriptorManager::ResolveTextureDescriptorSets(const std::vector<DoodleDrawItem>& drawItems)
+    const std::vector<VkDescriptorSet>& DoodleDescriptorManager::ResolveMaterialDescriptorSets(const std::vector<DoodleDrawItem>& drawItems)
     {
         //第一次用到的纹理在这里分配集合；没有配置纹理的材质用默认白图。
         //结果与 drawItems 等长，录制侧按同一下标取用 —— 顺序不能错开
-        m_frameTextureDescriptorSets.clear();
-        m_frameTextureDescriptorSets.reserve(drawItems.size());
+        m_drawItemMaterialDescriptorSets.clear();
+        m_drawItemMaterialDescriptorSets.reserve(drawItems.size());
         for (const DoodleDrawItem& drawItem : drawItems)
         {
             const DoodleTexture* pTexture = drawItem.pMaterial->GetTexture();
-            m_frameTextureDescriptorSets.push_back(
+            m_drawItemMaterialDescriptorSets.push_back(
                 pTexture != nullptr ? GetOrCreateTextureDescriptorSet(*pTexture)
                                     : m_defaultTextureDescriptorSet);
         }
-        return m_frameTextureDescriptorSets;
+        return m_drawItemMaterialDescriptorSets;
     }
 
-    void DoodleDescriptorManager::CreateFrameDescriptorSetLayout()
+    void DoodleDescriptorManager::CreateFrameUboDescriptorSetLayout()
     {
         //binding 0 对应每个着色器里 layout(set = 0, binding = 0) 的 UBO 块（声明在
         //Shaders/Include/DoodleInterface.glsl）。stageFlags 必须覆盖真正读它的阶段：
@@ -92,17 +92,17 @@ namespace Doodle
         {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
             .bindingCount = 1,
-            .pBindings = &kFrameBinding
+            .pBindings = &kFrameUboBinding
         };
 
         if (vkCreateDescriptorSetLayout(m_pDevice->GetLogicalDevice(), &layoutInfo,
-                                        nullptr, &m_frameDescriptorSetLayout) != VK_SUCCESS)
+                                        nullptr, &m_frameUboDescriptorSetLayout) != VK_SUCCESS)
         {
             throw std::runtime_error("failed to create descriptor set layout!");
         }
     }
 
-    void DoodleDescriptorManager::CreateTextureDescriptorSetLayout()
+    void DoodleDescriptorManager::CreateMaterialDescriptorSetLayout()
     {
         //set 1 binding 0：一张被采样的纹理，只有片元阶段采样（顶点阶段不读它）；
         //采样器随纹理一起写入，不是编译期固定的（pImmutableSamplers 为空）。
@@ -118,7 +118,7 @@ namespace Doodle
         };
 
         if (vkCreateDescriptorSetLayout(m_pDevice->GetLogicalDevice(), &layoutInfo,
-                                        nullptr, &m_textureDescriptorSetLayout) != VK_SUCCESS)
+                                        nullptr, &m_materialDescriptorSetLayout) != VK_SUCCESS)
         {
             throw std::runtime_error("failed to create texture descriptor set layout!");
         }
@@ -177,36 +177,36 @@ namespace Doodle
         }
     }
 
-    void DoodleDescriptorManager::CreateFrameDescriptorPool()
+    void DoodleDescriptorManager::CreateFrameUboDescriptorPool()
     {
         //每在途帧一个 UBO，集合数与之相同
-        m_frameDescriptorPool = CreateDescriptorPool(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                                                     MAX_FRAMES_IN_FLIGHT,
-                                                     MAX_FRAMES_IN_FLIGHT);
+        m_frameUboDescriptorPool = CreateDescriptorPool(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                                        MAX_FRAMES_IN_FLIGHT,
+                                                        MAX_FRAMES_IN_FLIGHT);
     }
 
-    void DoodleDescriptorManager::DestroyFrameDescriptorPool()
+    void DoodleDescriptorManager::DestroyFrameUboDescriptorPool()
     {
-        DestroyDescriptorPool(m_frameDescriptorPool);
-        m_frameDescriptorSets.fill(VK_NULL_HANDLE);
+        DestroyDescriptorPool(m_frameUboDescriptorPool);
+        m_frameUboDescriptorSets.fill(VK_NULL_HANDLE);
     }
 
-    void DoodleDescriptorManager::CreateFrameDescriptorSets(const std::array<DoodleGraphicsBuffer, MAX_FRAMES_IN_FLIGHT>& uniformBuffers)
+    void DoodleDescriptorManager::CreateFrameUboDescriptorSets(const std::array<DoodleGraphicsBuffer, MAX_FRAMES_IN_FLIGHT>& frameUbos)
     {
         //pSetLayouts 要求「每个集合一个布局句柄」，不会自动广播同一个布局，
         //所以即使所有集合共用同一份布局，也要把它重复 N 次
-        std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_frameDescriptorSetLayout);
+        std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_frameUboDescriptorSetLayout);
 
         const VkDescriptorSetAllocateInfo allocInfo
         {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .descriptorPool = m_frameDescriptorPool,
+            .descriptorPool = m_frameUboDescriptorPool,
             .descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT),
             .pSetLayouts = layouts.data()
         };
 
-        m_frameDescriptorSets.fill(VK_NULL_HANDLE);
-        if (vkAllocateDescriptorSets(m_pDevice->GetLogicalDevice(), &allocInfo, m_frameDescriptorSets.data()) != VK_SUCCESS)
+        m_frameUboDescriptorSets.fill(VK_NULL_HANDLE);
+        if (vkAllocateDescriptorSets(m_pDevice->GetLogicalDevice(), &allocInfo, m_frameUboDescriptorSets.data()) != VK_SUCCESS)
         {
             throw std::runtime_error("failed to allocate descriptor sets!");
         }
@@ -217,7 +217,7 @@ namespace Doodle
         {
             const VkDescriptorBufferInfo bufferInfo
             {
-                .buffer = uniformBuffers[i].GetBuffer(),
+                .buffer = frameUbos[i].GetBuffer(),
                 .offset = 0,
                 .range = sizeof(DoodleUniformBufferObject)
             };
@@ -225,7 +225,7 @@ namespace Doodle
             const VkWriteDescriptorSet descriptorWrite
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = m_frameDescriptorSets[i],
+                .dstSet = m_frameUboDescriptorSets[i],
                 .dstBinding = 0,
                 .dstArrayElement = 0,
                 .descriptorCount = 1,
@@ -279,7 +279,7 @@ namespace Doodle
             return it->second;
         }
 
-        const VkDescriptorSetLayout setLayout = m_textureDescriptorSetLayout;
+        const VkDescriptorSetLayout setLayout = m_materialDescriptorSetLayout;
 
         //池块是条件选择的，所以把「用某一块池分配」收进一个小函数：
         //每次分配仍然是一次完整、const 的 VkDescriptorSetAllocateInfo

@@ -17,8 +17,8 @@ namespace Doodle
     /**
      * 管线创建的输入描述：向管线缓存要一条管线时用的词汇表
      *
-     * 与 DoodleGraphicsPipeline 这个具体管线对象分开放，是因为要用它的不只是管线本身：
-     * 着色器资产（DoodleShader）按值持有一份 DoodlePipelineShaderDescription，
+     * 与 DoodleVulkanPipelineObject 这个具体管线对象分开放，是因为要用它的不只是管线本身：
+     * 着色器资产（DoodleShader）按值持有一份 DoodleVulkanPipelineShaderDescription，
      * 内容层（Rendering）的公开头文件因此只需要这份描述，不必依赖管线类的完整定义
      * （连私有成员布局一起）。管线类与管线缓存都按值/按引用接收这两样，谁也不独占
      */
@@ -32,7 +32,7 @@ namespace Doodle
      *
      * 判等用默认的逐成员比较：交换链重建后 pass 拿新旧两份一比，就知道管线要不要重建
      */
-    struct DoodlePipelinePassConfig
+    struct DoodleVulkanPipelinePassConfig
     {
         /**
          * 每个颜色附件的格式，按 location 排列
@@ -54,7 +54,7 @@ namespace Doodle
          */
         VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_1_BIT;
 
-        [[nodiscard]] bool operator==(const DoodlePipelinePassConfig&) const = default;
+        [[nodiscard]] bool operator==(const DoodleVulkanPipelinePassConfig&) const = default;
     };
 
     /**
@@ -67,7 +67,7 @@ namespace Doodle
      * 字节码按值持有（std::vector<std::byte>，与 DoodleFileSystem::ReadBinary 同一个类型）：
      * 管线缓存的条目要存一份副本，格式变了原地重建时再用
      */
-    struct DoodlePipelineShaderDescription
+    struct DoodleVulkanPipelineShaderDescription
     {
         /**
          * 顶点着色器的 SPIR-V
@@ -90,7 +90,7 @@ namespace Doodle
          * 只在建管线布局时被读取一次：Vulkan 规定作为参数传给另一个对象创建的
          * set 布局，创建返回之后就不再被访问，所以这个布局先于管线布局销毁是合法的
          */
-        VkDescriptorSetLayout materialSetLayout = VK_NULL_HANDLE;
+        VkDescriptorSetLayout materialDescriptorSetLayout = VK_NULL_HANDLE;
 
         /**
          * 渲染状态：剔除、深度、混合、深度偏移、拓扑

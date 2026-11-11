@@ -1,0 +1,193 @@
+//
+//  DoodleRenderPipeline.h
+//  Doodle
+//
+//  Created by 郭智 on 2026/11/9.
+//
+
+#pragma once
+
+#include <array>
+
+#include "DoodleDepthImages.h"
+#include "DoodleDescriptorManager.h"
+#include "DoodleForwardPass.h"
+#include "DoodleGraphicsBuffer.h"
+#include "DoodleVulkanConfig.h"
+#include "DoodleVulkanPipelineCompileCache.h"
+
+namespace Doodle
+{
+    //只在接口签名与成员指针里出现，完整定义留给源文件
+    class DoodleVulkanDevice;
+    class DoodleSwapChain;
+    class DoodleVulkanManager;
+    struct DoodleFrameContext;
+
+    /**
+     * 渲染管线：项目级的渲染策略
+     *
+     * 一个实例回答「这一帧怎么画」：持有渲染策略所需的常驻资源 —— 深度图、
+     * frame UBO、描述符管理器、驱动编译缓存 —— 以及按顺序执行的 pass。
+     * 现在只有一个前向 pass；阴影、后处理到来时加进同一个实例，由本类决定顺序。
+     *
+     * **与 DoodleRenderPass 的分工**：本类管「有几个 pass、按什么顺序、它们共用什么
+     * 资源」；每个 pass 管自己那一段怎么录（附件、屏障、管线、绘制）。
+     *
+     * **与 DoodleRenderManager / DoodleVulkanManager 的分工**：本类不碰交换链获取、
+     * 栅栏、提交与呈现 —— 那些是后端与表面的事。DoodleRenderManager 持有本类，
+     * 按「后端取帧 → 本类录制 → 后端提交」驱动；本类只在渲染管理器给的帧索引与命令缓冲上工作。
+     *
+     * **生命周期**：由 DoodleRenderManager 持有，排在 DoodleVulkanManager 之后建
+     * （描述符管理器的默认白图要借后端的命令层传输池）；销毁时先于后端。
+     * 表面消失时只拆深度图这类跟随交换链的资源，管线与描述符保留。
+     *
+     * 不可复制：成员各自持有句柄与资源
+     */
+    class DoodleRenderPipeline
+    {
+    public:
+        DoodleRenderPipeline() = default;
+        DoodleRenderPipeline(const DoodleRenderPipeline&) = delete;
+        DoodleRenderPipeline& operator=(const DoodleRenderPipeline&) = delete;
+
+        /**
+         * 建出常驻渲染资源与第一个 pass
+         *
+         * 顺序：深度图 → frame UBO → 描述符管理器 → 驱动编译缓存 → 前向 pass。
+         * 深度图要交换链尺寸；描述符管理器要 UBO 句柄；前向 pass 要交换链 /
+         * 深度图的格式、frame UBO 与材质的描述符集布局。
+         *
+         * @param vulkanManager 已初始化的 Vulkan 后端：本类从这里取设备、交换链
+         *        以及以后可能需要的其他后端服务。参数收成一个对象，后端新增服务时
+         *        本签名与调用点都不动；本类不保存这个引用，只在初始化期间使用
+         *
+         * @note 前置条件：命令管理层已经初始化 —— 描述符管理器的默认白图上传
+         *       要借它的传输池。这也是 DoodleRenderManager 把本类排在后端之后的原因
+         */
+        void Initialize(const DoodleVulkanManager& vulkanManager);
+
+        /**
+         * 拆掉本类持有的全部资源
+         *
+         * 顺序与 Initialize 相反：前向 pass → 驱动编译缓存 → 描述符管理器 →
+         * UBO → 深度图。管线布局引用描述符管理器的 set 布局，所以 pass 必须
+         * 排在它之前。
+         *
+         * 可以重复调用。前置条件：GPU 已空闲 —— 在途命令可能还引用着管线与深度图
+         */
+        void Destroy();
+
+        /**
+         * 把本帧录进给定的命令缓冲
+         *
+         * 从帧上下文读取帧索引、图像索引、命令缓冲与应用输入：写本帧 UBO →
+         * 解析 set 0 / set 1 → 交给每个 pass 录制。UBO 的写入位置必须在
+         * 本槽位栅栏之后、命令录制之前。
+         *
+         * @param frameContext BeginFrame 填好状态字段的帧上下文
+         *
+         * @note 前置条件：context.status == Ready
+         */
+        void Render(const DoodleFrameContext& frameContext);
+
+        /**
+         * 表面消失前调用：拆掉跟随交换链的渲染资源
+         *
+         * 现在只有深度图 —— 它按交换链尺寸分配。管线、UBO、描述符资源都与表面
+         * 无关，保留下来；重建它们的代价远大于留着。
+         *
+         * @note 前置条件：GPU 已空闲；之后不得再调用 Render，直到
+         *       OnSwapChainRecreated
+         */
+        void OnSurfaceLost();
+
+        /**
+         * 交换链重建后调用：按新尺寸重建深度图，并让 pass 按新附件配置重建管线
+         *
+         * 会先销毁旧深度图再按新尺寸建（Destroy 幂等，OnSurfaceLost 之后调用也安全）。
+         * 尺寸变化不影响管线（视口与剪裁是动态状态）；只有颜色 / 深度格式或
+         * 采样数真的变了，前向 pass 才会原地重建自己的管线。
+         *
+         * @note 前置条件：新的交换链已经初始化
+         */
+        void OnSwapChainRecreated();
+
+    private:
+        /**
+         * 为每个在途帧建一块 CPU 可写的 frame UBO
+         *
+         * UBO 每帧都要更新，所以走 HostVisible 类型，不走设备本地 + 中转。
+         * 第一次 Write 时建立持久映射，之后每帧直接 memcpy
+         */
+        void CreateFrameUbos();
+
+        /**
+         * 解除映射并销毁所有 frame UBO
+         *
+         * 调用前必须先销毁描述符管理器：集合指向这些缓冲，管理器先走，集合才失效
+         */
+        void DestroyFrameUbos();
+
+        /**
+         * 把本帧的 view / proj 与主光源写进第 frameIndex 块 frame UBO
+         *
+         * 调用位置与投影的推导细节见 Render 的注释；本函数只负责填数据与写入
+         *
+         * @param frameIndex 在途帧索引
+         * @param context 本帧上下文，只取其中的相机与光源
+         */
+        void UpdateFrameUbo(uint32_t frameIndex, const DoodleFrameContext& context);
+
+    private:
+        /**
+         * Vulkan设备层，在 Initialize 时绑定
+         */
+        const DoodleVulkanDevice* m_pDevice = nullptr;
+
+        /**
+         * 交换链，在 Initialize 时绑定；取尺寸、颜色格式与预旋转用
+         *
+         * 只借不放，寿命必须覆盖本类
+         */
+        const DoodleSwapChain* m_pSwapChain = nullptr;
+
+        /**
+         * 深度图组：每在途帧一张，随交换链尺寸重建
+         *
+         * 声明顺序与创建顺序一致：深度图 → UBO → 描述符管理器 → 编译缓存 →
+         * 前向 pass。正常析构（没有走 Destroy）时成员逆序释放，正好是
+         * 「使用者先、被使用者后」
+         */
+        DoodleDepthImages m_depthImages;
+
+        /**
+         * 每帧一块 frame UBO，HostVisible 类型
+         *
+         * 不随交换链重建：窗口缩放只改投影矩阵的内容，不改缓冲对象。
+         * 数量必须与 MAX_FRAMES_IN_FLIGHT 一致
+         */
+        std::array<DoodleGraphicsBuffer, MAX_FRAMES_IN_FLIGHT> m_frameUbos;
+
+        /**
+         * 描述符管理器：frame UBO 的 set 0 与材质纹理的 set 1
+         *
+         * 排在 UBO 之后（要缓冲句柄）、所有管线之前（管线要它的两个 set 布局）
+         */
+        DoodleDescriptorManager m_descriptorManager;
+
+        /**
+         * 驱动编译缓存：全进程一个，所有 pass 共用
+         *
+         * 排在描述符管理器之后、前向 pass 之前（建管线时要用它）
+         */
+        DoodleVulkanPipelineCompileCache m_pipelineCompileCache;
+
+        /**
+         * 前向主 pass：拥有这一 pass 下的所有管线
+         *
+         * 现在只有这一个 pass。以后阴影、延迟、后处理各派生一个，由本类按顺序持有
+         */
+        DoodleForwardPass m_forwardPass;
+    };
+}

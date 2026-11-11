@@ -1,23 +1,17 @@
 //
-// Created by 郭智 on 2026/9/5.
+//  DoodleVulkanManager.h
+//  Doodle
+//
+//  Created by 郭智 on 2026/11/9.
 //
 
 #pragma once
 
-#include <array>
-
 #include "DoodleCommandManager.h"
-#include "DoodleDepthImages.h"
-#include "DoodleDescriptorManager.h"
-#include "DoodleForwardPass.h"
-#include "DoodleGraphicsBuffer.h"
-#include "DoodleGraphicsPipeline.h"
-#include "DoodlePipelineCompileCache.h"
+#include "Rendering/DoodleFrameContext.h"
 #include "DoodleSwapChain.h"
 #include "DoodleSyncObjects.h"
-#include "DoodleVulkanConfig.h"
 #include "DoodleVulkanDevice.h"
-#include "Rendering/DoodleDrawContext.h"
 
 namespace Doodle
 {
@@ -25,101 +19,121 @@ namespace Doodle
     class DoodleWindow;
 
     /**
-     * Vulkan子系统门面：按依赖顺序持有各层，对外提供统一的Vulkan入口
+     * Vulkan 后端：设备、交换链、命令层、同步对象与帧时序
+     *
+     * 负责「怎么把一帧交给系统」：初始化、表面生命周期、等栅栏、获取图像、
+     * 提交、呈现与交换链重建。**不负责「这一帧怎么画」** —— 命令缓冲里录什么
+     * 由 DoodleRenderPipeline 决定；本层只把 BeginFrame 的结果填进 DoodleFrameContext 的状态字段，
+     * 并在 EndFrame 里提交与呈现。
+     *
+     * 由 DoodleRenderManager 持有并编排，不直接暴露给应用层。帧时序的边界条件
+     * （栅栏复位、acquire 失败时信号量状态、present 后重建、resize 标志）全部
+     * 留在本类的 BeginFrame / EndFrame / RecreateSwapChain 里，上层只按状态分支。
+     *
+     * 生命周期与程序一致；Destroy / OnSurfaceLost / RecreateSwapChain 都要求 GPU 已空闲，
+     * 本类自己会等。
      */
     class DoodleVulkanManager
     {
     public:
         /**
-         * 初始化Vulkan
+         * 初始化后端：设备、交换链、命令层、同步对象
+         *
+         * @param window 提供表面的窗口；只借不放
          */
         void Initialize(DoodleWindow& window);
 
         /**
-         * 销毁Vulkan
+         * 销毁后端：同步对象、命令层、交换链、设备
+         *
+         * 前置条件：GPU 已空闲。本函数会自己再等一次，保证异步提交都完成
          */
         void Destroy();
 
         /**
-         * 表面没了：拆掉表面，以及所有依附于它的层
+         * 开始一帧：等本槽位栅栏、获取交换链图像、复位栅栏、begin 命令缓冲
          *
-         * Android 上切后台、锁屏、旋转都会走这条路 —— ANativeWindow 消失，
-         * 基于它的 VkSurfaceKHR 随之失效，交换链与按图像分配的同步对象全部作废。
-         * 桌面不会调到（窗口与程序同寿）
+         * 帧时序的边界条件：
+         * - 表面已被 OnSurfaceLost 拆掉：返回 Skipped，什么都不做；
+         * - acquire 返回 out-of-date：返回 RecreateSwapChain，本帧放弃。
+         *   此时 imageAvailable 信号量会停在已发出信号状态，绝不能再拿去 acquire
+         *   第二次；重建时同步对象整层换新，正是为了绕开这一点；
+         * - acquire 其他错误：抛异常；suboptimal 不算错误。
          *
-         * 保留的是与表面无关的那几层：Instance、物理/逻辑设备、队列、
-         * 前向 pass 的管线、命令池、uniform 缓冲与描述符资源。重建它们代价太大，
-         * 而且它们的寿命本来就不挂在窗口上
+         * @return 帧状态；status 为 Ready 时命令缓冲已经 begin，帧索引 /
+         *         图像索引 / 命令缓冲三项才有效
          *
-         * @note 期间不得调用 DrawFrame
+         * @note 前置条件：没有其他帧正在录制
          */
-        void Suspend();
+        [[nodiscard]] EFrameStatus BeginFrame(DoodleFrameContext& context);
 
         /**
-         * 表面回来了：建出新表面，再把被 Suspend 拆掉的那几层重建起来
+         * 结束并提交一帧：end 命令缓冲、提交、呈现
          *
-         * 重建那一半交给 RecreateSwapChain —— 与「交换链过时」是同一条路，
-         * 两边只有表面本身不同：这边要新建，那边原样沿用
+         * @param context BeginFrame 填好状态字段的帧上下文
+         * @return Ready 或 RecreateSwapChain；后者表示交换链已经与窗口不匹配，
+         *         调用方应重建后再来
          *
-         * @param window 提供新的表面
-         * @note 与 Suspend 必须成对。可反复调用（每次切前后台一轮）
-         */
-        void Resume(DoodleWindow& window);
-
-        /**
-         * 渲染并呈现一帧
-         *
-         * 主循环每轮调用一次。六步固定：等本槽位上一轮结束、取一张交换链图像、
-         * 复位栅栏并写入本帧 UBO、录制命令缓冲、提交、呈现。顺序不能调换，
-         * 每一步都在为下一步准备前提条件
-         *
-         * context 是本帧的全部输入：相机、主光源与绘制项。本门面不认识场景与
-         * GameObject，只负责把这份数据录进命令缓冲；各成员的可空性与生命周期
-         * 见 DoodleDrawContext 的注释。调用方每次调用时构造一个临时量，
-         * 本层不保存它，也不关心它从哪来
-         *
-         * 换成一个上下文而不是三个参数，是为了让帧级输入以后继续长的时候
-         * 签名不变：时间、曝光、阴影参数都往 DoodleDrawContext 里加，
-         * DrawFrame 与所有调用点只按字段名更新，不会出现「参数越排越长、
-         * 顺序还容易传错」的问题
-         *
-         * 交换链与窗口不再匹配时（缩放窗口等），本函数内部完成重建：
-         * acquire 返回 out-of-date 就立刻重建并放弃本帧；呈现返回 out-of-date /
-         * suboptimal，或收到过 resize 通知，则在呈现之后重建。
-         * 两处判断各有一个固定位置，都不能挪 —— 理由见实现里的注释
-         *
-         * 同一时刻允许 MAX_FRAMES_IN_FLIGHT 帧在途：host 录第 k 帧时，
-         * GPU 可以还在跑第 k-1 帧，两者用的是各自槽位的资源，不会互相踩踏
-         *
-         * 放在门面：它把本门面自己持有的几层按顺序驱动一遍，连同它们共有的
-         * 重建时机 —— 那正是门面的分内事
+         * @throws std::runtime_error end / 提交 / 呈现失败
          *
          * @note 里面的 Vulkan 调用大多是异步的，返回不代表 GPU 已完成
          */
-        void DrawFrame(const DoodleDrawContext& context);
+        EFrameStatus EndFrame(const DoodleFrameContext& context);
 
         /**
-         * 通知窗口尺寸发生了变化，下一帧需要重建交换链
+         * 重建交换链与同步对象
          *
-         * 由上层在 GLFW 的 resize 回调里调用。本层不自己监听窗口事件：
-         * 回调可能在任意时刻触发，在里面做重建会打乱帧的时序。
-         * 这里只记一个标志，把处理留给帧循环，顺带把连续的 resize 事件合并成一次重建
+         * 顺序：窗口可绘制等待 → 关闭检查 → 等 GPU 空闲 → 同步对象 → 交换链
+         * → 同步对象。渲染管线的深度图与 pass 不在这里，由 DoodleRenderManager
+         * 在本函数返回 true 之后调用。
+         *
+         * 末尾统一清 m_windowResized：重建完成即代表积压的 resize 通知已兑现。
+         *
+         * @return false 表示窗口正在关闭，本次不重建；true 表示交换链已换新
          */
-        void NotifyWindowResized()
-        {
-            m_windowResized = true;
-        }
+        [[nodiscard]] bool RecreateSwapChain();
 
         /**
          * 等待 GPU 空闲
          *
-         * 给「设备资源在门面之外销毁」的调用方用：应用销毁资产管理器之前必须先
-         * 确保没有在途命令还在引用网格 / 纹理缓冲。门面自己的 Destroy 也会等，
-         * 但那已经排在资产管理器之后，等不到了
+         * 给「设备资源在渲染器之外销毁」的调用方用：应用销毁资产管理器之前
+         * 必须先确保没有在途命令还在引用网格 / 纹理缓冲。本类自己的 Destroy
+         * 也会等，但那已经排在资产管理器之后，等不到了
          *
          * @note 返回不代表任何排队中的工作已被取消，只是都完成了
          */
-        void WaitIdle();
+        void WaitForGpuIdle();
+
+        /**
+         * 表面没了：拆掉同步对象、交换链与表面本身
+         *
+         * 设备、命令池保留 —— 它们的寿命不挂在窗口上。
+         * 渲染管线持有的深度图由 DoodleRenderManager 在本函数之后拆。
+         *
+         * @note 期间不得调用 BeginFrame
+         */
+        void OnSurfaceLost();
+
+        /**
+         * 表面回来了：建出新表面并重查呈现队列族的支持情况
+         *
+         * 只恢复表面与队列选择；交换链与同步对象由随后的 RecreateSwapChain
+         * 重建，渲染管线的深度图与 pass 由 DoodleRenderManager 接着恢复。
+         *
+         * @param window 提供新的表面
+         * @note 与 OnSurfaceLost 必须成对。可反复调用（每次切前后台一轮）
+         */
+        void OnSurfaceRecreated(DoodleWindow& window);
+
+        /**
+         * 通知窗口尺寸发生了变化，下一帧需要重建交换链
+         *
+         * 只记标志，不在回调里当场重建：连续多次 resize 会合并到帧边界处理一次。
+         */
+        void OnWindowResized()
+        {
+            m_windowResized = true;
+        }
 
         /**
          * 获取Vulkan设备
@@ -153,97 +167,12 @@ namespace Doodle
             return m_swapChain;
         }
 
-        /**
-         * 获取同步对象层
-         */
-        [[nodiscard]] DoodleSyncObjects& GetSyncObjects()
-        {
-            return m_syncObjects;
-        }
-
-        /**
-         * 获取同步对象层
-         */
-        [[nodiscard]] const DoodleSyncObjects& GetSyncObjects() const
-        {
-            return m_syncObjects;
-        }
-
-    private:
-        /**
-         * lit 的着色器侧描述：两份字节码 + set 1 布局 + 默认渲染状态
-         *
-         * 着色器资产落地前，门面自己读两份 spv 拼描述；之后由材质带着自己的
-         * 着色器向前向 pass 要管线，这个函数随之删除
-         */
-        [[nodiscard]] DoodlePipelineShaderDescription CreateLitShaderDescription() const;
-
-        /**
-         * 重建交换链，以及所有随它一起失效的层
-         *
-         * 顺序：交换链 → 深度图 → 同步对象，与 Initialize 同序、与 Destroy 反序。
-         * 前向 pass 的管线不随尺寸重建 —— 管线按值收下了颜色与深度格式，不持有
-         * 这两个对象的任何句柄。只有格式真的变了才需要重建，那是极罕见的情况
-         * （把窗口拖到另一块不同色域的显示器上），代价却是把管线整个重编译一遍。
-         * 判断由 DoodleForwardPass::RebuildIfPassConfigChanged 自己做
-         *
-         * 末尾统一清 m_windowResized：重建完成即代表积压的 resize 通知已兑现。
-         * 不放在各调用点，是因为 acquire 提前返回那条路也要求这一刻就兑现它 ——
-         * 漏一处就会为同一个尺寸白重建一遍；而会泵事件的 WaitUntilDrawable
-         * 正在本函数开头，清零只能排在它后面
-         *
-         * 等待期间有了关闭请求就什么都不做、直接返回：窗口此刻可能仍是 0×0，
-         * 而帧循环马上就要退出了。旧的交换链留给 Destroy
-         */
-        void RecreateSwapChain();
-
-        /**
-         * 为每个在途帧建一块 CPU 可写的 uniform 缓冲
-         *
-         * UBO 与顶点/索引缓冲相反：它每帧都要更新，所以走 HostVisible 类型，
-         * 不走设备本地 + 中转。第一次 Write 时建立持久映射，之后每帧直接 memcpy
-         */
-        void CreateUniformBuffers();
-
-        /**
-         * 解除映射并销毁所有 uniform 缓冲
-         *
-         * 调用前必须先销毁描述符池：集合指向这些缓冲，池先走，集合才失效
-         */
-        void DestroyUniformBuffers();
-
-        /**
-         * 把本帧的 view / proj 与主光源写进第 frameIndex 块 uniform 缓冲
-         *
-         * 调用位置在等完本槽位栅栏之后、录制命令之前：此时 GPU 不会再读写
-         * 这块缓冲的上一轮内容，而本帧命令还没开始引用它
-         *
-         * view / proj 都来自相机组件：view 由它从宿主 Transform 现算，proj 由它
-         * 按显示方向的宽高比生成（其中已含 Vulkan 的 Y 翻转）。本函数在
-         * proj 之上再做最后一步交换链预旋转 —— 顺序不能换，预旋转必须排在
-         * Y 翻转之后、作为投影的最后一步左乘，否则 Android 上会静默变形
-         *
-         * 光源数据同样整帧共享：方向取 DoodleLight 宿主 Transform 的前向，
-         * 颜色乘上强度后写进 lightColor。pLight 为空时方向填空值、颜色写 0，
-         * 着色器只剩环境项 —— 这条兜底写在 UBO 里而不是着色器分支里，
-         * 着色器就一份逻辑
-         *
-         * 这里不写 localToWorld：它每个绘制项都不一样，改由 Record 逐个 draw item
-         * 推进 push constant。本块缓冲只装整帧共享的相机与光源数据
-         *
-         * @param frameIndex 在途帧索引，与描述符集、命令缓冲使用同一个索引
-         * @param context 本帧上下文，只取其中的相机与光源；只在本次调用期间使用
-         */
-        void UpdateUniformBuffer(const uint32_t frameIndex, const DoodleDrawContext& context);
-
     private:
         /**
          * 窗口，在 Initialize 时绑定
          *
-         * 只借不放：窗口的创建与销毁都归驱动层（DoodleApplication 及其平台子类，
-         * macOS 见 DoodleMacApplication，Android 见 DoodleAndroidApplication）。
-         * 本层需要它，是因为重建交换链时要靠它
-         * 取窗口的最新像素尺寸，Suspend 之后还要靠它把表面重新建起来
+         * 只借不放：窗口的创建与销毁都归驱动层。本层需要它，是因为重建交换链
+         * 时要靠它取最新像素尺寸，OnSurfaceLost 之后还要靠它把表面重新建起来
          */
         DoodleWindow* m_pWindow = nullptr;
 
@@ -258,56 +187,11 @@ namespace Doodle
         DoodleSwapChain m_swapChain;
 
         /**
-         * 深度图组：每帧一张，随交换链重建
+         * 命令管理层：命令池、命令缓冲与传输池
          *
-         * 排在交换链之后（要它的尺寸）、前向 pass 之前（pass 要它的格式）。
-         * 它与交换链同锚不同寿：尺寸跟着窗口变，但它不是呈现目标，
-         * 不与呈现引擎打交道
-         */
-        DoodleDepthImages m_depthImages;
-
-        /**
-         * 命令管理层：录制时引用设备 / 交换链 / 深度图；管线按帧由 DrawFrame 传进去
+         * BeginFrame / EndFrame 驱动它的绘制命令缓冲；传输池供资源上传使用
          */
         DoodleCommandManager m_commandManager;
-
-        /**
-         * 每帧一块 uniform 缓冲，HostVisible 类型
-         *
-         * 它们不随交换链重建：窗口缩放只改变投影矩阵的内容，不改变缓冲对象。
-         * 数量必须与 MAX_FRAMES_IN_FLIGHT 一致，否则当前帧的 UBO 会和
-         * 上一轮仍在 GPU 上读取的数据重叠
-         */
-        std::array<DoodleGraphicsBuffer, MAX_FRAMES_IN_FLIGHT> m_uniformBuffers;
-
-        /**
-         * 描述符管理器：每帧 UBO 的 set 0 与材质纹理的 set 1
-         *
-         * 排在 UBO 之后（要缓冲句柄）、所有管线之前（管线要它的两个 set 布局）；
-         * 销毁时排在所有管线之后、UBO 之前
-         */
-        DoodleDescriptorManager m_descriptorManager;
-
-        /**
-         * 驱动编译缓存：全进程一个，所有 pass 共用
-         *
-         * 排在描述符管理器之后（它不依赖布局）、前向 pass 之前（建管线时要用它）
-         */
-        DoodlePipelineCompileCache m_pipelineCompileCache;
-
-        /**
-         * 前向主 pass：拥有这一 pass 下的所有管线
-         *
-         * 排在描述符管理器与驱动编译缓存之后（要 set 0 布局与编译缓存），
-         * 所有管线使用者之前。以后阴影、延迟各加一个 pass；数量多了再交给
-         * 渲染图统一持有
-         */
-        DoodleForwardPass m_forwardPass;
-
-        /**
-         * 当前 lit 管线，指向前向 pass 里的管线；格式变化原地重建时指针不变
-         */
-        const DoodleGraphicsPipeline* m_pForwardPipeline = nullptr;
 
         /**
          * 同步对象层：帧信号量与栅栏
@@ -318,9 +202,9 @@ namespace Doodle
         DoodleSyncObjects m_syncObjects;
 
         /**
-         * 当前在途帧索引，取值 0 .. MAX_FRAMES_IN_FLIGHT-1，DrawFrame 开头取用后立即推进一格
+         * 当前在途帧索引，取值 0 .. MAX_FRAMES_IN_FLIGHT-1，BeginFrame 取用后立即推进一格
          *
-         * 命令缓冲、uniform 缓冲、描述符集、imageAvailable 信号量、帧栅栏都按它轮转取用。
+         * 命令缓冲、imageAvailable 信号量、帧栅栏都按它轮转取用。
          * renderFinished 不按它取 —— 那是按交换链图像索引的，两个维度互不相干
          */
         uint32_t m_currentFrame = 0;
@@ -328,8 +212,9 @@ namespace Doodle
         /**
          * 窗口尺寸变化标志
          *
-         * 由 NotifyWindowResized 置位，DrawFrame 在呈现之后消费并清零。
-         * 不在回调里当场重建，是为了把连续多次 resize 合并到帧边界只处理一次
+         * 由 OnWindowResized 置位，EndFrame 在呈现之后按它请求重建，
+         * RecreateSwapChain 末尾统一清零。不在回调里当场重建，是为了把连续多次
+         * resize 合并到帧边界只处理一次
          */
         bool m_windowResized = false;
     };

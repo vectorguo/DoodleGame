@@ -1,15 +1,14 @@
 //
-// Created by 郭智 on 2026/9/5.
+//  DoodleVulkanManager.cpp
+//  Doodle
+//
+//  Created by 郭智 on 2026/11/9.
 //
 
 #include "DoodleVulkanManager.h"
 
 #include "../Platform/DoodleWindow.h"
-#include "DoodleShaderModule.h"
-#include "DoodleVulkanUtils.h"
-#include "Rendering/DoodleCamera.h"
-#include "Rendering/DoodleLight.h"
-#include "Rendering/DoodleShaderData.h"
+#include "DoodleVulkanConfig.h"
 
 #include <cstdint>
 #include <stdexcept>
@@ -24,40 +23,10 @@ namespace Doodle
         m_device.Initialize(window);
         m_swapChain.Initialize(m_device, window);
 
-        //深度图按交换链尺寸建。前向 pass 只吃这两个附件的格式，不吃对象本身，
-        //所以它排在后面，只把 pass 配置传进去
-        m_depthImages.Initialize(m_device, m_swapChain.GetImageExtent());
-
-        //命令层先建：描述符管理器的默认白图上传要借它的传输池。
-        //它只记设备 / 交换链 / 深度图；管线按帧由 DrawFrame 传进 Record
-        m_commandManager.Initialize(m_device, m_swapChain, m_depthImages);
-
-        //UBO 每帧更新，走 HostVisible 类型（CPU 直接写），不走设备本地 + 中转。
-        //映射由第一次 Write 建立，这里只负责分配。
-        //描述符管理器要写 UBO 缓冲句柄，并建出两个 set 布局
-        CreateUniformBuffers();
-        m_descriptorManager.Initialize(m_device, m_uniformBuffers);
-
-        //驱动编译缓存先建：每次建管线都把它传给 vkCreateGraphicsPipelines
-        m_pipelineCompileCache.Initialize(m_device, {});
-
-        //前向 pass：绑定 set 0 布局、附件配置与驱动编译缓存，此时还没有管线
-        m_forwardPass.Initialize(m_device,
-                                 m_pipelineCompileCache.GetPipelineCache(),
-                                 m_descriptorManager.GetFrameDescriptorSetLayout(),
-                                 m_swapChain,
-                                 m_depthImages);
-
-        //现在只有 lit 一个着色器：先向前向 pass 要一条，之后每帧直接用它。
-        //引用由前向 pass 持有，格式变化原地重建时指针不变
-        m_pForwardPipeline = &m_forwardPass.GetPipeline(CreateLitShaderDescription());
+        //命令层只建命令池与缓冲；它不认识交换链、深度图或管线
+        m_commandManager.Initialize(m_device);
 
         m_syncObjects.Initialize(m_device, m_swapChain);
-    }
-
-    void DoodleVulkanManager::WaitIdle()
-    {
-        vkDeviceWaitIdle(m_device.GetLogicalDevice());
     }
 
     void DoodleVulkanManager::Destroy()
@@ -65,76 +34,32 @@ namespace Doodle
         //销毁前必须确认 GPU 已经空闲。帧循环里所有提交都是异步的，
         //跳出主循环那一刻可能还有绘制或呈现在途，此时销毁它们引用的资源是未定义行为。
         //
-        //放在这里而不是主循环之后：本函数是唯一的销毁入口，
-        //把不变量守在不变量真正起作用的地方，将来多一个调用方也不会漏掉
-        WaitIdle();
+        //渲染管线持有的深度图 / 描述符 / 管线由 DoodleRenderManager 在本函数之前
+        //拆掉；本函数之后只剩设备级资源
+        WaitForGpuIdle();
 
-        //按「使用者先、被使用者后」销毁。
-        //
-        //命令管理层先走，因为它录下的绘制命令可能引用描述符集；接着前向 pass 拆掉 ——
-        //它的管线布局引用描述符管理器的两个 set 布局，必须排在描述符管理器之前；
-        //描述符管理器释放两组池与默认白图后，UBO 才能安全销毁
+        //按「使用者先、被使用者后」销毁：同步对象 → 命令层 → 交换链 → 设备
         m_syncObjects.Destroy();
         m_commandManager.Destroy();
-
-        //前向 pass 先拆（它拥有所有管线），再拆驱动编译缓存；管线布局引用
-        //描述符管理器的两个 set 布局，所以两者都排在描述符管理器之前
-        m_forwardPass.Destroy();
-        m_pipelineCompileCache.Destroy();
-        m_pForwardPipeline = nullptr;
-        m_descriptorManager.Destroy();
-
-        DestroyUniformBuffers();
-
-        m_depthImages.Destroy();
         m_swapChain.Destroy();
         m_device.Destroy();
     }
 
-    void DoodleVulkanManager::Suspend()
+    EFrameStatus DoodleVulkanManager::BeginFrame(DoodleFrameContext& context)
     {
-        //在途的帧可能还在引用即将拆掉的交换链图像，必须先停稳
-        vkDeviceWaitIdle(m_device.GetLogicalDevice());
+        //每帧复用同一个状态对象，先把后端字段重置，避免上一次的残值被误读。
+        //输入字段（相机 / 光源 / 绘制项）归 DoodleRenderManager 与调用方，本层只填状态字段
+        context.status = EFrameStatus::Skipped;
+        context.frameIndex = 0;
+        context.imageIndex = 0;
+        context.commandBuffer = VK_NULL_HANDLE;
 
-        //逆着创建序拆：同步对象 → 交换链。
-        //
-        //同步对象其实不引用任何一层（它的 Destroy 只碰设备），排在最先是为了让全场
-        //只有一条规矩：建的时候什么序，拆的时候就倒过来。读的人不必逐层去推谁依赖谁
-        m_syncObjects.Destroy();
-        m_depthImages.Destroy();
-        m_swapChain.Destroy();
-
-        //表面本身最后拆。它归设备层管，但失效的时机由窗口决定，
-        //所以由本层在收到通知时转达
-        m_device.DestroySurface();
-    }
-
-    void DoodleVulkanManager::Resume(DoodleWindow& window)
-    {
-        m_pWindow = &window;
-
-        //先把表面建起来 —— 这是恢复与「交换链过时」唯一不同的地方。
-        //顺序与 Initialize 的前半段一致，只是实例与设备已经在了
-        m_device.CreateSurface(window);
-
-        //表面换了，present 队列族的支持情况要重查一遍。
-        //同一台设备上不会变，但万变了后面所有提交都是错的
-        m_device.VerifyQueueFamilySelection();
-
-        //交换链及其下游的重建，与「交换链过时」是同一件事，交给同一个例程办。
-        //Suspend 刚拆过，那几层此刻是空的，里面那次拆解与设备等待都落在空处 ——
-        //所以这里不必为「已经拆干净了」另开一条路
-        RecreateSwapChain();
-    }
-
-    void DoodleVulkanManager::DrawFrame(const DoodleDrawContext& context)
-    {
-        //表面已被 Suspend 拆掉，没有可呈现的目标。
+        //表面已被 OnSurfaceLost 拆掉，没有可呈现的目标。
         //驱动层本就不该在这时调进来，但这个检查比崩溃便宜得多 ——
         //Android 上漏掉一次状态判断，代价是一段看不出因果的 tombstone
         if (m_swapChain.GetSwapChain() == VK_NULL_HANDLE)
         {
-            return;
+            return context.status;
         }
 
         const auto logicalDevice = m_device.GetLogicalDevice();
@@ -150,7 +75,7 @@ namespace Doodle
         m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 
         //句柄先取到局部变量：getter 都是按值返回，直接对返回值取地址取到的是临时量的地址。
-        //renderFinished 不在这里取——它按图像索引区分，要等②拿到 imageIndex 之后才能取
+        //renderFinished 不在这里取——它按图像索引区分，要等拿到 imageIndex 之后才能取
         const auto inFlightFence = m_syncObjects.GetInFlightFence(frameIndex);
         const auto imageAvailableSemaphore = m_syncObjects.GetImageAvailableSemaphore(frameIndex);
 
@@ -175,7 +100,7 @@ namespace Doodle
             VK_NULL_HANDLE,
             &imageIndex);
 
-        //交换链已经和窗口对不上了，这次没拿到可用图像。重建之后直接放弃本帧重来 ——
+        //交换链已经和窗口对不上了，这次没拿到可用图像。交给调用方重建，本帧放弃 ——
         //必须直接返回：imageIndex 是旧交换链的索引，重建后那个位置已经不是同一张图了
         //
         //注意 imageAvailableSemaphore 此刻的状态：acquire 失败时它会留在「已发出信号」状态，
@@ -185,8 +110,8 @@ namespace Doodle
         //重建时把同步对象整层换新、连同这个信号量一起销毁重来，正是为了绕开这一点
         if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
         {
-            RecreateSwapChain();
-            return;
+            context.status = EFrameStatus::RecreateSwapChain;
+            return context.status;
         }
 
         //VK_SUBOPTIMAL_KHR 不算错误：交换链略有偏差，但图像可用。
@@ -201,36 +126,30 @@ namespace Doodle
         //   承诺落空，栅栏停在未发出信号状态，下一轮等它就永远等不到
         vkResetFences(logicalDevice, 1, &inFlightFence);
 
-        //③' 写本帧的 UBO（相机 + 主光源）。位置不能更早也不能更晚：
-        //    栅栏已等过，说明 GPU 不再读本槽位上一轮的数据；
-        //    命令还没开始录，说明本帧还没有引用它。
-        //    用同一块 UBO 给两个在途帧共用，会在这两者之间形成读写竞争
-        UpdateUniformBuffer(frameIndex, context);
+        //命令缓冲的 begin 归命令层；录什么由渲染管线决定
+        const auto commandBuffer = m_commandManager.BeginFrame(frameIndex);
 
-        //③'' 描述符管理器为本帧每条绘制项解析材质纹理集合。第一次用到的纹理
-        //在这里分配集合；没有配置纹理的材质用默认白图。结果与 drawItems 等长，
-        //录制侧按同一下标取用 —— 顺序不能错开
-        const VkDescriptorSet frameDescriptorSet = m_descriptorManager.GetFrameDescriptorSet(frameIndex);
-        const auto& textureDescriptorSets = m_descriptorManager.ResolveTextureDescriptorSets(context.drawItems);
+        //同步句柄不进帧上下文：它们只在本层用，EndFrame 会按 frameIndex / imageIndex
+        //从同步对象层现取。这里只把渲染侧需要的三样交出去
+        context.status = EFrameStatus::Ready;
+        context.frameIndex = frameIndex;
+        context.imageIndex = imageIndex;
+        context.commandBuffer = commandBuffer;
+        return context.status;
+    }
 
-        //④ 录制本帧命令。命令管理层不缓存任何上游句柄，录制时现取，
-        //   所以交换链重建之后重录拿到的自然是新句柄。
-        //   它自己那条命令缓冲由它按 frameIndex 取 —— 本层交出帧索引即可，
-        //   不必先取好句柄再传进去，也就没有「传错槽位」这种可能。
-        //   两个描述符集同理：set 0（帧 UBO）与 set 1（材质纹理）都由描述符管理器
-        //   持有，Record 只在本帧使用它们
-        //
-        //   返回值就是刚录好的那一条，⑤ 提交要用。提交归门面，
-        //   但「本帧录在哪一条」归命令管理层 —— 让它顺手交回来，两边就不可能指向不同的槽位
-        //
-        //   绘制项由调用方（应用层）从场景里收集好交进来，本层不关心它们
-        //   从哪来。空列表也会录一条只做布局转换、不画东西的命令缓冲
-        const auto commandBuffer = m_commandManager.Record(frameIndex,
-                                                          imageIndex,
-                                                          context.drawItems,
-                                                          *m_pForwardPipeline,
-                                                          frameDescriptorSet,
-                                                          textureDescriptorSets);
+    EFrameStatus DoodleVulkanManager::EndFrame(const DoodleFrameContext& context)
+    {
+        //命令缓冲的 end 归命令层；之后本函数只负责提交与呈现，不再看它录了什么
+        m_commandManager.EndFrame();
+
+        //同步句柄按 context 里的索引现取 —— 它们只在后端内部使用，不经过调用方。
+        //renderFinished 按图像索引取：能 acquire 到第 imageIndex 张图，说明呈现引擎
+        //已经用完它，此刻它必定是 unsignaled，signal 它才合法；全场共用一个会出现
+        //「上一帧的呈现还没消费掉就又被 signal」的竞争
+        const auto inFlightFence = m_syncObjects.GetInFlightFence(context.frameIndex);
+        const auto imageAvailableSemaphore = m_syncObjects.GetImageAvailableSemaphore(context.frameIndex);
+        const auto renderFinishedSemaphore = m_syncObjects.GetRenderFinishedSemaphore(context.imageIndex);
 
         //⑤ 提交到图形队列
         //
@@ -241,14 +160,15 @@ namespace Doodle
         const VkCommandBufferSubmitInfo commandBufferInfo
         {
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-            .commandBuffer = commandBuffer
+            .commandBuffer = context.commandBuffer
         };
 
         //等到图像真的可用再开始写颜色。这里选 COLOR_ATTACHMENT_OUTPUT 而不是 TOP_OF_PIPE，
         //是让顶点着色器之类不碰这张图的工作可以先跑起来。
-        //这个取值必须与 RecordImageTransitionToColorAttachment 里那条屏障的 srcStageMask 一致，
-        //两边对不上就会出现依赖链断裂。原来对齐的对方是渲染通道里的子通道依赖，
-        //动态渲染之后换成了命令缓冲里的屏障 —— 规矩没变，位置变了
+        //这个取值必须与 DoodleForwardPass::RecordImageTransitionToColorAttachment 里
+        //那条屏障的 srcStageMask 一致，两边对不上就会出现依赖链断裂。原来对齐的对方
+        //是渲染通道里的子通道依赖，动态渲染之后换成了命令缓冲里的屏障 —— 规矩没变，
+        //位置从命令层挪到了 pass，取值仍要成对
         const VkSemaphoreSubmitInfo waitSemaphoreInfo
         {
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
@@ -256,12 +176,6 @@ namespace Doodle
             .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT
         };
 
-        //绘制完成时发出信号，供⑥的呈现等待。
-        //这里按图像索引取，而不是用某个固定信号量：能 acquire 到第 imageIndex 张图，
-        //说明呈现引擎已经用完它，也就必然完成了对「属于它的那个信号量」的等待，
-        //此刻它必定是 unsignaled，signal 它才合法。
-        //全场共用一个就会出现「上一帧的呈现还没消费掉就又被 signal」的竞争
-        const auto renderFinishedSemaphore = m_syncObjects.GetRenderFinishedSemaphore(imageIndex);
         //signal 这一格的 stageMask 说的是「等到哪些阶段结束才发信号」，不是「谁在等」。
         //取 ALL_COMMANDS：出口那条布局转换也被排在「本批工作结束之前」，信号量必须等它
         const VkSemaphoreSubmitInfo signalSemaphoreInfo
@@ -300,7 +214,7 @@ namespace Doodle
             .pWaitSemaphores = &renderFinishedSemaphore,
             .swapchainCount = 1,
             .pSwapchains = swapChains,
-            .pImageIndices = &imageIndex
+            .pImageIndices = &context.imageIndex
         };
 
         const auto presentResult = vkQueuePresentKHR(m_device.GetPresentQueue(), &presentInfo);
@@ -308,45 +222,33 @@ namespace Doodle
         //重建判断必须放在呈现之后。提前退出的话，acquire 唤醒的那个
         //imageAvailable 信号量没人消费，它对应的图像也永远不会归还交换链 ——
         //下一轮再去 signal 一个已处于信号态的二值信号量是未定义行为。
-        //走到这里时两个信号量都已经被正常等待过，状态是干净的
+        //走到这里时两个信号量都已经被正常等待过，状态是干净的。
+        //m_windowResized 由 RecreateSwapChain 末尾统一清零
         if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR || m_windowResized)
         {
-            //m_windowResized 由 RecreateSwapChain 末尾统一清零 —— 重建完成了，
-            //积压的 resize 通知就算兑现
-            RecreateSwapChain();
+            return EFrameStatus::RecreateSwapChain;
         }
-        else if (presentResult != VK_SUCCESS)
+        if (presentResult != VK_SUCCESS)
         {
             throw std::runtime_error("failed to present swap chain image!");
         }
+
+        return EFrameStatus::Ready;
     }
 
-    DoodlePipelineShaderDescription DoodleVulkanManager::CreateLitShaderDescription() const
-    {
-        return
-        {
-            .vertexBytecode = DoodleShaderModule::ReadFile("Shaders/lit.vert.spv"),
-            .fragmentBytecode = DoodleShaderModule::ReadFile("Shaders/lit.frag.spv"),
-            .materialSetLayout = m_descriptorManager.GetTextureDescriptorSetLayout(),
-            .renderState = {},
-            .vertexFormat = EVertexFormat::PosNormalUv,
-            .instanceFormat = EInstanceFormat::None
-        };
-    }
-
-    void DoodleVulkanManager::RecreateSwapChain()
+    bool DoodleVulkanManager::RecreateSwapChain()
     {
         //窗口像素尺寸为 0（桌面上的最小化）时建不出交换链，在这里阻塞到能画为止。
         //桌面实现里是 glfwWaitEvents / WaitMessage 循环；Android 没有这个状态，实现是空的
         m_pWindow->WaitUntilDrawable();
 
         //等待也会被关闭请求打断（见各平台 WaitUntilDrawable）：最小化着从任务栏把窗口关掉，
-        //回到这里时尺寸仍是 0×0。帧循环下一轮就会退出，这次不重建 —— 拿 0×0 去建交换链和
-        //深度图是非法调用（Windows 上实测，校验层报 VUID-VkSwapchainCreateInfoKHR-imageExtent-01689）。
+        //回到这里时尺寸仍是 0×0。帧循环下一轮就会退出，这次不重建 —— 拿 0×0 去建交换链
+        //是非法调用（Windows 上实测，校验层报 VUID-VkSwapchainCreateInfoKHR-imageExtent-01689）。
         //判断放在拆旧的之前：旧的那套原样留着，由 Destroy 照常拆掉
         if (m_pWindow->IsCloseRequested())
         {
-            return;
+            return false;
         }
 
         //帧循环里的提交都是异步的，此刻可能还有绘制或呈现在途，
@@ -355,26 +257,13 @@ namespace Doodle
 
         //按依赖倒序销毁
         m_syncObjects.Destroy();
-        m_depthImages.Destroy();
         m_swapChain.Destroy();
 
-        //按依赖正序创建，顺序与 Initialize 里这几层的一致。
+        //按依赖正序创建。
         //
-        //管线不随每次重建而重建：它把附件格式编译进去了，但尺寸不影响它
-        //（视口与剪裁是动态状态）。绝大多数重建是缩放窗口，格式不变；
-        //重建完交换链与深度图后由前向 pass 拿新的附件配置与自己记的那份一比，
-        //变了才原地重建所有管线 —— 换格式（比如拖到另一块显示器、
-        //Android 切后台）必须有这条路，而不是「罕见就不写」。原地重建只换
-        //VkPipeline，对象地址与管线布局不变，持有它的引用不受影响
-        //
-        //命令缓冲也不重建：它不缓存任何上游句柄，每帧录制时现取，
+        //命令缓冲不重建：它不缓存任何上游句柄，每帧录制时现取，
         //重建后重录拿到的自然是新的
         m_swapChain.Initialize(m_device, *m_pWindow);
-        //深度图的尺寸跟着交换链走，所以它必须在这里重建
-        m_depthImages.Initialize(m_device, m_swapChain.GetImageExtent());
-
-        m_forwardPass.RebuildIfPassConfigChanged(m_swapChain, m_depthImages);
-
         m_syncObjects.Initialize(m_device, m_swapChain);
 
         //到这里交换链已经照当前窗口尺寸建好了，积压的 resize 通知就算兑现。
@@ -386,86 +275,44 @@ namespace Doodle
 
         //m_currentFrame 不用复位：同步对象整层换新，三个栅栏都是「已发出信号」状态，
         //重建后第一帧的①会立刻通过，和程序刚启动时是同一个情形
+        return true;
     }
 
-    void DoodleVulkanManager::CreateUniformBuffers()
+    void DoodleVulkanManager::WaitForGpuIdle()
     {
-        constexpr VkDeviceSize bufferSize = sizeof(DoodleUniformBufferObject);
-
-        //每帧一块，不允许共用：在途帧的 GPU 可能还在读上一轮，
-        //host 这边却已经开始写下一轮的矩阵
-        for (auto& buffer : m_uniformBuffers)
-        {
-            //只声明 UNIFORM_BUFFER 用途，不需要 TRANSFER_DST：
-            //数据由 CPU 直接写，不经过拷贝命令。
-            //这里只分配、不配置映射：第一次 Write 时才建立持久映射
-            buffer.Initialize(
-                m_device,
-                bufferSize,
-                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                DoodleGraphicsBuffer::EMemoryType::HostVisible);
-        }
+        vkDeviceWaitIdle(m_device.GetLogicalDevice());
     }
 
-    void DoodleVulkanManager::DestroyUniformBuffers()
+    void DoodleVulkanManager::OnSurfaceLost()
     {
-        //Destroy 内部会先解除持久映射，再销毁 buffer/memory
-        for (auto& buffer : m_uniformBuffers)
-        {
-            buffer.Destroy();
-        }
+        //在途的帧可能还在引用即将拆掉的交换链图像，必须先停稳
+        vkDeviceWaitIdle(m_device.GetLogicalDevice());
+
+        //逆着创建序拆：同步对象 → 交换链。
+        //
+        //同步对象其实不引用任何一层（它的 Destroy 只碰设备），排在最先是为了让全场
+        //只有一条规矩：建的时候什么序，拆的时候就倒过来。读的人不必逐层去推谁依赖谁
+        m_syncObjects.Destroy();
+        m_swapChain.Destroy();
+
+        //表面本身最后拆。它归设备层管，但失效的时机由窗口决定，
+        //所以由本层在收到通知时转达
+        m_device.DestroySurface();
     }
 
-    void DoodleVulkanManager::UpdateUniformBuffer(const uint32_t frameIndex,
-                                                  const DoodleDrawContext& context)
+    void DoodleVulkanManager::OnSurfaceRecreated(DoodleWindow& window)
     {
-        DoodleUniformBufferObject ubo;
+        m_pWindow = &window;
 
-        //view 由相机从宿主 Transform 现算：相机不存位置 / 朝向，
-        //移动它所在的对象，画面自然跟着变
-        ubo.view = context.camera.GetViewMatrix();
+        //先把表面建起来 —— 这是恢复与「交换链过时」唯一不同的地方。
+        //顺序与 Initialize 的前半段一致，只是实例与设备已经在了
+        m_device.CreateSurface(window);
 
-        //每帧重新读交换链尺寸：窗口缩放后宽高比自动正确，
-        //描述符集与 UBO 对象本身都不需要重建
-        const auto extent = m_swapChain.GetImageExtent();
-        const auto preTransform = m_swapChain.GetPreTransform();
+        //表面换了，present 队列族的支持情况要重查一遍。
+        //同一台设备上不会变，但万变了后面所有提交都是错的
+        m_device.VerifyQueueFamilySelection();
 
-        //宽高比要用**用户看到的那一组**。交换链做了预旋转时，图像宽高和显示方向是对调的，
-        //所以这里再对调回来 —— 透视必须按显示方向算，算完再转，才是同一份画面。
-        //
-        //Y 翻转已经在 GetProjectionMatrix 里做完；这里拿到的 proj 是「显示方向 +
-        //Vulkan 裁剪空间」的结果
-        ubo.proj = context.camera.GetProjectionMatrix(DoodleVulkanUtils::GetDisplayAspect(extent, preTransform));
-
-        //最后把整幅画面转到图像自己的朝向上。桌面拿到的是 IDENTITY，这一乘是单位阵。
-        //
-        //必须排在 Y 翻转之后、作为投影的最后一步左乘：Y 翻转负责换成 Vulkan 的 NDC，
-        //预旋转是在 Vulkan 的 NDC 里做的。顺序一换，Android 上会静默变形
-        //（Free75 修的就是这条）
-        ubo.proj = DoodleVulkanUtils::MakePreRotation(preTransform) * ubo.proj;
-
-        //主光源：方向取组件宿主 Transform 的前向，颜色乘上强度。
-        //方向已经是单位向量（DoodleLight::GetDirection 负责），这里不再归一化
-        //
-        //没有启用的光源时写零颜色：片元着色器只剩环境项，画面偏暗但仍是
-        //同一份着色逻辑。方向填一个固定值只是让 UBO 内容确定，不参与可见结果
-        if (context.pLight != nullptr)
-        {
-            ubo.lightDirection = glm::vec4(context.pLight->GetDirection(), 0.0f);
-            ubo.lightColor = glm::vec4(context.pLight->GetColor() * context.pLight->GetIntensity(), 0.0f);
-        }
-        else
-        {
-            ubo.lightDirection = glm::vec4(0.0f, 0.0f, -1.0f, 0.0f);
-            ubo.lightColor = glm::vec4(0.0f);
-        }
-
-        //HOST_COHERENT 保证不需要手动 flush；下一次 vkQueueSubmit 之后再读取时，
-        //这份写入对 GPU 可见。写入位置已在调用处保证：栅栏之后、录制之前。
-        //第一次调用会在缓冲内部建立持久映射，之后每帧只是一次 memcpy
-        //
-        //这里只有帧级数据（相机 + 光源）。每个绘制项的 localToWorld 走 push constant，
-        //由 DoodleCommandManager::Record 在逐个 draw item 时推进命令缓冲
-        m_uniformBuffers[frameIndex].Write(&ubo, sizeof(ubo));
+        //交换链与同步对象不在这里重建：DoodleRenderManager 会在本函数之后
+        //调 RecreateSwapChain，再恢复渲染管线的深度图与 pass
     }
 }

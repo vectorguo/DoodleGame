@@ -16,7 +16,7 @@ namespace Doodle
      *
      * 纯静态类，不可实例化。这里刻意是「工具」而不是「一层」——
      * 无状态、不持有任何句柄、没有 Initialize / Destroy，
-     * 也不挂到 DoodleVulkanManager 上。
+     * 也不挂到 DoodleRenderManager 上。
      *
      * 理由：VkShaderModule 只是待编译字节码的薄包装，真正的编译发生在
      * vkCreateGraphicsPipelines。管线不持有模块，只持有编译结果，所以
@@ -25,7 +25,7 @@ namespace Doodle
      * 凭空多出销毁顺序、交换链重建时要不要重建之类的异常路径。
      *
      * 读文件与建模块是两件事、两个入口：建模块只收字节，不关心字节从哪来 ——
-     * DoodleGraphicsPipeline 拿着字节建管线，自己不做任何文件读写；
+     * DoodleVulkanPipelineObject 拿着字节建管线，自己不做任何文件读写；
      * 读文件（ReadFile）由要管线的一方调用。多条管线共用同一份字节码时
      * （同一着色器配不同渲染状态），各自建各自的临时模块，模块仍不是独立的一层。
      */

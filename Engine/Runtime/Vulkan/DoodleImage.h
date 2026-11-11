@@ -15,6 +15,46 @@ namespace Doodle
     class DoodleVulkanDevice;
 
     /**
+     * 建一张 GPU 图像的全部输入
+     *
+     * 尺寸、格式、用途、视图切面单独看都是整数或标志位，按位置传容易串位；
+     * 具名之后调用点自己说明每个值是什么。以后支持 mip / 数组图时往这里加字段，
+     * Initialize 的签名不动。
+     */
+    struct DoodleImageInitInfo
+    {
+        /**
+         * 已初始化的Vulkan设备
+         */
+        const DoodleVulkanDevice& device;
+
+        /**
+         * 图像宽
+         */
+        uint32_t width;
+
+        /**
+         * 图像高
+         */
+        uint32_t height;
+
+        /**
+         * 图像格式
+         */
+        VkFormat format;
+
+        /**
+         * 用途标志。决定驱动怎么摆放它，也决定谁能用它
+         */
+        VkImageUsageFlags usage;
+
+        /**
+         * 视图的切面 —— 深度图要 DEPTH（+STENCIL），颜色图要 COLOR
+         */
+        VkImageAspectFlags aspectFlags;
+    };
+
+    /**
      * 一张 GPU 图像：VkImage 对象 + 它占的内存 + 一个视图
      *
      * 与 DoodleGraphicsBuffer 同形：持有句柄、显式 Initialize / Destroy、由宿主持有。
@@ -39,22 +79,12 @@ namespace Doodle
         /**
          * 建图、分配内存、绑定、建视图
          *
-         * @param device 已初始化的Vulkan设备
-         * @param width 图像宽
-         * @param height 图像高
-         * @param format 图像格式
-         * @param usage 用途标志。决定驱动怎么摆放它，也决定谁能用它
-         * @param aspectFlags 视图的切面 —— 深度图要 DEPTH（+STENCIL），颜色图要 COLOR
+         * @param info 尺寸、格式、用途与视图切面；device 必须活得比本对象久
          *
          * @note 前置条件：尚未初始化。创建后处于 VK_IMAGE_LAYOUT_UNDEFINED，
          * 布局转换归使用者
          */
-        void Initialize(const DoodleVulkanDevice& device,
-                        const uint32_t width,
-                        const uint32_t height,
-                        const VkFormat format,
-                        const VkImageUsageFlags usage,
-                        const VkImageAspectFlags aspectFlags);
+        void Initialize(const DoodleImageInitInfo& info);
 
         /**
          * 销毁视图、图与内存

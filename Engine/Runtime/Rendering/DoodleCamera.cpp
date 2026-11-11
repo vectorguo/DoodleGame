@@ -182,7 +182,7 @@ namespace Doodle
         //
         // 这一步必须排在交换链预旋转之前：它负责「换成 Vulkan 的 NDC」，
         // 而预旋转是在 Vulkan 的 NDC 里做的。预旋转不在这里 —— 它属于渲染
-        // 门面（见 DoodleVulkanManager::UpdateUniformBuffer）
+        // 门面（见 DoodleRenderPipeline::UpdateFrameUbo）
         proj[1][1] *= -1.0f;
 
         return proj;

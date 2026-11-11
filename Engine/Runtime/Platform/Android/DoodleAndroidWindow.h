@@ -81,7 +81,7 @@ namespace Doodle
 
         void WaitUntilDrawable() override;
 
-        [[nodiscard]] DoodleInput::RawState GetRawInputState() const override;
+        [[nodiscard]] DoodleInputRawState GetRawInputState() const override;
 
         void SetCursorCaptured(const bool captured) override;
 
@@ -192,7 +192,7 @@ namespace Doodle
         /**
          * 本帧输入快照：Android 没有键鼠，触摸点在 PumpEvents 里填充
          */
-        DoodleInput::RawState m_input;
+        DoodleInputRawState m_input;
 
         /**
          * 当前按住的手指，跨帧保留；BuildTouchFrame 生成每帧快照

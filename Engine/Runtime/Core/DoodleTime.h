@@ -74,7 +74,7 @@ namespace Doodle
         /**
          * 从「游戏开始」累计的真实时间，秒
          *
-         * 不受 timeScale 影响；Suspend / Resume 之间的间隔同样计入
+         * 不受 timeScale 影响；切后台 / 回前台之间的间隔同样计入
          */
         [[nodiscard]] static float GetUnscaledTime();
 

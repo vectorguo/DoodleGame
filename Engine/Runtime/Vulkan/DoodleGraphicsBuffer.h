@@ -144,7 +144,7 @@ namespace Doodle
          * 销毁缓冲对象与它占的内存
          *
          * @note 前置条件：GPU 已空闲。缓冲可能还在被在途的命令引用着，
-         * 此刻销毁是未定义行为 —— 由 DoodleVulkanManager::Destroy 的 vkDeviceWaitIdle 保证
+         * 此刻销毁是未定义行为 —— 由 DoodleRenderManager::Destroy 的 vkDeviceWaitIdle 保证
          */
         void Destroy();
 

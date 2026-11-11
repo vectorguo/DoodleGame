@@ -1,11 +1,11 @@
 //
-//  DoodlePipelineCompileCache.cpp
+//  DoodleVulkanPipelineCompileCache.cpp
 //  Doodle
 //
 //  Created by 郭智 on 2026/11/6.
 //
 
-#include "DoodlePipelineCompileCache.h"
+#include "DoodleVulkanPipelineCompileCache.h"
 
 #include <stdexcept>
 
@@ -13,7 +13,7 @@
 
 namespace Doodle
 {
-    void DoodlePipelineCompileCache::Initialize(const DoodleVulkanDevice& device, const std::vector<std::byte>& initialData)
+    void DoodleVulkanPipelineCompileCache::Initialize(const DoodleVulkanDevice& device, const std::vector<std::byte>& initialData)
     {
         m_pDevice = &device;
 
@@ -36,7 +36,7 @@ namespace Doodle
         }
     }
 
-    void DoodlePipelineCompileCache::Destroy()
+    void DoodleVulkanPipelineCompileCache::Destroy()
     {
         if (m_pDevice == nullptr)
         {
