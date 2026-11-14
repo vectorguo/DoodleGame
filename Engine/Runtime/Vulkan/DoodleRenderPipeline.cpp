@@ -7,6 +7,7 @@
 
 #include "DoodleRenderPipeline.h"
 
+#include "DoodlePipelineWarmupQueue.h"
 #include "DoodleSwapChain.h"
 #include "DoodleVulkanDevice.h"
 #include "DoodleVulkanManager.h"
@@ -18,6 +19,8 @@
 
 namespace Doodle
 {
+    DoodleRenderPipeline* DoodleRenderPipeline::s_pInstance = nullptr;
+
     void DoodleRenderPipeline::Initialize(const DoodleVulkanManager& vulkanManager)
     {
         //只从后端取本次初始化需要的两样；以后要用新的后端服务，也从这个参数取，
@@ -52,13 +55,16 @@ namespace Doodle
                 .frameUboDescriptorSetLayout = m_descriptorManager.GetFrameUboDescriptorSetLayout()
             },
             .swapChain = swapChain,
-            .depthImages = m_depthImages,
-            .materialDescriptorSetLayout = m_descriptorManager.GetMaterialDescriptorSetLayout()
+            .depthImages = m_depthImages
         });
     }
 
     void DoodleRenderPipeline::Destroy()
     {
+        //待预热队列里是着色器的非拥有指针，资产可能已经先于本类销毁。
+        //这里只丢指针、不解引用；放在早退之前，从未初始化的幂等路径也走一次
+        m_pipelineWarmupQueue.Clear();
+
         if (m_pDevice == nullptr)
         {
             return;
@@ -98,6 +104,20 @@ namespace Doodle
         //现在只有前向 pass。以后按顺序把多个 pass 录进同一条命令缓冲；
         //pass 之间的附件转换由本类编排，第二个 pass 到来时再引入渲染图
         m_forwardPass.Render(frameContext, passContext);
+    }
+
+    void DoodleRenderPipeline::WarmupPipelines()
+    {
+        //稳态队列为空，本函数只是一次加锁与一次判空 —— 成本不随绘制项数量增长
+        const std::vector<const DoodleShader*> pendingShaders = m_pipelineWarmupQueue.Drain();
+        if (pendingShaders.empty())
+        {
+            return;
+        }
+
+        //现在只有前向 pass。以后按同样的顺序逐个分发 —— 本函数只负责排空与分发，
+        //每个 pass 自己决定要什么管线
+        m_forwardPass.WarmupShaders(pendingShaders);
     }
 
     void DoodleRenderPipeline::OnSurfaceLost()

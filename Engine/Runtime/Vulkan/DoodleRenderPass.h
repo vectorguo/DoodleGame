@@ -23,6 +23,7 @@ namespace Doodle
     class DoodleVulkanDevice;
     class DoodleSwapChain;
     class DoodleDepthImages;
+    class DoodleShader;
     struct DoodleFrameContext;
 
     /**
@@ -118,16 +119,17 @@ namespace Doodle
      * set 1 与 push constant 的数据，不是管线。
      *
      * **PipelineItem 稳定**：每个条目单独堆上分配（unique_ptr），GetPipeline 返回的
-     * 引用在 Destroy 之前一直有效 —— 材质会长期保存它。附件格式变化时 RebuildPipelines
-     * 原地重建，交出去的引用照样有效。
+     * 引用在 Destroy 之前一直有效 —— pass 自己的着色器 memo 会长期保存它。附件格式
+     * 变化时 RebuildPipelines 原地重建，交出去的引用照样有效。
      *
      * **常驻，不淘汰**：管线数量只取决于「着色器 × 渲染状态 × pass」，与世界多大
      * 无关，没有回收的必要。着色器资产同样常驻：大世界流式加载时卸载的是网格、
      * 贴图和材质，不是着色器。
      *
-     * **加锁**：查找与插入都在锁内。现在只有主线程调用，但大世界一定会做后台加载，
-     * 届时加载线程也会来要管线。这一步直接在锁内建管线（同一时刻只编一条）；
-     * 并行编译怎么做，等以后和任务系统一起定。驱动编译缓存本身是内部同步的，不拖后腿。
+     * **加锁**：查找与插入都在锁内。现在只有渲染线程调用（材质加载不再碰管线表，
+     * 见 DoodleMaterial 的类注释）；以后要做后台并行预编译，再和任务系统一起定。
+     * 这一步直接在锁内建管线（同一时刻只编一条）；驱动编译缓存本身是内部同步的，
+     * 不拖后腿。
      *
      * **生命周期**：由 DoodleRenderPipeline 持有，排在描述符管理器与驱动编译缓存之后建、
      * 之前拆 —— 原地重建时还要用到 set 0 布局与驱动编译缓存。Destroy 先拆管线，
@@ -186,6 +188,28 @@ namespace Doodle
          *       录制期间改写它引用的附件
          */
         virtual void Render(const DoodleFrameContext& frameContext, const DoodleRenderPassContext& passContext) = 0;
+
+        /**
+         * 预先建出这批着色器在这个 pass 里会用到的管线，不录任何命令
+         *
+         * 由 DoodleRenderPipeline 在取帧之前每帧调用，输入是待预热队列
+         * 排空的那批「刚初始化成功的着色器」。每帧从队列重算预期状态，不依赖
+         * 调用方记住「预热过了」；稳态队列为空，派生类的本函数一次都不会被调用。
+         * 只解析管线，不碰附件、描述符集与命令缓冲。
+         *
+         * 单位是着色器而不是绘制项：管线的身份只取决于「着色器 × 渲染状态 × pass」，
+         * 与绘制项数量无关。派生类各自决定怎么映射：前向 pass 按着色器解析；
+         * 以后的深度 / 阴影 pass 可能按网格与深度状态解析 —— 到那时输入要不要
+         * 加宽，由那个 pass 自己提出。
+         *
+         * @param shaders 刚初始化成功、管线还没建的着色器
+         *
+         * @throw 管线建不出来时向上抛（与 GetPipeline 同口径），由渲染管理器
+         *        在取帧之前抛给应用
+         *
+         * @note 可重复调用；已经建过的管线不会重建。前置条件：已初始化、未 Destroy
+         */
+        virtual void WarmupShaders(const std::vector<const DoodleShader*>& shaders) = 0;
 
         /**
          * 换一套 pass 配置，原地重建这个 pass 的每一条管线

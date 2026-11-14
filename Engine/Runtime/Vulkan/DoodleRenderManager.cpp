@@ -13,6 +13,8 @@
 
 namespace Doodle
 {
+    DoodleRenderManager* DoodleRenderManager::s_pInstance = nullptr;
+
     void DoodleRenderManager::Initialize(DoodleWindow& window)
     {
         //后端先建出设备、交换链与命令层
@@ -34,6 +36,15 @@ namespace Doodle
 
     void DoodleRenderManager::Render(const std::vector<DoodleDrawItem>& drawItems)
     {
+        // 先排空待预热队列：着色器资产在初始化成功时投递，这里按 pass 把它们的
+        // 管线建出来。输入不是绘制项 —— 管线身份只取决于「着色器 × 渲染状态 × pass」，
+        // 跟本帧画了多少东西无关；队列为空时本调用只是一次判空。
+        //
+        // 位置在取主相机之前、BeginFrame 之前：建管线不需要相机，也不需要交换链
+        // 图像。加载阶段即使还没有主相机，管线也应该在加载边界编完，而不是攒到
+        // 第一帧真正有画面时再一次性爆发；建失败也发生在还没有获取图像的时候。
+        m_renderPipeline.WarmupPipelines();
+
         // 主相机由 DoodleCamera 自己维护，这里只取结果。没有相机就没有
         // view / proj：跳过本帧，而不是拿一个假相机去画。绘制项已经由调用方
         // 收集好传进来，本层不决定要不要收集。启动场景已经在 LoadStartupScene

@@ -7,31 +7,32 @@
 
 #pragma once
 
-#include <cmath>
 #include <string_view>
 
-#include <glm/vec4.hpp>
-
 #include "Asset/DoodleAsset.h"
+#include "Math/DoodleColor.h"
 
 namespace Doodle
 {
     //只以指针出现，完整定义留给使用它的源文件
+    class DoodleShader;
     class DoodleTexture;
 
     /**
-     * 材质资产：基色 + 一张可选纹理
+     * 材质资产：基色 + 一张可选纹理 + 着色器
      *
      * 由 DoodleMaterialLoader 从 Materials/ 下的 JSON 文件加载，资产管理器按路径缓存；
      * 不同对象引用同一个材质资产时共享同一份配置。renderer 不复制材质，
-     * 只按槽保存非拥有指针。纹理也是非拥有指针，寿命由资产管理器保证。
+     * 只按槽保存非拥有指针。纹理与着色器都是非拥有指针，寿命由资产管理器保证。
      *
-     * 材质本身不持有 GPU 资源：描述符集由渲染门面按纹理创建，材质只提供参数。
-     * 加载完成后按只读使用；默认材质（没有配置材质的槽）由 renderer 自己持有一个实例。
+     * 材质本身不持有 GPU 资源：描述符集由描述符管理器按纹理创建，管线由各个渲染
+     * pass 的管线表持有。材质不记录管线 —— 管线是「着色器 × 渲染状态 × pass」的
+     * 产物，录制时由当前 pass 按材质着色器现取；一个材质有几条管线由 pass 的数量
+     * 决定，不由材质决定。加载完成后按只读使用；renderer 的槽可以没有材质，
+     * 没有材质的子网格不画，引擎不补一份默认材质。
      *
-     * 颜色用 vec4 而不是 vec3：它要进 push constant，std430 下 vec3 占 16 字节，
-     * 而 glm::vec3 只有 12 字节，会让后面的成员整体错位；第四个分量现在不参与
-     * 混合，固定为 1。
+     * 基色用 DoodleColor：4 个 float、16 字节，进 push constant 时与 glm::vec4
+     * 同布局；第四个分量现在不参与混合，固定为 1。
      */
     class DoodleMaterial : public DoodleAsset
     {
@@ -41,42 +42,43 @@ namespace Doodle
         /**
          * 文件资产：路径交给 DoodleAsset 保存并校验非空
          */
-        explicit DoodleMaterial(std::string_view assetPath)
+        explicit DoodleMaterial(const std::string_view assetPath)
             : DoodleAsset(assetPath)
         {
         }
 
         /**
+         * 材质的着色器资产；非拥有，寿命由资产管理器保证
+         */
+        [[nodiscard]] const DoodleShader* GetShader() const
+        {
+            return m_pShader;
+        }
+
+        /**
+         * 设置着色器；加载器在 Create 里设置，运行时一般不改
+         */
+        void SetShader(const DoodleShader* pShader)
+        {
+            m_pShader = pShader;
+        }
+
+        /**
          * 配置里的基色，按 sRGB 书写
          *
-         * 着色器要的是线性值，推送前用 GetLinearBaseColor。这里保留作者写的
-         * sRGB 值，序列化往返不会改变配置文件里的数字
+         * 着色器要的是线性值，推送前由调用侧转（基色本身不持有色彩空间，
+         * 见 DoodleColor）。这里保留作者写的 sRGB 值，序列化往返不会改变
+         * 配置文件里的数字
          */
-        [[nodiscard]] const glm::vec4& GetBaseColor() const
+        [[nodiscard]] const DoodleColor& GetBaseColor() const
         {
             return m_baseColor;
         }
 
         /**
-         * 转成线性空间的基色，供 push constant 使用
-         *
-         * 纹理按 SRGB 格式上传，采样结果已经是线性的；基色同样转成线性，
-         * 两者相乘才在同一空间里。第四分量（透明度）不做色彩空间转换
-         */
-        [[nodiscard]] glm::vec4 GetLinearBaseColor() const
-        {
-            return {
-                SRGBToLinear(m_baseColor.r),
-                SRGBToLinear(m_baseColor.g),
-                SRGBToLinear(m_baseColor.b),
-                m_baseColor.a
-            };
-        }
-
-        /**
          * 设置基色；运行时直接写成员，不做范围校验（与光源 setter 一致）
          */
-        void SetBaseColor(const glm::vec4& baseColor)
+        void SetBaseColor(const DoodleColor& baseColor)
         {
             m_baseColor = baseColor;
         }
@@ -102,20 +104,14 @@ namespace Doodle
 
     private:
         /**
-         * sRGB → 线性：IEC 61966-2-1 的精确传递函数，不是 pow(2.2)
+         * 材质着色器，非拥有；由加载器设置
          */
-        [[nodiscard]] static float SRGBToLinear(const float value)
-        {
-            return value <= 0.04045f
-                       ? value / 12.92f
-                       : std::pow((value + 0.055f) / 1.055f, 2.4f);
-        }
+        const DoodleShader* m_pShader = nullptr;
 
-    private:
         /**
-         * 配置里的基色，按 sRGB 书写；送着色器前经 GetLinearBaseColor 转换
+         * 配置里的基色，按 sRGB 书写；送着色器前由调用侧转成线性
          */
-        glm::vec4 m_baseColor{0.82f, 0.82f, 0.82f, 1.0f};
+        DoodleColor m_baseColor{0.82f, 0.82f, 0.82f, 1.0f};
 
         /**
          * 材质纹理，非拥有；nullptr 时绘制侧绑定默认白图

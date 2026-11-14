@@ -10,11 +10,11 @@
 #include <stdexcept>
 
 #include "DoodleDepthImages.h"
-#include "DoodleShaderModule.h"
 #include "DoodleSwapChain.h"
 #include "Rendering/DoodleFrameContext.h"
 #include "Rendering/DoodleMaterial.h"
 #include "Rendering/DoodleMesh.h"
+#include "Rendering/DoodleShader.h"
 #include "Rendering/DoodleShaderData.h"
 
 namespace Doodle
@@ -22,10 +22,44 @@ namespace Doodle
     void DoodleForwardPass::Initialize(const DoodleForwardPassInitInfo& info)
     {
         DoodleRenderPass::Initialize(info.renderPassInfo, MakePassConfig(info.swapChain, info.depthImages));
+    }
 
-        //现在只有 lit 一个着色器：先向本 pass 的管线表要一条。
-        //引用由表持有，格式变化原地重建时指针不变
-        m_pPipeline = &GetPipeline(MakeLitShaderDescription(info.materialDescriptorSetLayout));
+    void DoodleForwardPass::WarmupShaders(const std::vector<const DoodleShader*>& shaders)
+    {
+        //只解析 / 创建管线，不录制：把编译代价和失败点放在加载边界上。
+        //与 Render 走同一个 ResolvePipeline，预热过的着色器在第一帧只命中 memo。
+        //队列里只会出现初始化成功的着色器；空指针只可能是调用方传错，
+        //预热不是校验入口，跳过即可
+        for (const DoodleShader* pShader : shaders)
+        {
+            if (pShader == nullptr)
+            {
+                continue;
+            }
+
+            //结果不用：解析本身就会把管线建出来并填进 memo
+            static_cast<void>(ResolvePipeline(*pShader));
+        }
+    }
+
+    void DoodleForwardPass::OnDestroy()
+    {
+        m_pipelinesByShader.clear();
+    }
+
+    const DoodleVulkanPipelineObject& DoodleForwardPass::ResolvePipeline(const DoodleShader& shader)
+    {
+        const auto it = m_pipelinesByShader.find(&shader);
+        if (it != m_pipelinesByShader.end())
+        {
+            return *it->second;
+        }
+
+        //内容相同的两个着色器资产会在这里拿到同一条管线；memo 只省掉每绘制项的
+        //内容哈希与逐字节比对，不改变管线表「按内容查找」的语义
+        const DoodleVulkanPipelineObject& pipeline = GetPipeline(shader.GetForwardPassDescription());
+        m_pipelinesByShader.emplace(&shader, &pipeline);
+        return pipeline;
     }
 
     void DoodleForwardPass::Render(const DoodleFrameContext& frameContext,
@@ -99,9 +133,6 @@ namespace Doodle
         //开始渲染。begin 与 end 必须成对，且落在同一个命令缓冲里
         vkCmdBeginRendering(commandBuffer, &renderingInfo);
 
-        //绑定管线
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pPipeline->GetGraphicsPipeline());
-
         //视口与剪裁在管线层被声明为动态状态，没有烘焙进管线，只能在这里补上。
         //交换链尺寸变化时只影响这里，不用重建管线
         const VkViewport viewport
@@ -122,26 +153,12 @@ namespace Doodle
         };
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-        //绑定 set 0。与顶点/索引缓冲不同，描述符集绑定必须说明是给图形管线用的
-        //（计算管线是另一个 bind point），而且必须用创建管线时那份管线布局来解释它。
-        //firstSet = 0 / setCount = 1：set 0 是整帧共享的 UBO（view / proj / 主光源）。
-        //
-        //整帧只绑一次：组里所有对象共用同一份相机数据。逐材质的纹理在 set 1，
-        //由下面循环按绘制项重绑
-        vkCmdBindDescriptorSets(
-            commandBuffer,
-            VK_PIPELINE_BIND_POINT_GRAPHICS,
-            m_pPipeline->GetPipelineLayout(),
-            0,
-            1,
-            &passContext.frameUboDescriptorSet,
-            0,
-            nullptr);
-
         //逐条绘制项录绘制。一条绘制项对应一次索引绘制：网格与子网格区间
         //已经在收集侧展开好，这里只做随绘制项变化的几件事：
-        //绑材质纹理（set 1）、推 localToWorld + 材质基色、绑网格的顶点 / 索引缓冲、
-        //按区间发一次绘制
+        //换管线、绑材质纹理（set 1）、推 localToWorld + 材质基色、
+        //绑网格的顶点 / 索引缓冲、按区间发一次绘制
+        const DoodleVulkanPipelineObject* pBoundPipeline = nullptr;
+        bool frameSetBound = false;
         VkDescriptorSet boundMaterialSet = VK_NULL_HANDLE;
         for (std::size_t i = 0; i < frameContext.drawItems.size(); ++i)
         {
@@ -154,6 +171,41 @@ namespace Doodle
             const auto& submesh = mesh.GetSubmesh(drawItem.submeshIndex);
             const auto& material = *drawItem.pMaterial;
 
+            //管线按材质的着色器解析：着色器资产常驻，同一份描述只会有一条管线；
+            //memo 命中后这里只是一次指针查表。同一条管线会连续出现在多个材质上，
+            //只有变了才重绑
+            const DoodleShader* pShader = material.GetShader();
+            if (pShader == nullptr)
+            {
+                throw std::logic_error("draw item material has no shader");
+            }
+            const DoodleVulkanPipelineObject* pPipeline = &ResolvePipeline(*pShader);
+            if (pPipeline != pBoundPipeline)
+            {
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pPipeline->GetGraphicsPipeline());
+                pBoundPipeline = pPipeline;
+
+                //换管线后 set 1 必须重绑：不同着色器的 set 1 布局定义相同、实际兼容，
+                //但录制层不替它们记这条推断
+                boundMaterialSet = VK_NULL_HANDLE;
+            }
+
+            //set 0 整帧只绑一次：所有管线共用同一个 set 0 布局与 push constant 范围，
+            //换管线不会让它失效。用当前管线的布局来解释它
+            if (!frameSetBound)
+            {
+                vkCmdBindDescriptorSets(
+                    commandBuffer,
+                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    pPipeline->GetPipelineLayout(),
+                    0,
+                    1,
+                    &passContext.frameUboDescriptorSet,
+                    0,
+                    nullptr);
+                frameSetBound = true;
+            }
+
             //绑定本项的材质纹理（set 1）。集合由描述符管理器按纹理缓存好，与绘制项同下标。
             //连续多个子网格共用同一张纹理时，句柄相同，跳过重复绑定
             const VkDescriptorSet materialDescriptorSet = passContext.materialDescriptorSets[i];
@@ -162,7 +214,7 @@ namespace Doodle
                 vkCmdBindDescriptorSets(
                     commandBuffer,
                     VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    m_pPipeline->GetPipelineLayout(),
+                    pPipeline->GetPipelineLayout(),
                     1,
                     1,
                     &materialDescriptorSet,
@@ -175,16 +227,19 @@ namespace Doodle
             //由 DoodlePushConstantObject 钉住，阶段 / 偏移 / 大小取管线层的
             //kPushConstantRange —— 管线布局与这里只认同一份定义，改一处不会漏另一处
             //
+            //基色在写进 push constant 的这一处才从作者写的 sRGB 转成线性：
+            //纹理按 SRGB 格式上传，采样结果本来就是线性，两者相乘才在同一空间
+            //
             //push 的是这条命令缓冲的当前值，下一条 push 直接覆盖 ——
             //不需要每绘制项一块 UBO，也不需要等 GPU 用完上一份
             const DoodlePushConstantObject pushConstants
             {
                 .localToWorld = drawItem.localToWorld,
-                .baseColor = material.GetLinearBaseColor()
+                .baseColor = material.GetBaseColor().SRGBToLinear().ToVec4()
             };
             vkCmdPushConstants(
                 commandBuffer,
-                m_pPipeline->GetPipelineLayout(),
+                pPipeline->GetPipelineLayout(),
                 DoodleVulkanPipelineObject::kPushConstantRange.stageFlags,
                 DoodleVulkanPipelineObject::kPushConstantRange.offset,
                 DoodleVulkanPipelineObject::kPushConstantRange.size,
@@ -254,20 +309,6 @@ namespace Doodle
             .colorFormats = {swapChain.GetImageFormat()},
             .depthFormat = depthImages.GetFormat(),
             .sampleCount = VK_SAMPLE_COUNT_1_BIT
-        };
-    }
-
-    DoodleVulkanPipelineShaderDescription DoodleForwardPass::MakeLitShaderDescription(
-        const VkDescriptorSetLayout materialDescriptorSetLayout)
-    {
-        return
-        {
-            .vertexBytecode = DoodleShaderModule::ReadFile("Shaders/lit.vert.spv"),
-            .fragmentBytecode = DoodleShaderModule::ReadFile("Shaders/lit.frag.spv"),
-            .materialDescriptorSetLayout = materialDescriptorSetLayout,
-            .renderState = {},
-            .vertexFormat = EVertexFormat::PosNormalUv,
-            .instanceFormat = EInstanceFormat::None
         };
     }
 

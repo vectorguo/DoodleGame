@@ -19,6 +19,74 @@
       ]
     },
     {
+      "name": "Tree1Trunk",
+      "position": [6.9, -10.3, 0.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [1.0, 1.0, 1.0],
+      "components": [
+        {
+          "type": "Engine.MeshRenderer",
+          "settings": {
+            "mesh": "Art/SceneRes/Tree/Tree1/tree1_trunk_sm.fbx",
+            "materials": [
+              "Art/SceneRes/Tree/Tree1/tree1_trunk.json"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tree1Leaf",
+      "position": [6.9, -10.3, 0.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [1.0, 1.0, 1.0],
+      "components": [
+        {
+          "type": "Engine.MeshRenderer",
+          "settings": {
+            "mesh": "Art/SceneRes/Tree/Tree1/tree1_leaf_sm.fbx",
+            "materials": [
+              "Art/SceneRes/Tree/Tree1/tree1_leaf.json"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tree2Trunk",
+      "position": [-9.3, 6.0, 0.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [1.0, 1.0, 1.0],
+      "components": [
+        {
+          "type": "Engine.MeshRenderer",
+          "settings": {
+            "mesh": "Art/SceneRes/Tree/Tree2/tree2_trunk_sm.fbx",
+            "materials": [
+              "Art/SceneRes/Tree/Tree2/tree2_trunk.json"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tree2Leaf",
+      "position": [-9.3, 6.0, 0.0],
+      "rotation": [0.0, 0.0, 0.0],
+      "scale": [1.0, 1.0, 1.0],
+      "components": [
+        {
+          "type": "Engine.MeshRenderer",
+          "settings": {
+            "mesh": "Art/SceneRes/Tree/Tree2/tree2_leaf_sm.fbx",
+            "materials": [
+              "Art/SceneRes/Tree/Tree2/tree2_leaf.json"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "MainLight",
       "rotation": [0.0, 45.0, -135.0],
       "components": [

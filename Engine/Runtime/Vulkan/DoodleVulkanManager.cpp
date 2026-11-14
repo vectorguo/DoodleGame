@@ -15,6 +15,8 @@
 
 namespace Doodle
 {
+    DoodleVulkanManager* DoodleVulkanManager::s_pInstance = nullptr;
+
     void DoodleVulkanManager::Initialize(DoodleWindow& window)
     {
         //窗口只借不放，本层不负责它的创建与销毁

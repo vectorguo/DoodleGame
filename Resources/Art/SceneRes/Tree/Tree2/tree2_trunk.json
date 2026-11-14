@@ -1,0 +1,5 @@
+{
+  "shader": "Shaders/tree_trunk.shader.json",
+  "baseColor": [1.0, 1.0, 1.0, 1.0],
+  "texture": "Art/SceneRes/Tree/Tree2/tree2_trunk_d.tga"
+}

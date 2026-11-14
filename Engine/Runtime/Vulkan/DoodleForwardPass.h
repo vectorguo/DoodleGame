@@ -7,6 +7,9 @@
 
 #pragma once
 
+#include <unordered_map>
+#include <vector>
+
 #include "DoodleRenderPass.h"
 
 namespace Doodle
@@ -14,6 +17,7 @@ namespace Doodle
     //只在接口签名里出现，完整定义留给源文件
     class DoodleSwapChain;
     class DoodleDepthImages;
+    class DoodleShader;
 
     /**
      * 初始化前向 pass 的全部输入
@@ -37,13 +41,6 @@ namespace Doodle
          * 深度附件的来源
          */
         const DoodleDepthImages& depthImages;
-
-        /**
-         * lit 着色器的 set 1 布局（材质纹理）
-         *
-         * 着色器资产落地前由描述符管理器提供；之后由材质自己的着色器描述取代
-         */
-        VkDescriptorSetLayout materialDescriptorSetLayout = VK_NULL_HANDLE;
     };
 
     /**
@@ -75,9 +72,18 @@ namespace Doodle
         /**
          * 录一个前向 pass：颜色 / 深度附件、动态渲染、逐绘制项绘制
          *
-         * 现在整帧所有绘制项共用同一条 lit 管线；逐项换管线是着色器资产落地后的事。
+         * 每条绘制项按材质的着色器向本 pass 的管线表解析管线；管线变了才重新绑定，
+         * set 1 跟着失效。set 0 与 push constant 范围在全工程内相同，换管线不必重绑 set 0
          */
         void Render(const DoodleFrameContext& frameContext, const DoodleRenderPassContext& passContext) override;
+
+        /**
+         * 为这批着色器预建本 pass 的管线：按内容去重，只解析不录制
+         *
+         * 与 Render 共用同一个 ResolvePipeline，所以预热过的着色器在录制时不会再建管线；
+         * memo 也在这里被填好，Render 里只剩一次指针查表
+         */
+        void WarmupShaders(const std::vector<const DoodleShader*>& shaders) override;
 
         /**
          * 交换链 / 深度图重建后调用：配置没变就什么也不做
@@ -87,22 +93,29 @@ namespace Doodle
          */
         void RebuildIfPassConfigChanged(const DoodleSwapChain& swapChain, const DoodleDepthImages& depthImages);
 
+    protected:
+        /**
+         * 清掉着色器 → 管线的 memo；管线本身由基类先拆完
+         */
+        void OnDestroy() override;
+
     private:
+
+        /**
+         * 取某个着色器在本 pass 里的管线；没解析过就向基类的管线表要一条
+         *
+         * memo 只是内容键查表的缓存：着色器资产常驻（见 DoodleRenderPass 类注释），
+         * 地址稳定，表的大小只跟着着色器数量走；RebuildPipelines 原地重建不改变
+         * 管线对象地址，所以 memo 不需要失效
+         */
+        [[nodiscard]] const DoodleVulkanPipelineObject& ResolvePipeline(const DoodleShader& shader);
+
         /**
          * 前向 pass 的附件配置：颜色格式来自交换链、深度格式来自深度图组
          */
         [[nodiscard]] static DoodleVulkanPipelinePassConfig MakePassConfig(
             const DoodleSwapChain& swapChain,
             const DoodleDepthImages& depthImages);
-
-        /**
-         * lit 的着色器侧描述：两份字节码 + set 1 布局 + 默认渲染状态
-         *
-         * 着色器资产落地前，本 pass 自己读两份 spv 拼描述；之后由材质带着自己的
-         * 着色器向本 pass 要管线，这个函数随之删除
-         */
-        [[nodiscard]] static DoodleVulkanPipelineShaderDescription MakeLitShaderDescription(
-            VkDescriptorSetLayout materialDescriptorSetLayout);
 
         /**
          * 录一次布局转换：取图之后、开画之前，把交换链图像转成颜色附件布局
@@ -124,8 +137,12 @@ namespace Doodle
 
     private:
         /**
-         * 前向 pass 当前使用的 lit 管线，指向上面的管线表；原地重建时指针不变
+         * 着色器 → 本 pass 的管线
+         *
+         * 只是「着色器描述 → 管线」这张内容键查表的 memo：着色器资产常驻，
+         * 按资产地址做键是安全的，规模只跟着着色器数量走。管线原地重建不改变
+         * 对象地址，所以不需要失效；Destroy 时跟着清空
          */
-        const DoodleVulkanPipelineObject* m_pPipeline = nullptr;
+        std::unordered_map<const DoodleShader*, const DoodleVulkanPipelineObject*> m_pipelinesByShader;
     };
 }

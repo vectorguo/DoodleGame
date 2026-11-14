@@ -120,6 +120,7 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Platform/DoodleLog.h
     Engine/Runtime/Math/DoodleMath.cpp
     Engine/Runtime/Math/DoodleMath.h
+    Engine/Runtime/Math/DoodleColor.h
     Engine/Runtime/Core/DoodleTransform.h
     Engine/Runtime/Core/DoodleTime.cpp
     Engine/Runtime/Core/DoodleTime.h
@@ -136,6 +137,8 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Asset/DoodleMeshLoader.h
     Engine/Runtime/Asset/DoodleMaterialLoader.cpp
     Engine/Runtime/Asset/DoodleMaterialLoader.h
+    Engine/Runtime/Asset/DoodleShaderLoader.cpp
+    Engine/Runtime/Asset/DoodleShaderLoader.h
     Engine/Runtime/Asset/DoodleTextureLoader.cpp
     Engine/Runtime/Asset/DoodleTextureLoader.h
     Engine/Runtime/Asset/DoodleSceneLoader.cpp
@@ -148,6 +151,8 @@ set(DOODLE_SHARED_SOURCES
     Engine/ThirdParty/ufbx/ufbx.h
     Engine/ThirdParty/stb/stb_image.h
     Engine/ThirdParty/stb/stb_image_impl.cpp
+    Engine/ThirdParty/spirv_reflect/spirv_reflect.c
+    Engine/ThirdParty/spirv_reflect/spirv_reflect.h
     Engine/Runtime/Scene/DoodleScene.h
     Engine/Runtime/Scene/DoodleScene.cpp
     Engine/Runtime/Core/DoodleComponentConfig.h
@@ -166,6 +171,10 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Rendering/DoodleMeshRenderer.cpp
     Engine/Runtime/Rendering/DoodleDrawItem.h
     Engine/Runtime/Rendering/DoodleShaderData.h
+    Engine/Runtime/Rendering/DoodleShader.cpp
+    Engine/Runtime/Rendering/DoodleShader.h
+        Engine/Runtime/Vulkan/DoodlePipelineWarmupQueue.cpp
+        Engine/Runtime/Vulkan/DoodlePipelineWarmupQueue.h
     Engine/Runtime/Rendering/DoodleSubmesh.h
     Engine/Runtime/Rendering/DoodleMaterial.h
     Engine/Runtime/Rendering/DoodleRenderState.h
@@ -280,6 +289,20 @@ list(TRANSFORM _doodle_shader_names
     PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/"
     OUTPUT_VARIABLE _doodle_shader_sources
 )
+
+# 着色器共用的 include（Shaders/Include/ 下的接口块、光照、标准顶点处理）。
+# 它们不是编译单元，不进 compile.sh 的入参；但必须算作依赖 —— 改了它们，
+# 所有包含它的着色器都要重编。
+file(GLOB _doodle_shader_include_names
+    RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/Shaders"
+    CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Include/*.glsl"
+)
+list(TRANSFORM _doodle_shader_include_names
+    PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/"
+    OUTPUT_VARIABLE _doodle_shader_include_sources
+)
+list(APPEND _doodle_shader_sources ${_doodle_shader_include_sources})
 
 set(_doodle_shader_output_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(_doodle_embedded_shaders "${_doodle_shader_output_dir}/DoodleEmbeddedShaders.h")

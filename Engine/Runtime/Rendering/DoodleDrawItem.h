@@ -33,9 +33,8 @@ namespace Doodle
      * 将来加实例化时，这里长的是「实例参数」，而不是把更底层的 Vulkan 句柄
      * 摊进来。
      *
-     * 指针非拥有：网格与材质资产由资产管理器保证寿命；没有配置材质资产的槽
-     * 指向 DoodleMeshRenderer 自带的默认材质，寿命由 renderer 保证（场景先于
-     * 资产管理器销毁）。绘制项是每帧的临时数据，不会活过它们。
+     * 指针非拥有：网格与材质资产由资产管理器保证寿命（场景先于资产管理器
+     * 销毁）。绘制项是每帧的临时数据，不会活过它们。
      * localToWorld 是收集那一刻的快照；pMaterial 与 submeshIndex 指向的也是
      * 收集时已经确定下来的数据，本帧不会变
      */
@@ -53,9 +52,9 @@ namespace Doodle
         /**
          * 本项使用的材质；不可为空
          *
-         * 收集时按 submesh.materialIndex 从 DoodleMeshRenderer 的材质表解析，
-         * 录制侧只负责把它的基色推进 push constant。指针指向 renderer 持有的
-         * 材质，寿命覆盖本帧
+         * 收集时按 submesh.materialIndex 从 DoodleMeshRenderer 的材质表解析；
+         * 槽里没有材质的子网格不生成绘制项，所以这里不会为空。录制侧只负责
+         * 把它的基色推进 push constant。材质由资产管理器持有，寿命覆盖本帧
          */
         const DoodleMaterial* pMaterial = nullptr;
 

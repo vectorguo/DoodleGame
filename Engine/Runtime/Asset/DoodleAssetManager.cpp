@@ -10,6 +10,7 @@
 #include "DoodleMaterialLoader.h"
 #include "DoodleMeshLoader.h"
 #include "DoodleSceneLoader.h"
+#include "DoodleShaderLoader.h"
 #include "DoodleTextureLoader.h"
 
 #include <stdexcept>
@@ -57,6 +58,8 @@ namespace Doodle
             // GPU 上传推迟到第一次 Load
             RegisterLoader<DoodleMesh>(std::make_unique<DoodleMeshLoader>(context.device, *m_pFileSystem));
             RegisterLoader<DoodleTexture>(std::make_unique<DoodleTextureLoader>(context.device, *m_pFileSystem));
+            // 着色器要在材质之前注册：材质加载时会递归加载它引用的着色器
+            RegisterLoader<DoodleShader>(std::make_unique<DoodleShaderLoader>(context.device, *m_pFileSystem));
             RegisterLoader<DoodleMaterial>(std::make_unique<DoodleMaterialLoader>(*m_pFileSystem));
             RegisterLoader<DoodleSceneData>(std::make_unique<DoodleSceneLoader>(*m_pFileSystem));
         }
@@ -72,7 +75,7 @@ namespace Doodle
     {
         // 先让每个 loader 释放资产，再清容器。loader 的 Destroy 必须不抛异常：
         // 它只在显式销毁路径上调用（析构不做 GPU 清理）
-        for (auto& entry : m_loaders)
+        for (const auto& entry : m_loaders)
         {
             entry.second->Destroy();
         }

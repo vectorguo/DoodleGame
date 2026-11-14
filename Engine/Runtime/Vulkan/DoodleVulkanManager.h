@@ -17,6 +17,7 @@ namespace Doodle
 {
     //本层只按引用持有窗口，完整定义留给源文件去取
     class DoodleWindow;
+    class DoodleRenderManager;
 
     /**
      * Vulkan 后端：设备、交换链、命令层、同步对象与帧时序
@@ -26,16 +27,57 @@ namespace Doodle
      * 由 DoodleRenderPipeline 决定；本层只把 BeginFrame 的结果填进 DoodleFrameContext 的状态字段，
      * 并在 EndFrame 里提交与呈现。
      *
-     * 由 DoodleRenderManager 持有并编排，不直接暴露给应用层。帧时序的边界条件
-     * （栅栏复位、acquire 失败时信号量状态、present 后重建、resize 标志）全部
-     * 留在本类的 BeginFrame / EndFrame / RecreateSwapChain 里，上层只按状态分支。
+     * 由 DoodleRenderManager 持有并编排；应用层不直接驱动它，只在需要后端原语时
+     * 通过 GetInstance() 取用。帧时序的边界条件（栅栏复位、acquire 失败时信号量状态、
+     * present 后重建、resize 标志）全部留在本类的 BeginFrame / EndFrame /
+     * RecreateSwapChain 里，上层只按状态分支。
+     *
+     * 需要设备 / 交换链原语、手边又拿不到渲染管理器的代码可以走 GetInstance()；
+     * 驱动帧仍然只走 DoodleRenderManager —— 那里才是应用面对的入口。
      *
      * 生命周期与程序一致；Destroy / OnSurfaceLost / RecreateSwapChain 都要求 GPU 已空闲，
      * 本类自己会等。
      */
     class DoodleVulkanManager
     {
+        friend class DoodleRenderManager;
+
+        /**
+         * 只能由 DoodleRenderManager 创建：运行时只有一份，实例由渲染管理器
+         * 独占持有。构造即登记为当前实例，析构时清空
+         */
+        DoodleVulkanManager()
+        {
+            s_pInstance = this;
+        }
+
     public:
+        ~DoodleVulkanManager()
+        {
+            if (s_pInstance == this)
+            {
+                s_pInstance = nullptr;
+            }
+        }
+
+        DoodleVulkanManager(const DoodleVulkanManager&) = delete;
+        DoodleVulkanManager& operator=(const DoodleVulkanManager&) = delete;
+
+        /**
+         * 当前那一份 Vulkan 后端
+         *
+         * 有效期与对象同寿（应用构造 → 应用析构）；「能用了」要到 Initialize
+         * 成功之后、Destroy 之前。Initialize 之前 / Destroy 之后取到的是空壳，
+         * 与 DoodleCommandManager 的口径一致。
+         *
+         * 只提供设备 / 交换链这类后端原语；帧时序（BeginFrame / EndFrame /
+         * 交换链重建）仍归渲染管理器编排
+         */
+        [[nodiscard]] static DoodleVulkanManager& GetInstance()
+        {
+            return *s_pInstance;
+        }
+
         /**
          * 初始化后端：设备、交换链、命令层、同步对象
          *
@@ -168,6 +210,11 @@ namespace Doodle
         }
 
     private:
+        /**
+         * 当前实例，构造时登记、析构时清空
+         */
+        static DoodleVulkanManager* s_pInstance;
+
         /**
          * 窗口，在 Initialize 时绑定
          *

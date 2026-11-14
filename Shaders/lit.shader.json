@@ -1,0 +1,6 @@
+{
+  "vertex": "Shaders/lit.vert.spv",
+  "fragment": "Shaders/lit.frag.spv",
+  "vertexFormat": "posNormalUv",
+  "instanceFormat": "none"
+}

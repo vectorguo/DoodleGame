@@ -15,6 +15,7 @@
 #include "DoodleGraphicsBuffer.h"
 #include "DoodleVulkanConfig.h"
 #include "DoodleVulkanPipelineCompileCache.h"
+#include "DoodlePipelineWarmupQueue.h"
 
 namespace Doodle
 {
@@ -22,6 +23,7 @@ namespace Doodle
     class DoodleVulkanDevice;
     class DoodleSwapChain;
     class DoodleVulkanManager;
+    class DoodleRenderManager;
     struct DoodleFrameContext;
 
     /**
@@ -42,14 +44,50 @@ namespace Doodle
      * （描述符管理器的默认白图要借后端的命令层传输池）；销毁时先于后端。
      * 表面消失时只拆深度图这类跟随交换链的资源，管线与描述符保留。
      *
+     * **预热队列**：待预热队列是本类的成员 —— 它的产出物就是本类持有的管线。
+     * 生产者（DoodleShader::Initialize）只通过队列的单例入口投递，不需要认识本类。
+     *
      * 不可复制：成员各自持有句柄与资源
      */
     class DoodleRenderPipeline
     {
+        friend class DoodleRenderManager;
+
+        /**
+         * 只能由 DoodleRenderManager 创建：运行时只有一份，实例由渲染管理器
+         * 独占持有。构造即登记为当前实例，析构时清空
+         */
+        DoodleRenderPipeline()
+        {
+            s_pInstance = this;
+        }
+
     public:
-        DoodleRenderPipeline() = default;
+        ~DoodleRenderPipeline()
+        {
+            if (s_pInstance == this)
+            {
+                s_pInstance = nullptr;
+            }
+        }
+
         DoodleRenderPipeline(const DoodleRenderPipeline&) = delete;
         DoodleRenderPipeline& operator=(const DoodleRenderPipeline&) = delete;
+
+        /**
+         * 当前那一份渲染管线
+         *
+         * 有效期与对象同寿（应用构造 → 应用析构）；「能用了」要到 Initialize
+         * 成功之后、Destroy 之前。Initialize 之前 / Destroy 之后取到的是空壳，
+         * 与 DoodleCommandManager 的口径一致。
+         *
+         * 只给渲染内部（pass、诊断、预热）用：内容层与玩法层需要的入口是
+         * DoodleRenderManager —— 「这一帧怎么画」不该被绕开帧顺序直接驱动
+         */
+        [[nodiscard]] static DoodleRenderPipeline& GetInstance()
+        {
+            return *s_pInstance;
+        }
 
         /**
          * 建出常驻渲染资源与第一个 pass
@@ -74,6 +112,9 @@ namespace Doodle
          * UBO → 深度图。管线布局引用描述符管理器的 set 布局，所以 pass 必须
          * 排在它之前。
          *
+         * 开头先清空待预热队列：里面是着色器的非拥有指针，资产可能已经先于本类
+         * 销毁；清空只丢指针、不解引用，所以放在资源拆除之前即可。
+         *
          * 可以重复调用。前置条件：GPU 已空闲 —— 在途命令可能还引用着管线与深度图
          */
         void Destroy();
@@ -90,6 +131,20 @@ namespace Doodle
          * @note 前置条件：context.status == Ready
          */
         void Render(const DoodleFrameContext& frameContext);
+
+        /**
+         * 排空待预热队列，让每个 pass 把新着色器的管线建出来
+         *
+         * 由 DoodleRenderManager::Render 在取帧之前每帧调用一次。输入不是绘制项：
+         * 管线身份只取决于「着色器 × 渲染状态 × pass」，跟本帧画了多少东西无关。
+         * 队列为空时直接返回，稳态开销是常数。
+         *
+         * 按 pass 顺序逐个分发 —— 每个 pass 自己决定要哪些管线，本类只负责
+         * 排空与分发，不碰附件、描述符集与命令缓冲。
+         *
+         * @throw 管线建不出来时向上抛，由渲染管理器在取帧之前抛给应用
+         */
+        void WarmupPipelines();
 
         /**
          * 表面消失前调用：拆掉跟随交换链的渲染资源
@@ -141,6 +196,11 @@ namespace Doodle
 
     private:
         /**
+         * 当前实例，构造时登记、析构时清空
+         */
+        static DoodleRenderPipeline* s_pInstance;
+
+        /**
          * Vulkan设备层，在 Initialize 时绑定
          */
         const DoodleVulkanDevice* m_pDevice = nullptr;
@@ -182,6 +242,14 @@ namespace Doodle
          * 排在描述符管理器之后、前向 pass 之前（建管线时要用它）
          */
         DoodleVulkanPipelineCompileCache m_pipelineCompileCache;
+
+        /**
+         * 待预热队列：着色器初始化成功后投递，本类在取帧之前排空并按 pass 分发
+         *
+         * 声明在所有资源成员之前：它不依赖任何其他成员，构造即登记、析构最晚。
+         * 队列只存非拥有指针，Destroy 开头清空（见 Destroy 的注释）
+         */
+        DoodlePipelineWarmupQueue m_pipelineWarmupQueue;
 
         /**
          * 前向主 pass：拥有这一 pass 下的所有管线

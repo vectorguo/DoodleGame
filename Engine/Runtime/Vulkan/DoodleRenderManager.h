@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <vector>
+
 #include "DoodleRenderPipeline.h"
 #include "DoodleVulkanManager.h"
 
@@ -14,6 +16,8 @@ namespace Doodle
 {
     //只按引用持有窗口，完整定义留给源文件去取
     class DoodleWindow;
+    class DoodleApplication;
+    struct DoodleDrawItem;
     struct DoodleFrameContext;
 
     /**
@@ -29,15 +33,53 @@ namespace Doodle
      * resize 标志都由 DoodleVulkanManager 的 BeginFrame / EndFrame /
      * RecreateSwapChain 处理，本类只按返回状态分支，不重写任何 Vulkan 细节。
      *
-     * 应用层仍然只面对这一个入口；两个子对象都是本类的私有成员，
-     * 不单独对外暴露。生命周期与程序一致。
+     * 应用层仍然只面对这一个入口；两个子对象是本类的私有成员，各自另有受限的
+     * GetInstance()（后端原语 / 渲染策略内部用），不改变本类作为应用入口的地位。
+     * 生命周期与程序一致。
      *
      * 命名约定：整帧或一批对象的入口用 Render；单个对象的绘制用
      * DrawMesh / DrawCube 这类名字。
      */
     class DoodleRenderManager
     {
+        friend class DoodleApplication;
+
+        /**
+         * 只能由 DoodleApplication 创建：运行时只有一份，实例由应用独占持有。
+         * 构造即登记为当前实例，析构时清空
+         */
+        DoodleRenderManager()
+        {
+            s_pInstance = this;
+        }
+
     public:
+        ~DoodleRenderManager()
+        {
+            if (s_pInstance == this)
+            {
+                s_pInstance = nullptr;
+            }
+        }
+
+        DoodleRenderManager(const DoodleRenderManager&) = delete;
+        DoodleRenderManager& operator=(const DoodleRenderManager&) = delete;
+
+        /**
+         * 当前那一份渲染管理器
+         *
+         * 有效期与对象同寿（应用构造 → 应用析构）；「能用了」要到 Initialize
+         * 成功之后、Destroy 之前。Initialize 之前 / Destroy 之后取到的是空壳，
+         * 与 DoodleCommandManager 的口径一致。
+         *
+         * 需要设备 / 交换链原语的代码用 DoodleVulkanManager::GetInstance()；
+         * 本入口只负责应用级的渲染动作（等 GPU 空闲、表面生命周期）
+         */
+        [[nodiscard]] static DoodleRenderManager& GetInstance()
+        {
+            return *s_pInstance;
+        }
+
         /**
          * 初始化后端与渲染管线
          *
@@ -59,9 +101,13 @@ namespace Doodle
         /**
          * 渲染并呈现一帧
          *
-         * 固定顺序：取主相机 / 主光源并组帧上下文 → 后端 BeginFrame 填状态 →
-         * 渲染管线 Render → 后端 EndFrame 提交并呈现。任何一步报告交换链需要
-         * 重建，本函数负责把两边一起恢复。
+         * 固定顺序：排空待预热队列 → 取主相机 → 主光源组帧上下文 → 后端 BeginFrame
+         * 填状态 → 渲染管线 Render → 后端 EndFrame 提交并呈现。任何一步报告交换链
+         * 需要重建，本函数负责把两边一起恢复。
+         *
+         * 预热放在取主相机之前：加载阶段即使还没有主相机，管线也应该在加载边界
+         * 编完，而不是攒到第一帧真正有画面时再一次性爆发。建管线不需要相机，
+         * 也不需要交换链图像。
          *
          * drawItems 由调用方（应用层）从场景收集好后传入；相机与主光源由本类
          * 直接向 DoodleCamera / DoodleLight 取，调用方不再构造 DoodleFrameContext。
@@ -144,6 +190,11 @@ namespace Doodle
         void RecreateSwapChain();
 
     private:
+        /**
+         * 当前实例，构造时登记、析构时清空
+         */
+        static DoodleRenderManager* s_pInstance;
+
         /**
          * Vulkan 后端：设备、交换链、命令层、同步对象与帧时序
          *

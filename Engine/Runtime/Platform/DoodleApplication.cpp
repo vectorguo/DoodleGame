@@ -136,7 +136,7 @@ namespace Doodle
         // 的单例取，不需要从这里把命令管理层传下去。
         // 文件来源归应用持有，资产管理器只借引用
         m_assetManager.Initialize(
-     {
+        {
             .fileSystem = *m_pFileSystem,
             .device = m_renderManager.GetDevice()
         });
@@ -264,20 +264,27 @@ namespace Doodle
                     {
                         // 一条绘制项 = 一次 drawIndexed：把网格按材质切出的
                         // 子网格逐段展开，记录子网格下标；材质从 renderer 的
-                        // 材质槽表取（元素是非拥有指针，指向共享材质资产或默认材质）。
-                        // localToWorld 对同一网格的各段相同
+                        // 材质槽表取（元素是非拥有指针，可能为空）。槽表长度
+                        // 恒等于网格槽数，所以 materialIndex 直接在表内；
+                        // 空指针表示该槽没有材质，这个子网格不画
                         const auto localToWorld = pGameObject->GetTransform().GetLocalToWorldMatrix();
                         const auto& materials = pRenderer->GetMaterials();
                         const auto& submeshes = pMesh->GetSubmeshes();
                         for (std::size_t i = 0; i < submeshes.size(); ++i)
                         {
+                            const DoodleMaterial* pMaterial = materials[submeshes[i].materialIndex];
+                            if (pMaterial == nullptr)
+                            {
+                                continue;
+                            }
+
                             m_reusableDrawItems.push_back(
-                         {
-                                .localToWorld = localToWorld,
-                                .pMaterial = materials[submeshes[i].materialIndex],
-                                .pMesh = pMesh,
-                                .submeshIndex = static_cast<uint32_t>(i)
-                            });
+                                {
+                                    .localToWorld = localToWorld,
+                                    .pMaterial = pMaterial,
+                                    .pMesh = pMesh,
+                                    .submeshIndex = static_cast<uint32_t>(i)
+                                });
                         }
                     }
                 }
