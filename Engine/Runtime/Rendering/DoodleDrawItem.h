@@ -43,7 +43,7 @@ namespace Doodle
         /**
          * 局部到世界的变换，作为 push constant 送进顶点着色器
          *
-         * 它与材质基色共用 DoodlePushConstantObject（布局与 static_assert 在
+         * 它与材质基色共用 DoodleForwardPassPushConstants（布局与 static_assert 在
          * 那个头里；管线布局创建时按同一布局声明范围）；
          * 本项只提供 localToWorld，基色从 pMaterial 现取
          */

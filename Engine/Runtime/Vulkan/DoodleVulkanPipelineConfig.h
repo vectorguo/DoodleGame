@@ -60,9 +60,9 @@ namespace Doodle
     /**
      * 着色器侧描述：一条管线里由着色器决定的全部输入
      *
-     * 每次向管线缓存要管线时传入。以后由着色器资产（DoodleShader）按描述文件与
-     * SPIR-V 反射结果拼出来；材质加载时拿它向管线缓存要管线。现在由门面按
-     * lit 的两份字节码拼出来
+     * 每次向管线缓存要管线时传入。由着色器资产（DoodleShader）按每个 pass 的
+     * 源数据与 SPIR-V 反射结果拼出来；各 pass 用 shader.GetPassDescription(pass)
+     * 取自己那一份。
      *
      * 字节码按值持有（std::vector<std::byte>，与 DoodleFileSystem::ReadBinary 同一个类型）：
      * 管线缓存的条目要存一份副本，格式变了原地重建时再用
@@ -82,10 +82,11 @@ namespace Doodle
         /**
          * set 1 的描述符集布局：这个着色器的材质资源（贴图……）；不持有
          *
-         * 由 DoodleShader 按 SPIR-V 反射结果建（一个着色器一份）。可以为
-         * VK_NULL_HANDLE：不需要材质资源的着色器（调试线框）只有 set 0，
-         * 与其它管线对 set 0 仍然兼容。第 3 步之前所有着色器的 set 1 定义相同，
-         * 所以描述符管理器按纹理分配的集合能绑到任一着色器的管线上
+         * 由 DoodleShader 按 SPIR-V 反射结果建（每个 pass 的描述各一份）。可以为
+         * VK_NULL_HANDLE：不需要材质资源的着色器（调试线框、不透明阴影）只有 set 0，
+         * 与其它管线对 set 0 仍然兼容。DoodleDescriptorManager 按
+         * kMaterialTextureBinding 分配的集合，只在定义相同时才能绑到这条管线上；
+         * DoodleShader 加载时会按这个 pass 的接口契约核对这一点
          *
          * 只在建管线布局时被读取一次：Vulkan 规定作为参数传给另一个对象创建的
          * set 布局，创建返回之后就不再被访问，所以这个布局先于管线布局销毁是合法的

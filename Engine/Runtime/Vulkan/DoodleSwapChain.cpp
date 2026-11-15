@@ -42,7 +42,7 @@ namespace Doodle
         const auto presentMode = SelectSurfacePresentMode(supportDetails.surfacePresentModes);
         const auto compositeAlpha = SelectCompositeAlpha(supportDetails.surfaceCapabilities);
 
-        //预旋转：本工程自己把画面转到图像朝向上（见 DoodleRenderPipeline::UpdateFrameUbo），
+        //预旋转：本工程自己把画面转到图像朝向上（见 DoodleForwardPass::UpdatePassUbo），
         //所以这里如实填 currentTransform，声明"已经转好了"。
         //这意味着后面所有跟着图像尺寸走的东西（extent、视口、深度图）拿到的都是
         //面板自然方向的尺寸，不是用户看到的那个 —— 必须成对处理
@@ -81,7 +81,7 @@ namespace Doodle
             .queueFamilyIndexCount = queueFamilyIndexCount,
             .pQueueFamilyIndices = pQueueFamilyIndices,
             //填 currentTransform 是**承诺**，不是请求：它的意思是"图像内容已经按这个变换转好了"，
-            //合成器因此不会再转一次。真正要转的那一步在投影里补（见 UpdateFrameUbo）。
+            //合成器因此不会再转一次。真正要转的那一步在投影里补（见 DoodleForwardPass::UpdatePassUbo）。
             //
             //桌面（macOS / Windows）上 currentTransform 恒为 IDENTITY，这里什么都不做；
             //Android 手机的自然方向是竖屏，横屏 Activity 拿到的是 90/270 —— 这条路径只在那时生效

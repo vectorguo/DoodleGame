@@ -25,7 +25,7 @@ namespace Doodle
      *
      * 持有两个平级的子对象：
      * - DoodleVulkanManager：设备、交换链、命令层、同步对象与帧时序；
-     * - DoodleRenderPipeline：深度图、frame UBO、描述符管理器、驱动编译缓存与 pass。
+     * - DoodleRenderPipeline：深度图、材质描述符管理器、驱动编译缓存与 pass。
      *
      * 本类只做编排：取主相机 / 主光源组帧上下文 → 开始一帧 → 交给渲染管线录
      * → 提交呈现；以及表面生命周期、交换链重建时两边的调用顺序。**帧时序的边界条件

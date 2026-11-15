@@ -55,7 +55,7 @@ namespace Doodle
          * 转成 GPU 边界使用的 glm::vec4
          *
          * 显式写出：每处调用都在跨 CPU / GLSL 的字节契约，布局约束见
-         * DoodleShaderData.h 里的 static_assert
+         * DoodleForwardPassData.h 里的 static_assert
          */
         [[nodiscard]] glm::vec4 ToVec4() const
         {
