@@ -1,0 +1,24 @@
+{
+  "ExcludedItems": [
+    ".agents",
+    ".agents/**",
+    ".cindy",
+    ".cindy/**",
+    ".claude",
+    ".claude/**",
+    ".codex",
+    ".codex/**",
+    "AI",
+    "AI/**",
+    "out",
+    "out/**",
+    "_local_*",
+    "_local_*/**",
+    "android",
+    "android/**",
+    "windows",
+    "windows/**",
+    ".gitattributes",
+    ".gitignore"
+  ]
+}

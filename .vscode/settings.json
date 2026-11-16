@@ -1,0 +1,15 @@
+{
+  "files.exclude": {
+    ".agents": true,
+    ".cindy": true,
+    ".claude": true,
+    ".codex": true,
+    "AI": true,
+    "out": true,
+    "_local_*": true,
+    "android": true,
+    "windows": true,
+    ".gitattributes": true,
+    ".gitignore": true
+  }
+}

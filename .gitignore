@@ -44,6 +44,19 @@
 .DS_Store
 ._*
 
+# IDE 的工作区设置，入库。
+# 只有这两个文件：VS 的「打开文件夹」靠 VSWorkspaceSettings.json 的 ExcludedItems
+# 决定文件夹视图显示什么（它不读 .gitignore），VS Code / VS 都认 .vscode/settings.json
+# 的 files.exclude。换一台机器打开就是同一份视图。
+# 同目录下 IDE 自己生成的缓存、状态、任务/调试配置仍然全部忽略 ——
+# 先放行目录本身（否则 git 根本不会往下走），再忽略目录内容，最后放行这一个文件
+!/.vs/
+/.vs/*
+!/.vs/VSWorkspaceSettings.json
+!/.vscode/
+/.vscode/*
+!/.vscode/settings.json
+
 # dingman: skill bridge junction output (auto-managed)
 /.agents/skills/dingman_synlink/
 /.xdmaker/
