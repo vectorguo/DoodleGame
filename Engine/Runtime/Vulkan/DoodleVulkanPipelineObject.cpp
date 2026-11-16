@@ -19,7 +19,7 @@ namespace Doodle
     {
         //描述不合法时什么都不建：先查，再动设备
         ValidateShaderDescription(info.shaderDescription);
-        if (info.frameUboDescriptorSetLayout == VK_NULL_HANDLE)
+        if (info.passUboDescriptorSetLayout == VK_NULL_HANDLE)
         {
             throw std::invalid_argument("graphics pipeline: set 0 layout is null");
         }
@@ -31,7 +31,9 @@ namespace Doodle
         //失败的那份会被直接丢弃，没有人再来调 Destroy
         try
         {
-            CreatePipelineLayout(info.frameUboDescriptorSetLayout, info.shaderDescription.materialDescriptorSetLayout);
+            CreatePipelineLayout(info.passUboDescriptorSetLayout,
+                                 info.shaderDescription.materialDescriptorSetLayout,
+                                 info.pushConstantRange);
             m_graphicsPipeline = CreateGraphicsPipeline(info.pipelineCompileCache,
                                                         info.passConfig,
                                                         info.shaderDescription);
@@ -93,20 +95,31 @@ namespace Doodle
         }
     }
 
-    void DoodleVulkanPipelineObject::CreatePipelineLayout(VkDescriptorSetLayout frameUboDescriptorSetLayout, VkDescriptorSetLayout materialDescriptorSetLayout)
+    void DoodleVulkanPipelineObject::CreatePipelineLayout(VkDescriptorSetLayout passUboDescriptorSetLayout,
+                                                          VkDescriptorSetLayout materialDescriptorSetLayout,
+                                                          VkPushConstantRange pushConstantRange)
     {
-        //set 0 负责整帧共享的数据（相机 view / proj 与主光源）；
-        //set 1 负责这个着色器的材质资源（现在是一张纹理）。分成两个集合而不是一个：
-        //UBO 按帧轮转，材质按资产共享，两者的更新频率和数量都不同。
+        //set 0 负责本 pass 的每帧常量；set 1 负责这个着色器的材质资源
+        //（现在是一张纹理）。分成两个集合而不是一个：UBO 按帧轮转，材质按资产共享。
         //
-        //set 0 是全工程那一个句柄、push constant 是全工程那一个范围：Vulkan 的
-        //布局兼容规则要求 set 0..N 与 push constant 范围都相同，管线才对 set N 兼容。
-        //所以换到另一条管线时，已经绑好的 set 0 不会失效。
+        //同一个 pass 内所有管线共用同一个 set 0 布局与 push constant 范围：
+        //Vulkan 的布局兼容规则要求 set 0..N 与 push constant 范围都相同，管线之间
+        //才对 set N 兼容，换管线时已经绑好的 set 0 不会失效
         //
         //不需要材质资源的着色器没有 set 1，布局里只放 set 0 —— 对 set 0 依旧兼容
+        if (pushConstantRange.size > 0)
+        {
+            if (pushConstantRange.offset != 0 ||
+                pushConstantRange.size % 4 != 0 ||
+                pushConstantRange.size > 128)
+            {
+                throw std::invalid_argument("graphics pipeline: invalid push constant range");
+            }
+        }
+
         const VkDescriptorSetLayout setLayouts[]
         {
-            frameUboDescriptorSetLayout,
+            passUboDescriptorSetLayout,
             materialDescriptorSetLayout
         };
         const uint32_t setLayoutCount = materialDescriptorSetLayout != VK_NULL_HANDLE ? 2 : 1;
@@ -116,8 +129,8 @@ namespace Doodle
             .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
             .setLayoutCount = setLayoutCount,
             .pSetLayouts = setLayouts,
-            .pushConstantRangeCount = 1,
-            .pPushConstantRanges = &kPushConstantRange
+            .pushConstantRangeCount = pushConstantRange.size > 0 ? 1u : 0u,
+            .pPushConstantRanges = pushConstantRange.size > 0 ? &pushConstantRange : nullptr
         };
 
         const auto result = vkCreatePipelineLayout(m_pDevice->GetLogicalDevice(), &createInfo, nullptr, &m_pipelineLayout);

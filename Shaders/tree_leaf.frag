@@ -11,7 +11,7 @@
 // 两面才受同一盏灯照亮。对应地，这个着色器的描述文件把背面剔除关掉
 // （renderState.cullMode = none）
 
-#include "Include/DoodleInterface.glsl"
+#include "Include/DoodleForwardPassInterface.glsl"
 #include "Include/DoodleLighting.glsl"
 
 layout(location = 0) in vec3 fragNormal;

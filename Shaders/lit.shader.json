@@ -1,6 +1,10 @@
 {
-  "vertex": "Shaders/lit.vert.spv",
-  "fragment": "Shaders/lit.frag.spv",
   "vertexFormat": "posNormalUv",
-  "instanceFormat": "none"
+  "instanceFormat": "none",
+  "passes": {
+    "forward": {
+      "vertex": "Shaders/lit.vert.spv",
+      "fragment": "Shaders/lit.frag.spv"
+    }
+  }
 }

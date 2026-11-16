@@ -11,17 +11,32 @@
 
 #include "DoodleDepthImages.h"
 #include "DoodleSwapChain.h"
+#include "DoodleVulkanUtils.h"
+#include "Rendering/DoodleCamera.h"
+#include "Rendering/DoodleForwardPassData.h"
 #include "Rendering/DoodleFrameContext.h"
+#include "Rendering/DoodleLight.h"
 #include "Rendering/DoodleMaterial.h"
 #include "Rendering/DoodleMesh.h"
+#include "Rendering/DoodlePassShaderInterface.h"
 #include "Rendering/DoodleShader.h"
-#include "Rendering/DoodleShaderData.h"
 
 namespace Doodle
 {
     void DoodleForwardPass::Initialize(const DoodleForwardPassInitInfo& info)
     {
-        DoodleRenderPass::Initialize(info.renderPassInfo, MakePassConfig(info.swapChain, info.depthImages));
+        m_pSwapChain = &info.swapChain;
+        m_pDepthImages = &info.depthImages;
+
+        //本 pass 的 set 0 契约与数据块大小由 forward 的 interface 决定；
+        //基类按它建 UBO / 布局 / 池 / 集合
+        DoodleRenderPassInitInfo renderPassInfo = info.renderPassInfo;
+        const DoodlePassShaderInterface& passInterface = GetPassShaderInterface(EDoodlePassType::Forward);
+        renderPassInfo.passUboBinding = passInterface.passUboBinding;
+        renderPassInfo.passUboBufferSize = sizeof(DoodleForwardPassUbo);
+        renderPassInfo.pushConstantRange = passInterface.pushConstantRange;
+
+        DoodleRenderPass::Initialize(renderPassInfo, MakePassConfig(info.swapChain, info.depthImages));
     }
 
     void DoodleForwardPass::WarmupShaders(const std::vector<const DoodleShader*>& shaders)
@@ -37,6 +52,13 @@ namespace Doodle
                 continue;
             }
 
+            //队列里可能有只给别的 pass 用的着色器（例如 shadow-only）；
+            //没有 forward 描述就跳过，真正的缺失由 Render 在录制前拦
+            if (pShader->GetPassDescription(EDoodlePassType::Forward) == nullptr)
+            {
+                continue;
+            }
+
             //结果不用：解析本身就会把管线建出来并填进 memo
             static_cast<void>(ResolvePipeline(*pShader));
         }
@@ -47,6 +69,53 @@ namespace Doodle
         m_pipelinesByShader.clear();
     }
 
+    void DoodleForwardPass::UpdatePassUbo(const DoodleFrameContext& context)
+    {
+        DoodleForwardPassUbo ubo;
+
+        //view 由相机从宿主 Transform 现算：相机不存位置 / 朝向，
+        //移动它所在的对象，画面自然跟着变
+        ubo.view = context.camera.GetViewMatrix();
+
+        //每帧重新读交换链尺寸：窗口缩放后宽高比自动正确，
+        //描述符集与 UBO 对象本身都不需要重建
+        const auto extent = m_pSwapChain->GetImageExtent();
+        const auto preTransform = m_pSwapChain->GetPreTransform();
+
+        //宽高比要用**用户看到的那一组**。交换链做了预旋转时，图像宽高和显示方向是对调的，
+        //所以这里再对调回来 —— 透视必须按显示方向算，算完再转，才是同一份画面。
+        //
+        //Y 翻转已经在 GetProjectionMatrix 里做完；这里拿到的 proj 是「显示方向 +
+        //Vulkan 裁剪空间」的结果
+        ubo.proj = context.camera.GetProjectionMatrix(DoodleVulkanUtils::GetDisplayAspect(extent, preTransform));
+
+        //最后把整幅画面转到图像自己的朝向上。桌面拿到的是 IDENTITY，这一乘是单位阵。
+        //
+        //必须排在 Y 翻转之后、作为投影的最后一步左乘：Y 翻转负责换成 Vulkan 的 NDC，
+        //预旋转是在 Vulkan 的 NDC 里做的。顺序一换，Android 上会静默变形
+        ubo.proj = DoodleVulkanUtils::MakePreRotation(preTransform) * ubo.proj;
+
+        //主光源：方向取组件宿主 Transform 的前向，颜色乘上强度。
+        //方向已经是单位向量（DoodleLight::GetDirection 负责），这里不再归一化
+        //
+        //没有启用的光源时写零颜色：片元着色器只剩环境项，画面偏暗但仍是
+        //同一份着色逻辑。方向填一个固定值只是让 UBO 内容确定，不参与可见结果
+        if (context.pLight != nullptr)
+        {
+            ubo.lightDirection = glm::vec4(context.pLight->GetDirection(), 0.0f);
+            ubo.lightColor = glm::vec4(context.pLight->GetColor() * context.pLight->GetIntensity(), 0.0f);
+        }
+        else
+        {
+            ubo.lightDirection = glm::vec4(0.0f, 0.0f, -1.0f, 0.0f);
+            ubo.lightColor = glm::vec4(0.0f);
+        }
+
+        //HOST_COHERENT 保证不需要手动 flush；下一次 vkQueueSubmit 之后再读取时，
+        //这份写入对 GPU 可见。写入位置已在调用处保证：帧栅栏之后、录制之前
+        WritePassUbo(context.frameIndex, &ubo, sizeof(ubo));
+    }
+
     const DoodleVulkanPipelineObject& DoodleForwardPass::ResolvePipeline(const DoodleShader& shader)
     {
         const auto it = m_pipelinesByShader.find(&shader);
@@ -55,9 +124,16 @@ namespace Doodle
             return *it->second;
         }
 
+        const DoodleVulkanPipelineShaderDescription* pDescription =
+            shader.GetPassDescription(EDoodlePassType::Forward);
+        if (pDescription == nullptr)
+        {
+            throw std::invalid_argument("shader has no forward pass description");
+        }
+
         //内容相同的两个着色器资产会在这里拿到同一条管线；memo 只省掉每绘制项的
         //内容哈希与逐字节比对，不改变管线表「按内容查找」的语义
-        const DoodleVulkanPipelineObject& pipeline = GetPipeline(shader.GetForwardPassDescription());
+        const DoodleVulkanPipelineObject& pipeline = GetPipeline(*pDescription);
         m_pipelinesByShader.emplace(&shader, &pipeline);
         return pipeline;
     }
@@ -72,13 +148,31 @@ namespace Doodle
             throw std::invalid_argument("material descriptor sets must match the number of draw items");
         }
 
+        //本帧要画的每个材质都必须有 forward 描述，且管线要在录任何命令之前解析好。
+        //缺失或建管线失败都停在这里，避免 vkCmdBeginRendering 之后才抛
+        for (const DoodleDrawItem& drawItem : frameContext.drawItems)
+        {
+            const DoodleShader* pShader = drawItem.pMaterial->GetShader();
+            if (pShader == nullptr)
+            {
+                throw std::logic_error("draw item material has no shader");
+            }
+
+            static_cast<void>(ResolvePipeline(*pShader));
+        }
+
+        //在录任何命令之前，把本帧的相机 / 光源写进基类的 per-pass UBO。
+        //调用位置由 DoodleRenderPipeline 保证在 BeginFrame 的帧栅栏之后
+        UpdatePassUbo(frameContext);
+
         const VkCommandBuffer commandBuffer = frameContext.commandBuffer;
-        const VkExtent2D imageExtent = passContext.swapChain.GetImageExtent();
+        const VkExtent2D imageExtent = m_pSwapChain->GetImageExtent();
+        const VkDescriptorSet passUboDescriptorSet = GetPassUboDescriptorSet(frameContext.frameIndex);
 
         //取图之后、开画之前：颜色与深度各转一次布局。
         //原来是渲染通道入口自动做的（连同转换时机），动态渲染之后两件事都归 pass
-        RecordImageTransitionToColorAttachment(frameContext, passContext);
-        RecordImageTransitionToDepthAttachment(frameContext, passContext);
+        RecordImageTransitionToColorAttachment(frameContext);
+        RecordImageTransitionToDepthAttachment(frameContext);
 
         //开始渲染。原来要指一个 VkRenderPass 加一个 VkFramebuffer，现在改成把
         //这批结构直接当参数写出来：视图、布局、load/store、清屏值。
@@ -89,7 +183,7 @@ namespace Doodle
         const VkRenderingAttachmentInfo colorAttachment
         {
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = passContext.swapChain.GetImageViews()[frameContext.imageIndex],
+            .imageView = m_pSwapChain->GetImageViews()[frameContext.imageIndex],
             .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
             .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -103,7 +197,7 @@ namespace Doodle
         const VkRenderingAttachmentInfo depthAttachment
         {
             .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = passContext.depthImages.GetImageView(frameContext.frameIndex),
+            .imageView = m_pDepthImages->GetImageView(frameContext.frameIndex),
             //这句是陈述句：必须是上面那条屏障转换出来的布局，写错了是未定义行为
             .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
@@ -160,6 +254,7 @@ namespace Doodle
         const DoodleVulkanPipelineObject* pBoundPipeline = nullptr;
         bool frameSetBound = false;
         VkDescriptorSet boundMaterialSet = VK_NULL_HANDLE;
+        const VkPushConstantRange pushConstantRange = GetPushConstantRange();
         for (std::size_t i = 0; i < frameContext.drawItems.size(); ++i)
         {
             const DoodleDrawItem& drawItem = frameContext.drawItems[i];
@@ -190,7 +285,7 @@ namespace Doodle
                 boundMaterialSet = VK_NULL_HANDLE;
             }
 
-            //set 0 整帧只绑一次：所有管线共用同一个 set 0 布局与 push constant 范围，
+            //set 0 整帧只绑一次：本 pass 内所有管线共用同一个 set 0 布局与 push 范围，
             //换管线不会让它失效。用当前管线的布局来解释它
             if (!frameSetBound)
             {
@@ -200,7 +295,7 @@ namespace Doodle
                     pPipeline->GetPipelineLayout(),
                     0,
                     1,
-                    &passContext.frameUboDescriptorSet,
+                    &passUboDescriptorSet,
                     0,
                     nullptr);
                 frameSetBound = true;
@@ -224,15 +319,15 @@ namespace Doodle
             }
 
             //localToWorld 与材质基色每个绘制项一份，走 push constant。数据块的布局
-            //由 DoodlePushConstantObject 钉住，阶段 / 偏移 / 大小取管线层的
-            //kPushConstantRange —— 管线布局与这里只认同一份定义，改一处不会漏另一处
+            //由 DoodleForwardPassPushConstants 钉住，阶段 / 偏移 / 大小取本 pass 的
+            //pushConstantRange —— 管线布局与这里只认同一份定义，改一处不会漏另一处
             //
             //基色在写进 push constant 的这一处才从作者写的 sRGB 转成线性：
             //纹理按 SRGB 格式上传，采样结果本来就是线性，两者相乘才在同一空间
             //
             //push 的是这条命令缓冲的当前值，下一条 push 直接覆盖 ——
             //不需要每绘制项一块 UBO，也不需要等 GPU 用完上一份
-            const DoodlePushConstantObject pushConstants
+            const DoodleForwardPassPushConstants pushConstants
             {
                 .localToWorld = drawItem.localToWorld,
                 .baseColor = material.GetBaseColor().SRGBToLinear().ToVec4()
@@ -240,9 +335,9 @@ namespace Doodle
             vkCmdPushConstants(
                 commandBuffer,
                 pPipeline->GetPipelineLayout(),
-                DoodleVulkanPipelineObject::kPushConstantRange.stageFlags,
-                DoodleVulkanPipelineObject::kPushConstantRange.offset,
-                DoodleVulkanPipelineObject::kPushConstantRange.size,
+                pushConstantRange.stageFlags,
+                pushConstantRange.offset,
+                pushConstantRange.size,
                 &pushConstants);
 
             //绑定顶点缓冲。这里的 binding 编号 0 指回管线顶点输入描述里的 binding = 0 ——
@@ -288,7 +383,7 @@ namespace Doodle
         vkCmdEndRendering(commandBuffer);
 
         //画完、交回呈现引擎之前：转回呈现布局 —— 原来是渲染通道 finalLayout 的活
-        RecordImageTransitionToPresent(frameContext, passContext);
+        RecordImageTransitionToPresent(frameContext);
     }
 
     void DoodleForwardPass::RebuildIfPassConfigChanged(const DoodleSwapChain& swapChain,
@@ -312,8 +407,7 @@ namespace Doodle
         };
     }
 
-    void DoodleForwardPass::RecordImageTransitionToColorAttachment(const DoodleFrameContext& frameContext,
-                                                                            const DoodleRenderPassContext& passContext) const
+    void DoodleForwardPass::RecordImageTransitionToColorAttachment(const DoodleFrameContext& frameContext) const
     {
         //取图之后、开画之前。
         //
@@ -348,7 +442,7 @@ namespace Doodle
             //（见 DoodleSwapChain.cpp），两条路都不需要转移
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = passContext.swapChain.GetImages()[frameContext.imageIndex],
+            .image = m_pSwapChain->GetImages()[frameContext.imageIndex],
             //整张图、单层单级：交换链图像没有 mip 层级，也不是数组
             .subresourceRange =
             {
@@ -373,8 +467,7 @@ namespace Doodle
         vkCmdPipelineBarrier2(frameContext.commandBuffer, &dependencyInfo);
     }
 
-    void DoodleForwardPass::RecordImageTransitionToDepthAttachment(const DoodleFrameContext& frameContext,
-                                                                            const DoodleRenderPassContext& passContext) const
+    void DoodleForwardPass::RecordImageTransitionToDepthAttachment(const DoodleFrameContext& frameContext) const
     {
         //取图之后、开画之前。这一步在渲染通道时代由驱动在通道入口自动完成；
         //动态渲染把它交还给录制者 —— 原文标注为「可以跳过」的那一节，在这里是必做
@@ -383,7 +476,7 @@ namespace Doodle
         //
         //切面按格式算：候选表落到带模板的格式时，模板分量必须一起声明
         const VkImageAspectFlags aspectMask =
-            DoodleDepthImages::HasStencilComponent(passContext.depthImages.GetFormat())
+            DoodleDepthImages::HasStencilComponent(m_pDepthImages->GetFormat())
                 ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
                 : VK_IMAGE_ASPECT_DEPTH_BIT;
 
@@ -409,7 +502,7 @@ namespace Doodle
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             //按 frameIndex 取本帧那一张：本层不缓存上游句柄，重建后重录拿到的自然是新的
-            .image = passContext.depthImages.GetImage(frameContext.frameIndex),
+            .image = m_pDepthImages->GetImage(frameContext.frameIndex),
             .subresourceRange =
             {
                 .aspectMask = aspectMask,
@@ -430,8 +523,7 @@ namespace Doodle
         vkCmdPipelineBarrier2(frameContext.commandBuffer, &dependencyInfo);
     }
 
-    void DoodleForwardPass::RecordImageTransitionToPresent(const DoodleFrameContext& frameContext,
-                                                                   const DoodleRenderPassContext& passContext) const
+    void DoodleForwardPass::RecordImageTransitionToPresent(const DoodleFrameContext& frameContext) const
     {
         //画完、交回呈现引擎之前。这一步原来是渲染通道 finalLayout 的活。
         //
@@ -459,7 +551,7 @@ namespace Doodle
             .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = passContext.swapChain.GetImages()[frameContext.imageIndex],
+            .image = m_pSwapChain->GetImages()[frameContext.imageIndex],
             .subresourceRange =
             {
                 .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,

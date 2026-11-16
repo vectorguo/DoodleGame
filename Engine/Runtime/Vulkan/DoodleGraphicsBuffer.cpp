@@ -153,12 +153,16 @@ namespace Doodle
 
     void DoodleGraphicsBuffer::Destroy()
     {
+        //从未初始化、或已经销毁过：没有句柄要收。这条早退让调用方可以在
+        //失败清理路径上无条件遍历整个缓冲数组，不必自己记哪几块建过
+        if (m_pDevice == nullptr)
+        {
+            return;
+        }
+
         //映射是 CPU 与内存之间的临时关系，释放内存前先解除它。
         //Destroy 自己兜住这条规则，调用方不必在每处销毁前手写 vkUnmapMemory
-        if (m_pDevice != nullptr)
-        {
-            Unmap();
-        }
+        Unmap();
 
         //两个对象都引用了逻辑设备，必须先于设备层销毁
         const auto logicalDevice = m_pDevice->GetLogicalDevice();

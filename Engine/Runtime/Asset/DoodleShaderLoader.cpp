@@ -48,38 +48,76 @@ namespace Doodle
             const DoodleComponentConfig config(std::move(root));
 
 #ifndef NDEBUG
-            config.ExpectOnlyKeys({"vertex", "fragment", "vertexFormat", "instanceFormat", "renderState"});
+            config.ExpectOnlyKeys({"passes", "vertexFormat", "instanceFormat"});
 #endif
-            const std::string vertexPath = config.GetString("vertex", "");
-            const std::string fragmentPath = config.GetString("fragment", "");
-            if (vertexPath.empty() || fragmentPath.empty())
-            {
-                throw std::runtime_error("'vertex' and 'fragment' must both name a SPIR-V file");
-            }
-
             const EVertexFormat vertexFormat = ParseVertexFormat(config.GetString("vertexFormat", "posNormalUv"));
             const EInstanceFormat instanceFormat = ParseInstanceFormat(config.GetString("instanceFormat", "none"));
 
-            //renderState 整块可选：整个缺省就用渲染状态的默认值（剔除背面、深度测试与
-            //写入都开、LESS、不透明、不偏移、三角形列表）
-            DoodleRenderState renderState;
+            //passes 是必须的对象，且至少一节；每个 key 是 pass 名，value 是该 pass 的源文件
             const nlohmann::json& rootJson = config.GetJson();
-            if (rootJson.contains("renderState"))
+            if (!rootJson.contains("passes") || !rootJson.at("passes").is_object())
             {
-                const DoodleComponentConfig renderConfig(rootJson.at("renderState"));
-#ifndef NDEBUG
-                renderConfig.ExpectOnlyKeys({"cullMode", "depthTest", "depthWrite", "depthCompare",
-                                             "blendMode", "depthBiasEnabled", "depthBiasConstant",
-                                             "depthBiasSlope", "topology"});
-#endif
-                renderState = ReadRenderState(renderConfig);
+                throw std::runtime_error("'passes' must be an object with at least one pass");
+            }
+            const nlohmann::json& passesJson = rootJson.at("passes");
+            if (passesJson.empty())
+            {
+                throw std::runtime_error("'passes' must contain at least one pass");
             }
 
-            const std::vector<std::byte> vertexBytecode = ReadShaderFile(GetFileSystem(), vertexPath);
-            const std::vector<std::byte> fragmentBytecode = ReadShaderFile(GetFileSystem(), fragmentPath);
+            std::vector<DoodlePassShaderSource> passSources;
+            passSources.reserve(passesJson.size());
+            for (const auto& [passName, passJson] : passesJson.items())
+            {
+                if (!passJson.is_object())
+                {
+                    throw std::runtime_error("pass '" + passName + "' must be an object");
+                }
+
+                //pass 名无条件解析：拼错的名字会让整节描述凭空消失，必须当场报错
+                const EDoodlePassType pass = ParseShaderPass(passName);
+
+                const DoodleComponentConfig passConfig(passJson);
+#ifndef NDEBUG
+                passConfig.ExpectOnlyKeys({"vertex", "fragment", "renderState"});
+#endif
+                const std::string vertexPath = passConfig.GetString("vertex", "");
+                const std::string fragmentPath = passConfig.GetString("fragment", "");
+                if (vertexPath.empty() || fragmentPath.empty())
+                {
+                    throw std::runtime_error("pass '" + passName + "': 'vertex' and 'fragment' must both name a SPIR-V file");
+                }
+
+                //renderState 整块可选：缺省就用渲染状态的默认值（剔除背面、深度测试与
+                //写入都开、LESS、不透明、不偏移、三角形列表）
+                DoodleRenderState renderState;
+                if (passJson.contains("renderState"))
+                {
+                    const DoodleComponentConfig renderConfig(passJson.at("renderState"));
+#ifndef NDEBUG
+                    renderConfig.ExpectOnlyKeys({"cullMode", "depthTest", "depthWrite", "depthCompare",
+                                                 "blendMode", "depthBiasEnabled", "depthBiasConstant",
+                                                 "depthBiasSlope", "topology"});
+#endif
+                    renderState = ReadRenderState(renderConfig);
+                }
+
+                DoodlePassShaderSource source;
+                source.pass = pass;
+                source.vertexBytecode = ReadShaderFile(GetFileSystem(), vertexPath);
+                source.fragmentBytecode = ReadShaderFile(GetFileSystem(), fragmentPath);
+                source.renderState = renderState;
+                passSources.push_back(std::move(source));
+            }
 
             auto shader = std::make_unique<DoodleShader>(key);
-            shader->Initialize(*m_pDevice, vertexBytecode, fragmentBytecode, renderState, vertexFormat, instanceFormat);
+            shader->Initialize(
+            {
+                .device = *m_pDevice,
+                .vertexFormat = vertexFormat,
+                .instanceFormat = instanceFormat,
+                .passSources = passSources
+            });
             return shader;
         }
         catch (const std::exception& error)
@@ -122,6 +160,19 @@ namespace Doodle
         renderState.depthBiasSlopeFactor = config.GetFloat("depthBiasSlope", renderState.depthBiasSlopeFactor);
         renderState.topology = ParseTopology(config.GetString("topology", "triangleList"));
         return renderState;
+    }
+
+    EDoodlePassType DoodleShaderLoader::ParseShaderPass(const std::string& value)
+    {
+        if (value == "forward")
+        {
+            return EDoodlePassType::Forward;
+        }
+        if (value == "shadow")
+        {
+            return EDoodlePassType::Shadow;
+        }
+        throw std::runtime_error("unknown pass '" + value + "'");
     }
 
     EVertexFormat DoodleShaderLoader::ParseVertexFormat(const std::string& value)

@@ -22,8 +22,9 @@ namespace Doodle
     /**
      * 初始化前向 pass 的全部输入
      *
-     * renderPassInfo 是基类要的共享服务，本类原样转交；swapChain / depthImages
-     * 是本 pass 算附件配置的来源 —— 配置由本类从这两样算出来，不由调用方给。
+     * renderPassInfo 是基类要的设备与编译缓存，本类补上 forward 的 set 0 绑定 /
+     * 大小 / push 范围后再转交；swapChain / depthImages 是本 pass 算附件配置的来源
+     * —— 配置由本类从这两样算出来，不由调用方给。
      */
     struct DoodleForwardPassInitInfo
     {
@@ -48,10 +49,11 @@ namespace Doodle
      *
      * 它负责前向 pass 特有的事：按交换链 / 深度图算出 pass 配置、交换链重建后
      * 判断配置变没变，以及把这一 pass 录进命令缓冲（附件屏障、动态渲染、
-     * 视口 / 剪裁、逐绘制项绘制）。管线表、查找、批量重建都在 DoodleRenderPass 基类里。
+     * 视口 / 剪裁、逐绘制项绘制）。管线表、查找、批量重建与 per-pass 常量资源
+     * 都在 DoodleRenderPass 基类里。
      *
-     * 现在只有这一个 pass。以后阴影、延迟、后处理各派生一个，构造与销毁
-     * 由 DoodleRenderPipeline 负责。
+     * 阴影 pass 目前是 DoodleShadowPass 骨架；延迟、后处理以后各派生一个，
+     * 构造与销毁由 DoodleRenderPipeline 负责。
      */
     class DoodleForwardPass final : public DoodleRenderPass
     {
@@ -73,7 +75,11 @@ namespace Doodle
          * 录一个前向 pass：颜色 / 深度附件、动态渲染、逐绘制项绘制
          *
          * 每条绘制项按材质的着色器向本 pass 的管线表解析管线；管线变了才重新绑定，
-         * set 1 跟着失效。set 0 与 push constant 范围在全工程内相同，换管线不必重绑 set 0
+         * set 1 跟着失效。本 pass 内的所有管线共用同一个 set 0 布局与 push 范围，
+         * 换管线不必重绑 set 0。
+         *
+         * 本帧的相机 / 光源常量在录任何命令之前写进基类的 per-pass UBO；
+         * 调用位置由 DoodleRenderPipeline 保证在帧栅栏之后。
          */
         void Render(const DoodleFrameContext& frameContext, const DoodleRenderPassContext& passContext) override;
 
@@ -118,24 +124,40 @@ namespace Doodle
             const DoodleDepthImages& depthImages);
 
         /**
+         * 把本帧的 view / proj 与主光源写进基类的 per-pass UBO
+         *
+         * 调用位置与投影的推导细节见 Render 的注释；本函数只负责填数据与写入
+         *
+         * @param frameContext 本帧上下文，只取其中的相机与光源
+         */
+        void UpdatePassUbo(const DoodleFrameContext& frameContext);
+
+        /**
          * 录一次布局转换：取图之后、开画之前，把交换链图像转成颜色附件布局
          */
-        void RecordImageTransitionToColorAttachment(const DoodleFrameContext& frameContext,
-                                                    const DoodleRenderPassContext& passContext) const;
+        void RecordImageTransitionToColorAttachment(const DoodleFrameContext& frameContext) const;
 
         /**
          * 录一次布局转换：把本帧的深度图转成深度附件布局
          */
-        void RecordImageTransitionToDepthAttachment(const DoodleFrameContext& frameContext,
-                                                    const DoodleRenderPassContext& passContext) const;
+        void RecordImageTransitionToDepthAttachment(const DoodleFrameContext& frameContext) const;
 
         /**
          * 录一次布局转换：画完之后、交回呈现引擎之前，转回呈现布局
          */
-        void RecordImageTransitionToPresent(const DoodleFrameContext& frameContext,
-                                            const DoodleRenderPassContext& passContext) const;
+        void RecordImageTransitionToPresent(const DoodleFrameContext& frameContext) const;
 
     private:
+        /**
+         * 颜色附件的来源，不拥有；寿命由 DoodleRenderPipeline 保证
+         */
+        const DoodleSwapChain* m_pSwapChain = nullptr;
+
+        /**
+         * 深度附件的来源，不拥有；对象地址稳定，内容随交换链重建
+         */
+        const DoodleDepthImages* m_pDepthImages = nullptr;
+
         /**
          * 着色器 → 本 pass 的管线
          *

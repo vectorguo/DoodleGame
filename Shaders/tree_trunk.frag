@@ -10,7 +10,7 @@
 // 树皮不透明、单面（背面剔除），所以这里既不做 alpha 镂空，也不翻背面法线 ——
 // 那是树叶着色器的事
 
-#include "Include/DoodleInterface.glsl"
+#include "Include/DoodleForwardPassInterface.glsl"
 #include "Include/DoodleLighting.glsl"
 
 layout(location = 0) in vec3 fragNormal;

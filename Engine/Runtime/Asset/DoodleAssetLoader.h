@@ -129,7 +129,7 @@ namespace Doodle
                 throw std::runtime_error("asset loader returned null for key: " + std::string(key));
             }
 
-            T* pAsset = asset.get();
+            const T* pAsset = asset.get();
             m_assets.emplace(std::string(key), std::move(asset));
             return pAsset;
         }

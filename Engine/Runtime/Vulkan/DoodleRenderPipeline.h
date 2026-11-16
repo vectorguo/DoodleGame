@@ -12,8 +12,7 @@
 #include "DoodleDepthImages.h"
 #include "DoodleDescriptorManager.h"
 #include "DoodleForwardPass.h"
-#include "DoodleGraphicsBuffer.h"
-#include "DoodleVulkanConfig.h"
+#include "DoodleShadowPass.h"
 #include "DoodleVulkanPipelineCompileCache.h"
 #include "DoodlePipelineWarmupQueue.h"
 
@@ -30,8 +29,12 @@ namespace Doodle
      * 渲染管线：项目级的渲染策略
      *
      * 一个实例回答「这一帧怎么画」：持有渲染策略所需的常驻资源 —— 深度图、
-     * frame UBO、描述符管理器、驱动编译缓存 —— 以及按顺序执行的 pass。
-     * 现在只有一个前向 pass；阴影、后处理到来时加进同一个实例，由本类决定顺序。
+     * 材质描述符管理器、驱动编译缓存 —— 以及按顺序执行的 pass。
+     * 现在有一个前向 pass 和一个预留的 shadow pass；阴影渲染尚未实现，
+     * shadow pass 只占编排位置。以后后处理到来时加进同一个实例，由本类决定顺序。
+     *
+     * **每帧常量归各自的 pass**：相机 / 光源这类数据由前向 pass 自己写进它的
+     * per-pass UBO；本类不再持有 frame UBO，也不认识相机与光源。
      *
      * **与 DoodleRenderPass 的分工**：本类管「有几个 pass、按什么顺序、它们共用什么
      * 资源」；每个 pass 管自己那一段怎么录（附件、屏障、管线、绘制）。
@@ -90,11 +93,11 @@ namespace Doodle
         }
 
         /**
-         * 建出常驻渲染资源与第一个 pass
+         * 建出常驻渲染资源与全部 pass
          *
-         * 顺序：深度图 → frame UBO → 描述符管理器 → 驱动编译缓存 → 前向 pass。
-         * 深度图要交换链尺寸；描述符管理器要 UBO 句柄；前向 pass 要交换链 /
-         * 深度图的格式、frame UBO 与材质的描述符集布局。
+         * 顺序：深度图 → 材质描述符管理器 → 驱动编译缓存 → shadow pass → 前向 pass。
+         * 深度图要交换链尺寸；描述符管理器的默认白图要借命令管理层的传输池；
+         * 两个 pass 都只要设备与编译缓存 —— 各自建自己的 per-pass 常量资源。
          *
          * @param vulkanManager 已初始化的 Vulkan 后端：本类从这里取设备、交换链
          *        以及以后可能需要的其他后端服务。参数收成一个对象，后端新增服务时
@@ -108,9 +111,9 @@ namespace Doodle
         /**
          * 拆掉本类持有的全部资源
          *
-         * 顺序与 Initialize 相反：前向 pass → 驱动编译缓存 → 描述符管理器 →
-         * UBO → 深度图。管线布局引用描述符管理器的 set 布局，所以 pass 必须
-         * 排在它之前。
+         * 顺序与 Initialize 相反：前向 pass → shadow pass → 驱动编译缓存 →
+         * 描述符管理器 → 深度图。管线布局引用描述符管理器的 set 布局，所以 pass
+         * 必须排在它之前。
          *
          * 开头先清空待预热队列：里面是着色器的非拥有指针，资产可能已经先于本类
          * 销毁；清空只丢指针、不解引用，所以放在资源拆除之前即可。
@@ -122,9 +125,9 @@ namespace Doodle
         /**
          * 把本帧录进给定的命令缓冲
          *
-         * 从帧上下文读取帧索引、图像索引、命令缓冲与应用输入：写本帧 UBO →
-         * 解析 set 0 / set 1 → 交给每个 pass 录制。UBO 的写入位置必须在
-         * 本槽位栅栏之后、命令录制之前。
+         * 从帧上下文读取帧索引、图像索引、命令缓冲与应用输入：解析本帧的材质
+         * 描述符集，然后交给每个 pass 录制。每个 pass 自己负责写本帧常量 ——
+         * 写入位置必须在本槽位栅栏之后、该 pass 的命令录制之前。
          *
          * @param frameContext BeginFrame 填好状态字段的帧上下文
          *
@@ -149,8 +152,8 @@ namespace Doodle
         /**
          * 表面消失前调用：拆掉跟随交换链的渲染资源
          *
-         * 现在只有深度图 —— 它按交换链尺寸分配。管线、UBO、描述符资源都与表面
-         * 无关，保留下来；重建它们的代价远大于留着。
+         * 现在只有深度图 —— 它按交换链尺寸分配。管线、per-pass 常量与描述符资源
+         * 都与表面无关，保留下来；重建它们的代价远大于留着。
          *
          * @note 前置条件：GPU 已空闲；之后不得再调用 Render，直到
          *       OnSwapChainRecreated
@@ -170,31 +173,13 @@ namespace Doodle
 
     private:
         /**
-         * 为每个在途帧建一块 CPU 可写的 frame UBO
+         * 按渲染顺序列出本类持有的 pass
          *
-         * UBO 每帧都要更新，所以走 HostVisible 类型，不走设备本地 + 中转。
-         * 第一次 Write 时建立持久映射，之后每帧直接 memcpy
+         * Render / WarmupPipelines 正序遍历，Destroy 逆序遍历。集中在一处，
+         * 以后加 pass 时不会漏掉某个调用点
          */
-        void CreateFrameUbos();
+        [[nodiscard]] std::array<DoodleRenderPass*, 2> GetPasses();
 
-        /**
-         * 解除映射并销毁所有 frame UBO
-         *
-         * 调用前必须先销毁描述符管理器：集合指向这些缓冲，管理器先走，集合才失效
-         */
-        void DestroyFrameUbos();
-
-        /**
-         * 把本帧的 view / proj 与主光源写进第 frameIndex 块 frame UBO
-         *
-         * 调用位置与投影的推导细节见 Render 的注释；本函数只负责填数据与写入
-         *
-         * @param frameIndex 在途帧索引
-         * @param context 本帧上下文，只取其中的相机与光源
-         */
-        void UpdateFrameUbo(uint32_t frameIndex, const DoodleFrameContext& context);
-
-    private:
         /**
          * 当前实例，构造时登记、析构时清空
          */
@@ -215,31 +200,23 @@ namespace Doodle
         /**
          * 深度图组：每在途帧一张，随交换链尺寸重建
          *
-         * 声明顺序与创建顺序一致：深度图 → UBO → 描述符管理器 → 编译缓存 →
-         * 前向 pass。正常析构（没有走 Destroy）时成员逆序释放，正好是
-         * 「使用者先、被使用者后」
+         * 声明顺序与创建顺序一致：深度图 → 描述符管理器 → 编译缓存 →
+         * shadow pass → 前向 pass。正常析构（没有走 Destroy）时成员逆序释放，
+         * 正好是「使用者先、被使用者后」
          */
         DoodleDepthImages m_depthImages;
 
         /**
-         * 每帧一块 frame UBO，HostVisible 类型
+         * 材质描述符管理器：按纹理缓存 set 1；set 0 由各 pass 自己持有
          *
-         * 不随交换链重建：窗口缩放只改投影矩阵的内容，不改缓冲对象。
-         * 数量必须与 MAX_FRAMES_IN_FLIGHT 一致
-         */
-        std::array<DoodleGraphicsBuffer, MAX_FRAMES_IN_FLIGHT> m_frameUbos;
-
-        /**
-         * 描述符管理器：frame UBO 的 set 0 与材质纹理的 set 1
-         *
-         * 排在 UBO 之后（要缓冲句柄）、所有管线之前（管线要它的两个 set 布局）
+         * 排在深度图之后（默认白图上传要命令层）、所有管线之前（管线要它的 set 1 布局）
          */
         DoodleDescriptorManager m_descriptorManager;
 
         /**
          * 驱动编译缓存：全进程一个，所有 pass 共用
          *
-         * 排在描述符管理器之后、前向 pass 之前（建管线时要用它）
+         * 排在描述符管理器之后、所有 pass 之前（建管线时要用它）
          */
         DoodleVulkanPipelineCompileCache m_pipelineCompileCache;
 
@@ -252,9 +229,17 @@ namespace Doodle
         DoodlePipelineWarmupQueue m_pipelineWarmupQueue;
 
         /**
+         * 阴影 pass 骨架：本次只占编排位置
+         *
+         * 排在 forward 之前录；不建 shadow map、不分配 per-pass UBO、不建管线。
+         * 实现阴影时由它自己长成真正的深度 pass
+         */
+        DoodleShadowPass m_shadowPass;
+
+        /**
          * 前向主 pass：拥有这一 pass 下的所有管线
          *
-         * 现在只有这一个 pass。以后阴影、延迟、后处理各派生一个，由本类按顺序持有
+         * 排在 shadow pass 之后录；以后延迟、后处理各派生一个，由本类按顺序持有
          */
         DoodleForwardPass m_forwardPass;
     };

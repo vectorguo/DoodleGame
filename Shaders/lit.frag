@@ -6,7 +6,7 @@
 // 通用不透明网格：采样材质纹理、乘材质基色，再做方向光 + 环境项。
 // 所有网格的兜底着色器 —— 材质没写 shader 时用它。
 
-#include "Include/DoodleInterface.glsl"
+#include "Include/DoodleForwardPassInterface.glsl"
 #include "Include/DoodleLighting.glsl"
 
 // 输入插槽 0：顶点着色器送来的世界空间法线。已经过光栅化插值，

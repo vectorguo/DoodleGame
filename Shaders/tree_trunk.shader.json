@@ -1,6 +1,10 @@
 {
-  "vertex": "Shaders/tree_trunk.vert.spv",
-  "fragment": "Shaders/tree_trunk.frag.spv",
   "vertexFormat": "posNormalUv",
-  "instanceFormat": "none"
+  "instanceFormat": "none",
+  "passes": {
+    "forward": {
+      "vertex": "Shaders/tree_trunk.vert.spv",
+      "fragment": "Shaders/tree_trunk.frag.spv"
+    }
+  }
 }

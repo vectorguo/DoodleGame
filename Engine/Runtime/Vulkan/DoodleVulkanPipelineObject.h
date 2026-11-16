@@ -8,7 +8,6 @@
 
 #include "DoodleVulkanPipelineConfig.h"
 #include "Rendering/DoodleRenderState.h"
-#include "Rendering/DoodleShaderData.h"
 
 namespace Doodle
 {
@@ -18,13 +17,13 @@ namespace Doodle
     /**
      * 建一条图形管线的全部输入
      *
-     * 设备与两个共享句柄由外层提供，passConfig / shaderDescription 是本次要建
-     * 什么样的描述。Vulkan 创建管线本来就是「一大包输入」的形态；以后加
+     * 设备与 pass 侧的共享输入由外层提供，passConfig / shaderDescription 是本次
+     * 要建什么样的描述。Vulkan 创建管线本来就是「一大包输入」的形态；以后加
      * specialization constants、dynamic state 时往这里加字段，Initialize 签名不动。
      *
      * 必填项用引用：漏填直接编译不过。pipelineCompileCache 允许为空，用值 + 默认值。
-     * frameUboDescriptorSetLayout 为空时 Initialize 会抛 invalid_argument（没有 set 0 的管线
-     * 在录制时没有意义）。
+     * passUboDescriptorSetLayout 为空时 Initialize 会抛 invalid_argument（没有 set 0
+     * 的管线在录制时没有意义）。
      */
     struct DoodleVulkanPipelineInitInfo
     {
@@ -39,10 +38,14 @@ namespace Doodle
         VkPipelineCache pipelineCompileCache = VK_NULL_HANDLE;
 
         /**
-         * frame UBO 的描述符集布局：整帧共享的 UBO。必须是全工程那一个句柄，
-         * 否则与其它管线的布局不兼容
+         * 本 pass 的 set 0 布局：这个 pass 的所有管线共用它，换管线时不必重绑 set 0
          */
-        VkDescriptorSetLayout frameUboDescriptorSetLayout;
+        VkDescriptorSetLayout passUboDescriptorSetLayout;
+
+        /**
+         * 本 pass 的 push constant 范围；与 set 0 布局一起决定同一 pass 内管线布局的兼容性
+         */
+        VkPushConstantRange pushConstantRange{};
 
         /**
          * 附件格式与采样数
@@ -62,8 +65,8 @@ namespace Doodle
      * - 着色器侧描述（DoodleVulkanPipelineShaderDescription）：字节码、set 1 布局、
      *   渲染状态、顶点与实例格式；
      * - pass 侧配置（DoodleVulkanPipelinePassConfig）：附件格式与采样数；
-     * - 全局共享：set 0 布局（描述符管理器持有，全工程一个）、push constant
-     *   范围（kPushConstantRange）、驱动编译缓存（VkPipelineCache）。
+     * - pass 侧共享：本 pass 的 set 0 布局、本 pass 的 push constant 范围、
+     *   驱动编译缓存（VkPipelineCache）。
      *
      * 前两样是管线的创建输入，定义在 DoodleVulkanPipelineConfig.h（原因见该文件开头）。
      *
@@ -71,9 +74,10 @@ namespace Doodle
      * 设备与布局都是参数。同一份输入建几次都一样，谁来建、建几条由
      * 持有它的 pass（DoodleRenderPass）决定 —— 本类不再是「全工程那一条管线」
      *
-     * 所有管线共用 set 0 布局与 push constant 范围，是为了布局兼容：Vulkan 规定
-     * 两个管线布局只有在 set 0..N 的布局都相同、且 push constant 范围也相同时，
-     * 才对 set N 兼容。共用这两样，录制时换管线不必重新绑定 set 0
+     * 同一个 pass 内所有管线共用 set 0 布局与 push constant 范围，是为了布局兼容：
+     * Vulkan 规定两个管线布局只有在 set 0..N 的布局都相同、且 push constant 范围
+     * 也相同时，才对 set N 兼容。共用这两样，换管线时不必重新绑定 set 0。
+     * 跨 pass 不承诺兼容 —— 不同 pass 各自重绑自己的 set 0。
      *
      * 不可复制：复制一份就是两个对象各自去销毁同一组句柄
      */
@@ -153,11 +157,14 @@ namespace Doodle
         static void ValidateShaderDescription(const DoodleVulkanPipelineShaderDescription& shaderDescription);
 
         /**
-         * 建管线布局：set 0（+ set 1）与 kPushConstantRange
+         * 建管线布局：set 0（+ set 1）与本 pass 的 push constant 范围
          *
-         * materialDescriptorSetLayout 为空时只有 set 0
+         * materialDescriptorSetLayout 为空时只有 set 0；pushConstantRange.size == 0
+         * 时不声明 push constant
          */
-        void CreatePipelineLayout(VkDescriptorSetLayout frameUboDescriptorSetLayout, VkDescriptorSetLayout materialDescriptorSetLayout);
+        void CreatePipelineLayout(VkDescriptorSetLayout passUboDescriptorSetLayout,
+                                  VkDescriptorSetLayout materialDescriptorSetLayout,
+                                  VkPushConstantRange pushConstantRange);
 
         /**
          * 销毁管线布局，并把句柄置空
@@ -199,27 +206,6 @@ namespace Doodle
          */
         [[nodiscard]] static VkPipelineColorBlendAttachmentState MakeColorBlendAttachment(EBlendMode blendMode);
 
-    public:
-        /**
-         * 全工程唯一的 push constant 范围：所有管线布局都用它，录制时
-         * vkCmdPushConstants 也用它
-         *
-         * 只定义这一次。管线布局与 push 两边各写一份的话，改阶段时漏改一处，
-         * push 的 stageFlags 与布局里的范围就对不上（VUID-vkCmdPushConstants-offset-01795 /
-         * -01796）；范围不同的两个管线布局也不再兼容，换管线时 set 0 会失效。
-         *
-         * 内容这一步不变：localToWorld 在顶点阶段读、baseColor 在片元阶段读，
-         * 所以阶段同时覆盖两者；大小直接取 DoodlePushConstantObject，布局改了自动跟上
-         * （数据块与偏移断言在 Rendering/DoodleShaderData.h）。80 字节，低于规范保证的
-         * maxPushConstantsSize 下限 128
-         */
-        static constexpr VkPushConstantRange kPushConstantRange
-        {
-            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-            .offset = 0,
-            .size = sizeof(DoodlePushConstantObject)
-        };
-
     private:
         /**
          * Vulkan设备层，在 Initialize 时绑定
@@ -227,7 +213,7 @@ namespace Doodle
         const DoodleVulkanDevice* m_pDevice = nullptr;
 
         /**
-         * 管线布局：set 0（+ set 1）与 kPushConstantRange
+         * 管线布局：set 0（+ set 1）与本 pass 的 push constant 范围
          */
         VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
 

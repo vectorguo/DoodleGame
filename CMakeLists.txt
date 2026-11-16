@@ -79,6 +79,8 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Vulkan/DoodleVulkanPipelineConfig.h
     Engine/Runtime/Vulkan/DoodleForwardPass.cpp
     Engine/Runtime/Vulkan/DoodleForwardPass.h
+    Engine/Runtime/Vulkan/DoodleShadowPass.cpp
+    Engine/Runtime/Vulkan/DoodleShadowPass.h
     Engine/Runtime/Vulkan/DoodleRenderPass.cpp
     Engine/Runtime/Vulkan/DoodleRenderPass.h
     Engine/Runtime/Vulkan/DoodleRenderPipeline.cpp
@@ -170,7 +172,9 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Rendering/DoodleMeshRenderer.h
     Engine/Runtime/Rendering/DoodleMeshRenderer.cpp
     Engine/Runtime/Rendering/DoodleDrawItem.h
-    Engine/Runtime/Rendering/DoodleShaderData.h
+    Engine/Runtime/Rendering/DoodleForwardPassData.h
+    Engine/Runtime/Rendering/DoodleShadowPassData.h
+    Engine/Runtime/Rendering/DoodlePassShaderInterface.h
     Engine/Runtime/Rendering/DoodleShader.cpp
     Engine/Runtime/Rendering/DoodleShader.h
         Engine/Runtime/Vulkan/DoodlePipelineWarmupQueue.cpp

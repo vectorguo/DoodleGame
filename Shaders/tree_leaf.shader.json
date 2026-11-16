@@ -1,9 +1,13 @@
 {
-  "vertex": "Shaders/tree_leaf.vert.spv",
-  "fragment": "Shaders/tree_leaf.frag.spv",
   "vertexFormat": "posNormalUv",
   "instanceFormat": "none",
-  "renderState": {
-    "cullMode": "none"
+  "passes": {
+    "forward": {
+      "vertex": "Shaders/tree_leaf.vert.spv",
+      "fragment": "Shaders/tree_leaf.frag.spv",
+      "renderState": {
+        "cullMode": "none"
+      }
+    }
   }
 }

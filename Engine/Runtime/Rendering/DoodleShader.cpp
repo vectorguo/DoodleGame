@@ -14,10 +14,7 @@
 #include <vector>
 
 #include "../Vulkan/DoodlePipelineWarmupQueue.h"
-#include "Vulkan/DoodleDescriptorManager.h"
 #include "Vulkan/DoodleVulkanDevice.h"
-#include "Vulkan/DoodleVulkanPipelineObject.h"
-#include "Rendering/DoodleShaderData.h"
 #include "spirv_reflect/spirv_reflect.h"
 
 namespace Doodle
@@ -27,37 +24,72 @@ namespace Doodle
     {
     }
 
-    void DoodleShader::Initialize(const DoodleVulkanDevice& device,
-                                  const std::vector<std::byte>& vertexBytecode,
-                                  const std::vector<std::byte>& fragmentBytecode,
-                                  const DoodleRenderState& renderState,
-                                  const EVertexFormat vertexFormat,
-                                  const EInstanceFormat instanceFormat)
+    void DoodleShader::Initialize(const DoodleShaderInitInfo& info)
     {
-        if (vertexBytecode.empty())
+        if (info.passSources.empty())
         {
-            throw std::runtime_error("vertex bytecode is empty");
-        }
-        if (fragmentBytecode.empty())
-        {
-            throw std::runtime_error("fragment bytecode is empty");
+            throw std::runtime_error("shader has no pass descriptions");
         }
 
-        m_pDevice = &device;
+        m_pDevice = &info.device;
 
         //先反射与核对、再动设备：不合法的着色器不留下任何句柄。
-        //失败时 Destroy 只会在句柄为空时跳过，等于把对象恢复成未初始化。
-        //错误消息不再加资产路径：调用方（加载器）会补上，这里加一遍会重复
+        //失败时 Destroy 会把已经建出的 per-pass 布局逐个收掉。
+        //错误消息加 pass 名前缀；资产路径由调用方（加载器）补
         try
         {
-            std::vector<ReflectedBinding> bindings;
-            std::vector<VkPushConstantRange> pushConstantRanges;
-            ReflectStage(vertexBytecode, VK_SHADER_STAGE_VERTEX_BIT, bindings, pushConstantRanges);
-            ReflectStage(fragmentBytecode, VK_SHADER_STAGE_FRAGMENT_BIT, bindings, pushConstantRanges);
+            for (const DoodlePassShaderSource& source : info.passSources)
+            {
+                const std::size_t passIndex = static_cast<std::size_t>(source.pass);
+                if (passIndex >= m_passDescriptions.size())
+                {
+                    throw std::runtime_error("unknown pass type");
+                }
+                if (m_passDescriptions[passIndex].has_value())
+                {
+                    throw std::runtime_error("duplicate pass description");
+                }
 
-            const std::vector<VkDescriptorSetLayoutBinding> materialBindings =
-                ValidateInterface(bindings, pushConstantRanges);
-            CreateMaterialSetLayout(materialBindings);
+                try
+                {
+                    if (source.vertexBytecode.empty())
+                    {
+                        throw std::runtime_error("vertex bytecode is empty");
+                    }
+                    if (source.fragmentBytecode.empty())
+                    {
+                        throw std::runtime_error("fragment bytecode is empty");
+                    }
+
+                    std::vector<ReflectedBinding> bindings;
+                    std::vector<VkPushConstantRange> pushConstantRanges;
+                    ReflectStage(source.vertexBytecode, VK_SHADER_STAGE_VERTEX_BIT, bindings, pushConstantRanges);
+                    ReflectStage(source.fragmentBytecode, VK_SHADER_STAGE_FRAGMENT_BIT, bindings, pushConstantRanges);
+
+                    const DoodlePassShaderInterface& passInterface = GetPassShaderInterface(source.pass);
+                    const std::vector<VkDescriptorSetLayoutBinding> materialBindings =
+                        ValidateInterface(passInterface, bindings, pushConstantRanges);
+                    const VkDescriptorSetLayout materialSetLayout =
+                        CreateMaterialSetLayout(materialBindings);
+
+                    //字节码各拷一份留在描述里：pass 向管线表要管线时，表按内容做键并把这份
+                    //描述连同字节码存进条目，格式变化原地重建时用它
+                    DoodleVulkanPipelineShaderDescription description;
+                    description.vertexBytecode = source.vertexBytecode;
+                    description.fragmentBytecode = source.fragmentBytecode;
+                    description.materialDescriptorSetLayout = materialSetLayout;
+                    description.renderState = source.renderState;
+                    description.vertexFormat = info.vertexFormat;
+                    description.instanceFormat = info.instanceFormat;
+
+                    //放进去之后，失败清理由 Destroy 统一负责
+                    m_passDescriptions[passIndex] = std::move(description);
+                }
+                catch (const std::exception& error)
+                {
+                    throw std::runtime_error(std::string("pass '") + GetPassName(source.pass) + "': " + error.what());
+                }
+            }
         }
         catch (...)
         {
@@ -65,19 +97,8 @@ namespace Doodle
             throw;
         }
 
-        //字节码各拷一份留在描述里：材质向管线表要管线时，表按内容做键并把这份
-        //描述连同字节码存进条目，格式变化原地重建时用它
-        m_forwardPassDescription.vertexBytecode = vertexBytecode;
-        m_forwardPassDescription.fragmentBytecode = fragmentBytecode;
-        m_forwardPassDescription.renderState = renderState;
-        m_forwardPassDescription.vertexFormat = vertexFormat;
-        m_forwardPassDescription.instanceFormat = instanceFormat;
-
-        //一切状态都已就绪，此刻起可以拿这份描述向任何 pass 的管线表要管线。
-        //投递给渲染侧，在下一帧取帧之前统一建出来，不落进命令录制。
-        //
-        //放在 Initialize 而不是加载器里：这是着色器「变得可用」的唯一状态转换点，
-        //运行期动态创建的着色器也走同一条路，不依赖某个调用者记得通知
+        //一切状态都已就绪，此刻起可以拿这些描述向任何 pass 的管线表要管线。
+        //投递给渲染侧，在下一帧取帧之前统一建出来，不落进命令录制
         DoodlePipelineWarmupQueue::GetInstance().Push(*this);
     }
 
@@ -89,22 +110,41 @@ namespace Doodle
         }
 
         //set 布局可能与管线表里的管线布局存在「出生关系」，但那条依赖只在创建
-        //管线布局时读过一次 —— 本资产先于管线表销毁是合法的（见类注释）
-        if (m_forwardPassDescription.materialDescriptorSetLayout != VK_NULL_HANDLE)
+        //管线布局时读过一次 —— 本资产先于管线表销毁是合法的（见类注释）。
+        //逐个槽位走：部分 pass 初始化失败时也要把前面建出的布局收掉
+        for (std::optional<DoodleVulkanPipelineShaderDescription>& description : m_passDescriptions)
         {
-            vkDestroyDescriptorSetLayout(m_pDevice->GetLogicalDevice(),
-                                         m_forwardPassDescription.materialDescriptorSetLayout,
-                                         nullptr);
-            m_forwardPassDescription.materialDescriptorSetLayout = VK_NULL_HANDLE;
+            if (!description.has_value())
+            {
+                continue;
+            }
+
+            if (description->materialDescriptorSetLayout != VK_NULL_HANDLE)
+            {
+                vkDestroyDescriptorSetLayout(m_pDevice->GetLogicalDevice(),
+                                             description->materialDescriptorSetLayout,
+                                             nullptr);
+            }
+
+            description.reset();
         }
 
-        m_forwardPassDescription.vertexBytecode.clear();
-        m_forwardPassDescription.fragmentBytecode.clear();
         m_pDevice = nullptr;
     }
 
+    const DoodleVulkanPipelineShaderDescription* DoodleShader::GetPassDescription(const EDoodlePassType pass) const
+    {
+        const std::size_t passIndex = static_cast<std::size_t>(pass);
+        if (passIndex >= m_passDescriptions.size() || !m_passDescriptions[passIndex].has_value())
+        {
+            return nullptr;
+        }
+
+        return &*m_passDescriptions[passIndex];
+    }
+
     void DoodleShader::ReflectStage(const std::vector<std::byte>& bytecode,
-                                    VkShaderStageFlagBits expectedStage,
+                                    const VkShaderStageFlagBits expectedStage,
                                     std::vector<ReflectedBinding>& bindings,
                                     std::vector<VkPushConstantRange>& pushConstantRanges)
     {
@@ -170,7 +210,7 @@ namespace Doodle
             reflected.stageFlags = expectedStage;
 
             //uniform / storage 块：记下着色器声明的字节数，下面核对它没有超出
-            //C++ 侧那块缓冲
+            //这个 pass 的常量块
             if (reflected.descriptorType == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
                 reflected.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
             {
@@ -229,6 +269,7 @@ namespace Doodle
     }
 
     std::vector<VkDescriptorSetLayoutBinding> DoodleShader::ValidateInterface(
+        const DoodlePassShaderInterface& passInterface,
         const std::vector<ReflectedBinding>& bindings,
         const std::vector<VkPushConstantRange>& pushConstantRanges)
     {
@@ -246,6 +287,25 @@ namespace Doodle
                 break;
 
             case 1:
+            {
+                //set 1 的定义必须与这个 pass 允许的那一份逐项一致（含 stageFlags）：
+                //DoodleDescriptorManager 按同一份定义分配材质集合，定义不同就不兼容
+                const auto allowed = std::find_if(
+                    passInterface.materialBindings.begin(),
+                    passInterface.materialBindings.end(),
+                    [&reflected](const VkDescriptorSetLayoutBinding& binding)
+                    {
+                        return binding.binding == reflected.binding &&
+                               binding.descriptorType == reflected.descriptorType &&
+                               binding.descriptorCount == reflected.descriptorCount &&
+                               binding.stageFlags == reflected.stageFlags;
+                    });
+                if (allowed == passInterface.materialBindings.end())
+                {
+                    throw std::runtime_error("set 1 binding " + std::to_string(reflected.binding) +
+                                             " is not allowed by this pass");
+                }
+
                 materialBindings.push_back(
                 {
                     .binding = reflected.binding,
@@ -255,69 +315,74 @@ namespace Doodle
                     .pImmutableSamplers = nullptr
                 });
                 break;
+            }
 
             default:
-                //所有管线共用 set 0；set 1 是材质资源。第三个集合没有宿主，
+                //set 0 是本 pass 的常量；set 1 是材质资源。第三个集合没有宿主，
                 //声明了也没有人能给它分配集合
                 throw std::runtime_error("set " + std::to_string(reflected.set) +
                                          " is not supported (only set 0 and set 1 are)");
             }
         }
 
-        //set 0 可以有，也可以没有；有就必须是全工程那一个 UBO，且不能读出缓冲之外
+        //set 0 可以有，也可以没有；有就必须是这个 pass 的 UBO，且不能读出缓冲之外
         if (frameBindingCount > 1)
         {
-            throw std::runtime_error("set 0 must contain only the frame uniform buffer (binding 0)");
+            throw std::runtime_error("set 0 must contain only the pass uniform buffer (binding 0)");
         }
         if (pFrameBinding != nullptr)
         {
-            if (pFrameBinding->binding != DoodleDescriptorManager::kFrameUboBinding.binding ||
-                pFrameBinding->descriptorType != DoodleDescriptorManager::kFrameUboBinding.descriptorType ||
-                pFrameBinding->descriptorCount != 1)
+            const VkDescriptorSetLayoutBinding& passBinding = passInterface.passUboBinding;
+            if (pFrameBinding->binding != passBinding.binding ||
+                pFrameBinding->descriptorType != passBinding.descriptorType ||
+                pFrameBinding->descriptorCount != passBinding.descriptorCount)
             {
-                throw std::runtime_error("set 0 binding 0 must be a single uniform buffer, as declared in "
-                                         "DoodleDescriptorManager::kFrameUboBinding");
+                throw std::runtime_error("set 0 binding 0 must be a single uniform buffer, as declared by the pass shader interface");
             }
-            if ((pFrameBinding->stageFlags & ~DoodleDescriptorManager::kFrameUboBinding.stageFlags) != 0)
+            if ((pFrameBinding->stageFlags & ~passBinding.stageFlags) != 0)
             {
-                throw std::runtime_error("set 0 UBO is used in a shader stage the frame layout does not cover");
+                throw std::runtime_error("set 0 UBO is used in a shader stage the pass interface does not cover");
             }
-            if (pFrameBinding->blockSize > sizeof(DoodleUniformBufferObject))
+            if (pFrameBinding->blockSize > passInterface.maxPassUboBlockSize)
             {
                 throw std::runtime_error(
                     "set 0 UBO block is " + std::to_string(pFrameBinding->blockSize) +
-                    " bytes but DoodleUniformBufferObject is " + std::to_string(sizeof(DoodleUniformBufferObject)) +
+                    " bytes but this pass allows " + std::to_string(passInterface.maxPassUboBlockSize) +
                     " bytes");
             }
         }
 
-        //材质 set 1 独立之前，set 1 的集合由描述符管理器按纹理分配；它的布局与这里
-        //反射出来的布局只在定义完全相同时才兼容。所以临时要求两者逐项一致
-        //（一张片元阶段的纹理），多贴图 / 材质自己的参数块落地后这条约束由材质接管
-        if (materialBindings.size() != 1)
+        //forward 要求恰好一张材质纹理；shadow 允许零张或一张。
+        //有多条允许绑定时逐个核对，每个都必须恰好出现一次
+        if (passInterface.materialBindingsRequired)
         {
-            throw std::runtime_error("set 1 must contain exactly one texture binding (one combined image sampler)");
-        }
-        const VkDescriptorSetLayoutBinding& textureBinding = materialBindings.front();
-        if (textureBinding.binding != DoodleDescriptorManager::kTextureBinding.binding ||
-            textureBinding.descriptorType != DoodleDescriptorManager::kTextureBinding.descriptorType ||
-            textureBinding.descriptorCount != DoodleDescriptorManager::kTextureBinding.descriptorCount ||
-            textureBinding.stageFlags != DoodleDescriptorManager::kTextureBinding.stageFlags)
-        {
-            throw std::runtime_error("set 1 binding 0 must be a single combined image sampler used only by the "
-                                     "fragment stage (see DoodleDescriptorManager::kTextureBinding)");
+            for (const VkDescriptorSetLayoutBinding& allowed : passInterface.materialBindings)
+            {
+                const auto count = std::count_if(
+                    materialBindings.begin(),
+                    materialBindings.end(),
+                    [&allowed](const VkDescriptorSetLayoutBinding& binding)
+                    {
+                        return binding.binding == allowed.binding;
+                    });
+                if (count != 1)
+                {
+                    throw std::runtime_error("set 1 must contain binding " + std::to_string(allowed.binding) +
+                                             " for this pass");
+                }
+            }
         }
 
-        //push constant 只能落在全工程那一段范围之内、只用它覆盖的阶段：
+        //push constant 只能落在本 pass 那一段范围之内、只用它覆盖的阶段：
         //超出范围时管线布局与录制侧的 push 对不上，校验层会在绘制时报
         for (const VkPushConstantRange& range : pushConstantRanges)
         {
-            if (range.offset < DoodleVulkanPipelineObject::kPushConstantRange.offset ||
-                range.offset + range.size >
-                    DoodleVulkanPipelineObject::kPushConstantRange.offset + DoodleVulkanPipelineObject::kPushConstantRange.size ||
-                (range.stageFlags & ~DoodleVulkanPipelineObject::kPushConstantRange.stageFlags) != 0)
+            const VkPushConstantRange& passRange = passInterface.pushConstantRange;
+            if (range.offset < passRange.offset ||
+                range.offset + range.size > passRange.offset + passRange.size ||
+                (range.stageFlags & ~passRange.stageFlags) != 0)
             {
-                throw std::runtime_error("push constants must fit in DoodleVulkanPipelineObject::kPushConstantRange");
+                throw std::runtime_error("push constants must fit in this pass's push constant range");
             }
         }
 
@@ -329,8 +394,14 @@ namespace Doodle
         return materialBindings;
     }
 
-    void DoodleShader::CreateMaterialSetLayout(const std::vector<VkDescriptorSetLayoutBinding>& materialBindings)
+    VkDescriptorSetLayout DoodleShader::CreateMaterialSetLayout(
+        const std::vector<VkDescriptorSetLayoutBinding>& materialBindings) const
     {
+        if (materialBindings.empty())
+        {
+            return VK_NULL_HANDLE;
+        }
+
         const VkDescriptorSetLayoutCreateInfo createInfo
         {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -344,7 +415,21 @@ namespace Doodle
             throw std::runtime_error("failed to create the set 1 layout");
         }
 
-        m_forwardPassDescription.materialDescriptorSetLayout = materialSetLayout;
+        return materialSetLayout;
+    }
+
+    const char* DoodleShader::GetPassName(const EDoodlePassType pass)
+    {
+        switch (pass)
+        {
+        case EDoodlePassType::Forward:
+            return "forward";
+
+        case EDoodlePassType::Shadow:
+            return "shadow";
+        }
+
+        return "unknown";
     }
 
     const char* DoodleShader::GetStageName(const VkShaderStageFlagBits stage)
