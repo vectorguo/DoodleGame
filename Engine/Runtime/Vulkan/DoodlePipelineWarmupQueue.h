@@ -24,7 +24,7 @@ namespace Doodle
      * pass 数；本队列把触发点挪到「着色器初始化成功」这一刻，稳态每帧只做一次判空。
      *
      * **谁生产**：DoodleShader::Initialize 成功之后投递自己。那是着色器可用的唯一
-     * 状态转换点，运行期动态创建的着色器也走这里，不依赖加载器记得通知。
+     * 状态转换点，投递跟着它走，不依赖加载器记得通知。
      *
      * **谁消费**：DoodleRenderPipeline::WarmupPipelines 在取帧之前排空，按 pass 分发。
      * 每个 pass 自己决定把着色器映射成哪份管线描述。
@@ -33,7 +33,9 @@ namespace Doodle
      * 之间不能互相依赖；两边共同依赖这个只装指针的邮箱，依赖方向不变。
      *
      * **生命周期**：由 DoodleRenderPipeline 独占持有，随渲染管线构造时登记、析构时清空。
-     * 队列里的指针在 DoodleAssetManager::Destroy 之前有效；运行时拆解时由
+     * 队列里的指针在 DoodleAssetManager::Destroy 之前有效：着色器只在 Initialize 成功
+     * 之后投递，而 DoodleAssetLoader::Load 在 Create 之前就占好了缓存位置，投进来的
+     * 着色器一定留在缓存里。运行时拆解时由
      * DoodleRenderPipeline::Destroy 开头清空 —— 资产先于渲染管线销毁的那段窗口里
      * 没有任何排空路径，指针不会被解引用，Android 拆掉再起来也不会留下上一轮的残留。
      *

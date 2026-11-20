@@ -5,18 +5,13 @@
 
 #include "DoodleShadowPass.h"
 
-#include "Rendering/DoodlePassShaderInterface.h"
-
 namespace Doodle
 {
     void DoodleShadowPass::Initialize(const DoodleShadowPassInitInfo& info)
     {
-        //本次不建 GPU 资源：只把设备、预留的 push 范围与 pass 配置交给基类。
-        //passUboBufferSize 保持 0，基类不会建 set 0 UBO / 布局 / 池 / 集合
-        DoodleRenderPassInitInfo renderPassInfo = info.renderPassInfo;
-        renderPassInfo.pushConstantRange = GetPassShaderInterface(EDoodlePassType::Shadow).pushConstantRange;
-
-        DoodleRenderPass::Initialize(renderPassInfo, MakePassConfig());
+        //set 0 与 push 范围由基类按 shadow 的契约自己取；这里只给预留的 pass 配置。
+        //shadow map 还没建，本 pass 自己没有别的资源
+        DoodleRenderPass::Initialize(info.renderPassInfo, MakePassConfig());
     }
 
     void DoodleShadowPass::Render(const DoodleFrameContext&, const DoodleRenderPassContext&)
@@ -27,9 +22,8 @@ namespace Doodle
 
     void DoodleShadowPass::WarmupShaders(const std::vector<const DoodleShader*>&)
     {
-        //没有 shadow 描述、也没有 set 0 布局，不能建 shadow 管线。
-        //真正实现时在这里遍历 shaders，按 GetPassDescription(EDoodlePassType::Shadow)
-        //跳过缺失的着色器，再向本 pass 的管线表解析
+        //shadow map 还没建，管线要声明的深度格式还没定，不能建 shadow 管线。
+        //真正实现时去掉这个覆盖，交给基类按 shadow 描述解析
     }
 
     DoodleVulkanPipelinePassConfig DoodleShadowPass::MakePassConfig()

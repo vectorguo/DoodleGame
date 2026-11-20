@@ -99,8 +99,8 @@ namespace Doodle
                                                           VkDescriptorSetLayout materialDescriptorSetLayout,
                                                           VkPushConstantRange pushConstantRange)
     {
-        //set 0 负责本 pass 的每帧常量；set 1 负责这个着色器的材质资源
-        //（现在是一张纹理）。分成两个集合而不是一个：UBO 按帧轮转，材质按资产共享。
+        //set 0 负责本 pass 的每帧常量；set 1 负责这个着色器的材质贴图
+        //（几张由着色器自己声明）。分成两个集合而不是一个：UBO 按帧轮转，材质按资产共享。
         //
         //同一个 pass 内所有管线共用同一个 set 0 布局与 push constant 范围：
         //Vulkan 的布局兼容规则要求 set 0..N 与 push constant 范围都相同，管线之间

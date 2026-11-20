@@ -106,32 +106,57 @@ namespace Doodle
          * 缓存，之后直接命中缓存。Create 抛异常时缓存不变，不会留下一个
          * 永远加载不出来的坑位。
          *
+         * 缓存位置在调 Create 之前就占好：Create 成功之后只剩一次移动赋值，
+         * 不会再失败。所以 Create 里可以把资产地址交给别的子系统（着色器在
+         * Initialize 里把自己投进预热队列）—— 交出去的资产一定留在缓存里，
+         * 不会因为插入缓存失败被 unique_ptr 删掉、留下悬空指针。
+         *
          * 文件系统与资产管理器是 loader 构造时注入的固定服务，Load 不再
          * 每次传上下文，只接收 key。
          *
          * @param key 资产键，由具体 loader 的 Create 解释（内建名、相对路径等）
          * @return 非拥有指针，寿命到 Destroy 为止
-         * @throw std::runtime_error Create 失败、或 Create 返回空指针时抛出
+         * @throw std::runtime_error Create 失败、Create 返回空指针，或资产直接 / 间接
+         *        依赖了自己（Create 里又加载了同一个 key）时抛出
          */
         [[nodiscard]] const T* Load(std::string_view key)
         {
             const auto it = m_assets.find(key);
             if (it != m_assets.end())
             {
+                // 命中的还是空占位：这个 key 正在下面的 Create 里，又被加载了一次。
+                // 不拦的话会一路递归到栈溢出
+                if (it->second == nullptr)
+                {
+                    throw std::runtime_error("asset depends on itself: " + std::string(key));
+                }
                 return it->second.get();
             }
 
-            std::unique_ptr<T> asset = Create(key);
-            if (asset == nullptr)
+            // 先占位：key 的字符串与 map 节点都要分配，放在 Create 之前，
+            // 分配失败时什么都还没建
+            const auto slot = m_assets.try_emplace(std::string(key)).first;
+            try
             {
-                // 非空是 Create 的契约。让实现错误在这里当场暴露，
-                // 而不是把判空的责任摊给每个调用方
-                throw std::runtime_error("asset loader returned null for key: " + std::string(key));
+                std::unique_ptr<T> asset = Create(key);
+                if (asset == nullptr)
+                {
+                    // 非空是 Create 的契约。让实现错误在这里当场暴露，
+                    // 而不是把判空的责任摊给每个调用方
+                    throw std::runtime_error("asset loader returned null for key: " + std::string(key));
+                }
+
+                // 移动赋值不分配、不会失败：资产一建成就确定归缓存所有
+                slot->second = std::move(asset);
+            }
+            catch (...)
+            {
+                // Create 失败时缓存不变：撤掉占位
+                m_assets.erase(slot);
+                throw;
             }
 
-            const T* pAsset = asset.get();
-            m_assets.emplace(std::string(key), std::move(asset));
-            return pAsset;
+            return slot->second.get();
         }
 
         /**
@@ -188,7 +213,9 @@ namespace Doodle
          * 一份资产管理器引用。
          *
          * @note 实现要保证强异常安全：中途失败不能留下已上传的 GPU 资源。
-         *       资产对象随 unique_ptr 析构，而析构不做 Vulkan 清理
+         *       资产对象随 unique_ptr 析构，而析构不做 Vulkan 清理。
+         *       反过来，Create 一旦返回，资产就一定进缓存（Load 事先占好了位），
+         *       所以 Create 里可以把资产地址交给别的子系统
          */
         [[nodiscard]] virtual std::unique_ptr<T> Create(std::string_view key) = 0;
 
@@ -212,6 +239,9 @@ namespace Doodle
          * 用 map + 透明比较：Load 收 string_view，直接查，不必为每次调用
          * 构造一个临时的 std::string。unique_ptr 本身不移动 T，所以交出去的
          * 裸指针在后续插入时保持有效；map 的节点地址也是稳定的
+         *
+         * Load 调 Create 期间，这个 key 先对应一个空的 unique_ptr 占位；Load 返回
+         * 之前要么填上、要么撤掉，所以 Load 之外看不到空项（Destroy 直接解引用）
          */
         std::map<std::string, std::unique_ptr<T>, std::less<>> m_assets;
     };

@@ -18,7 +18,7 @@ layout(location = 1) in vec2 fragUV;
 
 layout(location = 0) out vec4 outColor;
 
-// set 1：材质纹理（树皮贴图），与 lit 相同的绑定
+// set 1：树皮贴图，材质按变量名 albedoTexture 配（规则见 lit.frag）
 layout(set = 1, binding = 0) uniform sampler2D albedoTexture;
 
 void main()

@@ -40,14 +40,14 @@ namespace Doodle
             //深度图按交换链尺寸建。前向 pass 只吃它的格式，不吃对象本身
             m_depthImages.Initialize(device, swapChain.GetImageExtent());
 
-            //描述符管理器只建材质纹理的布局/池/集合与默认白图；
+            //描述符管理器只建材质集合的池与默认白图，集合按材质在第一次绘制时分配；
             //默认白图的上传借命令管理层的传输池 —— 门面必须先初始化命令管理层
             m_descriptorManager.Initialize(device);
 
             //驱动编译缓存先建：每次建管线都把它传给 vkCreateGraphicsPipelines
             m_pipelineCompileCache.Initialize(device, {});
 
-            //shadow 目前只是骨架：不建 GPU 资源，也不录任何命令
+            //shadow 目前只是骨架：基类按 shadow 的契约建出 set 0，不建管线、不录命令
             m_shadowPass.Initialize(
             {
                 .renderPassInfo =
@@ -89,8 +89,8 @@ namespace Doodle
 
         //按「使用者先、被使用者后」拆；pass 按渲染顺序的逆序走。
         //
-        //pass 先走：它们的管线布局引用材质 set 1 布局与各自的 set 0 布局，
-        //常量资源也由各自拆；接着驱动编译缓存；描述符管理器释放材质池与默认白图；
+        //pass 先走：管线与各自的 set 0 常量资源都由 pass 自己拆；接着驱动编译缓存；
+        //描述符管理器释放材质池与默认白图；
         //深度图不依赖上面的任何一层，最后走
         const std::array<DoodleRenderPass*, 2> passes = GetPasses();
         for (auto it = passes.rbegin(); it != passes.rend(); ++it)

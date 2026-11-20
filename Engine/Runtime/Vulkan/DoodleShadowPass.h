@@ -32,25 +32,29 @@ namespace Doodle
      * 阴影 pass 骨架：接口已就位，渲染尚未实现
      *
      * 本次只保留类、pass 配置与编排位置：
-     * - 不建 shadow map 深度图；
-     * - 不建 per-pass UBO（passUboBufferSize = 0），因此也不会建 shadow 管线；
+     * - set 0 UBO / 布局 / 集合与 push 范围已由基类按 shadow 的契约建好
+     *   （DoodleShadowPassUbo 大小），但还没有人往里写；
+     * - 不建 shadow map 深度图，深度格式未定，所以也不建 shadow 管线；
      * - Render / WarmupShaders 是显式空实现。
      *
-     * 真正实现时按顺序接：shadow 深度目标（固定尺寸、可采样）→ set 0 UBO
-     * （DoodleShadowPassUbo）→ 真实深度格式 → 逐投射物绘制（alpha 镂空用材质
-     * set 1）→ forward 采样 shadow map。
+     * 真正实现时按顺序接：shadow 深度目标（固定尺寸、可采样）→ 真实深度格式 →
+     * 每帧写 set 0 UBO（光空间矩阵）→ 逐投射物绘制（alpha 镂空用材质的 set 1，
+     * 与 forward 绑的是同一个集合）→ forward 采样 shadow map。
      */
     class DoodleShadowPass final : public DoodleRenderPass
     {
     public:
-        DoodleShadowPass() = default;
+        DoodleShadowPass()
+            : DoodleRenderPass(EDoodlePassType::Shadow)
+        {
+        }
+
         ~DoodleShadowPass() override = default;
 
         /**
          * 绑定阴影 pass 的共享输入并记下预留的 pass 配置
          *
-         * 本次不建任何 GPU 资源：passUboBufferSize 留 0，基类只保存 device、
-         * push 范围与 passConfig。
+         * 基类按 shadow 的契约建出 set 0 常量资源；本 pass 自己还不建任何资源。
          *
          * @param info 基类要的设备与编译缓存；都必须活得比本 pass 久
          *
@@ -68,8 +72,8 @@ namespace Doodle
         /**
          * 为这批着色器预建阴影管线
          *
-         * 本次是空操作：没有 shadow 描述、也没有 set 0 布局，不能建 shadow 管线。
-         * 真正实现时在这里按 shader.GetPassDescription(EDoodlePassType::Shadow) 解析。
+         * 本次是空操作：shadow map 还没建，管线要声明的深度格式还没定，不能建 shadow 管线。
+         * 真正实现时去掉这个覆盖，用基类的默认实现（按 shadow 描述解析，跳过没有的）。
          */
         void WarmupShaders(const std::vector<const DoodleShader*>& shaders) override;
 

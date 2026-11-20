@@ -140,7 +140,7 @@ echo
 # 也不动别人的数据
 #
 # 过滤只要的那几个 tag：
-#   Doodle          = 本工程的日志出口（见 Runtime/Platform/DoodleLog.cpp）
+#   Doodle          = 本工程的日志出口（见 Runtime/Platform/Android/DoodleAndroidLog.cpp）
 #   AndroidRuntime  = 未捕获异常与崩溃
 #   DEBUG           = 原生崩溃的 tombstone 摘要
 #   *:S             = 其余一律静音

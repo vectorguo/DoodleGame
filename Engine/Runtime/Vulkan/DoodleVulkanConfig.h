@@ -24,11 +24,12 @@ namespace Doodle
     inline constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
     /**
-     * 每个纹理描述符池块能装多少个集合
+     * 每个材质描述符池块能装多少个集合
      *
      * 不是总量上限：池用完时 DoodleDescriptorManager 会再追加一块，按需增长。
-     * 取 64 是分配的块大小 —— 太小会频繁建池，太大在纹理少时白占驱动预留。
-     * 集合按唯一纹理分配，同一张纹理被多个材质引用只占一个
+     * 取 64 是分配的块大小 —— 太小会频繁建池，太大在材质少时白占驱动预留。
+     * 集合按材质分配，一个材质一个；每块池的贴图描述符数另按
+     * kMaxMaterialTextureSlots 倍预留，保证任何一个材质集合都放得进新的一块
      */
-    inline constexpr uint32_t TEXTURE_DESCRIPTOR_SETS_PER_POOL = 64;
+    inline constexpr uint32_t MATERIAL_DESCRIPTOR_SETS_PER_POOL = 64;
 }

@@ -1,3 +1,10 @@
+# 文本文件入库一律存 LF，检出时按平台默认转换：Windows 上是 CRLF，macOS 上是 LF。
+#
+# text=auto 兜底：git 判定为文本的文件，提交时都归一成 LF，不看各人机器上的 core.autocrlf。
+# 少了这一行，有人在 Windows 上把 autocrlf 关掉，或在 macOS 上提交从 Windows 拷过去的文件，
+# CRLF 就会原样进库，覆盖到已有文件上就是一次全文件 diff
+* text=auto
+
 # 脚本的换行符按文件类型钉死，不随各人机器上的 core.autocrlf 走。
 #
 # Windows 上装 Git 默认 core.autocrlf=true，检出时把 LF 换成 CRLF：
@@ -7,7 +14,10 @@
 #     钉住之后，即使在 macOS 上改过再提交，Windows 上检出的仍是 CRLF
 #
 # 批处理只管 windows/ 下自己写的那份。android/gradlew.bat 是 Gradle 生成的，库里本来就按
-# CRLF 原样存着；给它也套上 text，git 会把它整份改存成 LF，平白多出一次全文件的改动
-*.sh            text eol=lf
-gradlew         text eol=lf
-/windows/*.bat  text eol=crlf
+# CRLF 原样存着；给它也套上 text，git 会把它整份改存成 LF，平白多出一次全文件的改动。
+# text=auto 平时 add 会放过这种已按 CRLF 入库的文件，但 git add --renormalize 照样会转，
+# 所以用 -text 把它整个排除在换行转换之外
+*.sh                  text eol=lf
+gradlew               text eol=lf
+/windows/*.bat        text eol=crlf
+/android/gradlew.bat  -text

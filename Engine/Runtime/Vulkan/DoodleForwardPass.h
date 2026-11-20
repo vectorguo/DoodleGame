@@ -7,9 +7,6 @@
 
 #pragma once
 
-#include <unordered_map>
-#include <vector>
-
 #include "DoodleRenderPass.h"
 
 namespace Doodle
@@ -17,13 +14,12 @@ namespace Doodle
     //只在接口签名里出现，完整定义留给源文件
     class DoodleSwapChain;
     class DoodleDepthImages;
-    class DoodleShader;
 
     /**
      * 初始化前向 pass 的全部输入
      *
-     * renderPassInfo 是基类要的设备与编译缓存，本类补上 forward 的 set 0 绑定 /
-     * 大小 / push 范围后再转交；swapChain / depthImages 是本 pass 算附件配置的来源
+     * renderPassInfo 是基类要的设备与编译缓存，原样转交；set 0 与 push 范围由基类按
+     * forward 的契约自己取。swapChain / depthImages 是本 pass 算附件配置的来源
      * —— 配置由本类从这两样算出来，不由调用方给。
      */
     struct DoodleForwardPassInitInfo
@@ -49,8 +45,8 @@ namespace Doodle
      *
      * 它负责前向 pass 特有的事：按交换链 / 深度图算出 pass 配置、交换链重建后
      * 判断配置变没变，以及把这一 pass 录进命令缓冲（附件屏障、动态渲染、
-     * 视口 / 剪裁、逐绘制项绘制）。管线表、查找、批量重建与 per-pass 常量资源
-     * 都在 DoodleRenderPass 基类里。
+     * 视口 / 剪裁、逐绘制项绘制）。管线表、着色器 → 管线的解析与预热、批量重建
+     * 与 per-pass 常量资源都在 DoodleRenderPass 基类里。
      *
      * 阴影 pass 目前是 DoodleShadowPass 骨架；延迟、后处理以后各派生一个，
      * 构造与销毁由 DoodleRenderPipeline 负责。
@@ -58,7 +54,10 @@ namespace Doodle
     class DoodleForwardPass final : public DoodleRenderPass
     {
     public:
-        DoodleForwardPass() = default;
+        DoodleForwardPass() : DoodleRenderPass(EDoodlePassType::Forward)
+        {
+        }
+
         ~DoodleForwardPass() override = default;
 
         /**
@@ -74,7 +73,7 @@ namespace Doodle
         /**
          * 录一个前向 pass：颜色 / 深度附件、动态渲染、逐绘制项绘制
          *
-         * 每条绘制项按材质的着色器向本 pass 的管线表解析管线；管线变了才重新绑定，
+         * 每条绘制项按材质的着色器向基类解析管线；管线变了才重新绑定，
          * set 1 跟着失效。本 pass 内的所有管线共用同一个 set 0 布局与 push 范围，
          * 换管线不必重绑 set 0。
          *
@@ -84,14 +83,6 @@ namespace Doodle
         void Render(const DoodleFrameContext& frameContext, const DoodleRenderPassContext& passContext) override;
 
         /**
-         * 为这批着色器预建本 pass 的管线：按内容去重，只解析不录制
-         *
-         * 与 Render 共用同一个 ResolvePipeline，所以预热过的着色器在录制时不会再建管线；
-         * memo 也在这里被填好，Render 里只剩一次指针查表
-         */
-        void WarmupShaders(const std::vector<const DoodleShader*>& shaders) override;
-
-        /**
          * 交换链 / 深度图重建后调用：配置没变就什么也不做
          *
          * 尺寸变化不影响管线（视口与剪裁是动态状态）；只有颜色 / 深度格式或
@@ -99,23 +90,7 @@ namespace Doodle
          */
         void RebuildIfPassConfigChanged(const DoodleSwapChain& swapChain, const DoodleDepthImages& depthImages);
 
-    protected:
-        /**
-         * 清掉着色器 → 管线的 memo；管线本身由基类先拆完
-         */
-        void OnDestroy() override;
-
     private:
-
-        /**
-         * 取某个着色器在本 pass 里的管线；没解析过就向基类的管线表要一条
-         *
-         * memo 只是内容键查表的缓存：着色器资产常驻（见 DoodleRenderPass 类注释），
-         * 地址稳定，表的大小只跟着着色器数量走；RebuildPipelines 原地重建不改变
-         * 管线对象地址，所以 memo 不需要失效
-         */
-        [[nodiscard]] const DoodleVulkanPipelineObject& ResolvePipeline(const DoodleShader& shader);
-
         /**
          * 前向 pass 的附件配置：颜色格式来自交换链、深度格式来自深度图组
          */
@@ -157,14 +132,5 @@ namespace Doodle
          * 深度附件的来源，不拥有；对象地址稳定，内容随交换链重建
          */
         const DoodleDepthImages* m_pDepthImages = nullptr;
-
-        /**
-         * 着色器 → 本 pass 的管线
-         *
-         * 只是「着色器描述 → 管线」这张内容键查表的 memo：着色器资产常驻，
-         * 按资产地址做键是安全的，规模只跟着着色器数量走。管线原地重建不改变
-         * 对象地址，所以不需要失效；Destroy 时跟着清空
-         */
-        std::unordered_map<const DoodleShader*, const DoodleVulkanPipelineObject*> m_pipelinesByShader;
     };
 }

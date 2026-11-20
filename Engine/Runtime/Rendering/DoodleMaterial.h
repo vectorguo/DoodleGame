@@ -7,6 +7,9 @@
 
 #pragma once
 
+#include <functional>
+#include <map>
+#include <string>
 #include <string_view>
 
 #include "Asset/DoodleAsset.h"
@@ -19,17 +22,22 @@ namespace Doodle
     class DoodleTexture;
 
     /**
-     * 材质资产：基色 + 一张可选纹理 + 着色器
+     * 材质资产：基色 + 按贴图槽配的贴图 + 着色器
      *
      * 由 DoodleMaterialLoader 从 Materials/ 下的 JSON 文件加载，资产管理器按路径缓存；
      * 不同对象引用同一个材质资产时共享同一份配置。renderer 不复制材质，
-     * 只按槽保存非拥有指针。纹理与着色器都是非拥有指针，寿命由资产管理器保证。
+     * 只按槽保存非拥有指针。贴图与着色器都是非拥有指针，寿命由资产管理器保证。
      *
-     * 材质本身不持有 GPU 资源：描述符集由描述符管理器按纹理创建，管线由各个渲染
-     * pass 的管线表持有。材质不记录管线 —— 管线是「着色器 × 渲染状态 × pass」的
-     * 产物，录制时由当前 pass 按材质着色器现取；一个材质有几条管线由 pass 的数量
-     * 决定，不由材质决定。加载完成后按只读使用；renderer 的槽可以没有材质，
-     * 没有材质的子网格不画，引擎不补一份默认材质。
+     * 贴图按槽名配：槽是着色器 set 1 里声明的贴图（DoodleShader::GetMaterialTextureSlots），
+     * 名字就是 GLSL 里的变量名。着色器声明了几张，材质就能配几张；没配的槽绘制时
+     * 绑定 1×1 白图。
+     *
+     * 材质本身不持有 GPU 资源：描述符集由描述符管理器按材质创建（布局来自材质的
+     * 着色器），管线由各个渲染 pass 的管线表持有。材质不记录管线 —— 管线是
+     * 「着色器 × 渲染状态 × pass」的产物，录制时由当前 pass 按材质着色器现取；
+     * 一个材质有几条管线由 pass 的数量决定，不由材质决定。加载完成后按只读使用：
+     * 描述符管理器按材质缓存 set 1，第一次画过之后再改贴图不会生效。
+     * renderer 的槽可以没有材质，没有材质的子网格不画，引擎不补一份默认材质。
      *
      * 基色用 DoodleColor：4 个 float、16 字节，进 push constant 时与 glm::vec4
      * 同布局；第四个分量现在不参与混合，固定为 1。
@@ -84,22 +92,28 @@ namespace Doodle
         }
 
         /**
-         * 材质使用的纹理；nullptr 表示没有配置，绘制时绑定 1×1 白图
+         * 某个贴图槽配的贴图；nullptr 表示没有配置，绘制时绑定 1×1 白图
          *
-         * 指针非拥有：纹理是资产管理器的资产，寿命覆盖材质
+         * 指针非拥有：贴图是资产管理器的资产，寿命覆盖材质
          * （场景先于资产管理器销毁）
+         *
+         * @param slotName 着色器 set 1 里贴图的变量名，如 "albedoTexture"
          */
-        [[nodiscard]] const DoodleTexture* GetTexture() const
+        [[nodiscard]] const DoodleTexture* GetTexture(const std::string_view slotName) const
         {
-            return m_pTexture;
+            const auto it = m_textures.find(slotName);
+            return it != m_textures.end() ? it->second : nullptr;
         }
 
         /**
-         * 设置纹理；传 nullptr 表示回到默认白图
+         * 给一个贴图槽配贴图；传 nullptr 表示回到默认白图
+         *
+         * 只在加载时用：描述符管理器按材质缓存 set 1，第一次画过之后再改不会生效。
+         * 槽名是否属于着色器由加载器核对，这里不查
          */
-        void SetTexture(const DoodleTexture* pTexture)
+        void SetTexture(const std::string_view slotName, const DoodleTexture* pTexture)
         {
-            m_pTexture = pTexture;
+            m_textures.insert_or_assign(std::string(slotName), pTexture);
         }
 
     private:
@@ -114,8 +128,9 @@ namespace Doodle
         DoodleColor m_baseColor{0.82f, 0.82f, 0.82f, 1.0f};
 
         /**
-         * 材质纹理，非拥有；nullptr 时绘制侧绑定默认白图
+         * 贴图槽名 → 贴图，非拥有；不在表里（或为 nullptr）的槽绘制时绑定默认白图。
+         * std::less<> 让 string_view 直接查表，不必先拼一个 std::string
          */
-        const DoodleTexture* m_pTexture = nullptr;
+        std::map<std::string, const DoodleTexture*, std::less<>> m_textures;
     };
 }

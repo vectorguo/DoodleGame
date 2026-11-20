@@ -18,7 +18,6 @@
 #include "Rendering/DoodleLight.h"
 #include "Rendering/DoodleMaterial.h"
 #include "Rendering/DoodleMesh.h"
-#include "Rendering/DoodlePassShaderInterface.h"
 #include "Rendering/DoodleShader.h"
 
 namespace Doodle
@@ -28,45 +27,8 @@ namespace Doodle
         m_pSwapChain = &info.swapChain;
         m_pDepthImages = &info.depthImages;
 
-        //本 pass 的 set 0 契约与数据块大小由 forward 的 interface 决定；
-        //基类按它建 UBO / 布局 / 池 / 集合
-        DoodleRenderPassInitInfo renderPassInfo = info.renderPassInfo;
-        const DoodlePassShaderInterface& passInterface = GetPassShaderInterface(EDoodlePassType::Forward);
-        renderPassInfo.passUboBinding = passInterface.passUboBinding;
-        renderPassInfo.passUboBufferSize = sizeof(DoodleForwardPassUbo);
-        renderPassInfo.pushConstantRange = passInterface.pushConstantRange;
-
-        DoodleRenderPass::Initialize(renderPassInfo, MakePassConfig(info.swapChain, info.depthImages));
-    }
-
-    void DoodleForwardPass::WarmupShaders(const std::vector<const DoodleShader*>& shaders)
-    {
-        //只解析 / 创建管线，不录制：把编译代价和失败点放在加载边界上。
-        //与 Render 走同一个 ResolvePipeline，预热过的着色器在第一帧只命中 memo。
-        //队列里只会出现初始化成功的着色器；空指针只可能是调用方传错，
-        //预热不是校验入口，跳过即可
-        for (const DoodleShader* pShader : shaders)
-        {
-            if (pShader == nullptr)
-            {
-                continue;
-            }
-
-            //队列里可能有只给别的 pass 用的着色器（例如 shadow-only）；
-            //没有 forward 描述就跳过，真正的缺失由 Render 在录制前拦
-            if (pShader->GetPassDescription(EDoodlePassType::Forward) == nullptr)
-            {
-                continue;
-            }
-
-            //结果不用：解析本身就会把管线建出来并填进 memo
-            static_cast<void>(ResolvePipeline(*pShader));
-        }
-    }
-
-    void DoodleForwardPass::OnDestroy()
-    {
-        m_pipelinesByShader.clear();
+        //set 0 与 push 范围由基类按 forward 的契约自己取；这里只给附件配置
+        DoodleRenderPass::Initialize(info.renderPassInfo, MakePassConfig(info.swapChain, info.depthImages));
     }
 
     void DoodleForwardPass::UpdatePassUbo(const DoodleFrameContext& context)
@@ -114,28 +76,6 @@ namespace Doodle
         //HOST_COHERENT 保证不需要手动 flush；下一次 vkQueueSubmit 之后再读取时，
         //这份写入对 GPU 可见。写入位置已在调用处保证：帧栅栏之后、录制之前
         WritePassUbo(context.frameIndex, &ubo, sizeof(ubo));
-    }
-
-    const DoodleVulkanPipelineObject& DoodleForwardPass::ResolvePipeline(const DoodleShader& shader)
-    {
-        const auto it = m_pipelinesByShader.find(&shader);
-        if (it != m_pipelinesByShader.end())
-        {
-            return *it->second;
-        }
-
-        const DoodleVulkanPipelineShaderDescription* pDescription =
-            shader.GetPassDescription(EDoodlePassType::Forward);
-        if (pDescription == nullptr)
-        {
-            throw std::invalid_argument("shader has no forward pass description");
-        }
-
-        //内容相同的两个着色器资产会在这里拿到同一条管线；memo 只省掉每绘制项的
-        //内容哈希与逐字节比对，不改变管线表「按内容查找」的语义
-        const DoodleVulkanPipelineObject& pipeline = GetPipeline(*pDescription);
-        m_pipelinesByShader.emplace(&shader, &pipeline);
-        return pipeline;
     }
 
     void DoodleForwardPass::Render(const DoodleFrameContext& frameContext,
@@ -249,7 +189,7 @@ namespace Doodle
 
         //逐条绘制项录绘制。一条绘制项对应一次索引绘制：网格与子网格区间
         //已经在收集侧展开好，这里只做随绘制项变化的几件事：
-        //换管线、绑材质纹理（set 1）、推 localToWorld + 材质基色、
+        //换管线、绑材质贴图（set 1）、推 localToWorld + 材质基色、
         //绑网格的顶点 / 索引缓冲、按区间发一次绘制
         const DoodleVulkanPipelineObject* pBoundPipeline = nullptr;
         bool frameSetBound = false;
@@ -280,8 +220,8 @@ namespace Doodle
                 vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pPipeline->GetGraphicsPipeline());
                 pBoundPipeline = pPipeline;
 
-                //换管线后 set 1 必须重绑：不同着色器的 set 1 布局定义相同、实际兼容，
-                //但录制层不替它们记这条推断
+                //换管线后 set 1 必须重绑：贴图有几张由着色器决定，各个着色器的 set 1
+                //布局不同，之前绑的那个集合不一定能被新管线解释
                 boundMaterialSet = VK_NULL_HANDLE;
             }
 
@@ -301,10 +241,11 @@ namespace Doodle
                 frameSetBound = true;
             }
 
-            //绑定本项的材质纹理（set 1）。集合由描述符管理器按纹理缓存好，与绘制项同下标。
-            //连续多个子网格共用同一张纹理时，句柄相同，跳过重复绑定
+            //绑定本项的材质贴图（set 1）。集合由描述符管理器按材质缓存好，与绘制项同下标。
+            //连续多个子网格共用同一个材质时，句柄相同，跳过重复绑定。
+            //着色器没有声明贴图时集合是 VK_NULL_HANDLE：它的管线布局里没有 set 1，不绑
             const VkDescriptorSet materialDescriptorSet = passContext.materialDescriptorSets[i];
-            if (materialDescriptorSet != boundMaterialSet)
+            if (materialDescriptorSet != VK_NULL_HANDLE && materialDescriptorSet != boundMaterialSet)
             {
                 vkCmdBindDescriptorSets(
                     commandBuffer,

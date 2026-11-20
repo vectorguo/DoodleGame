@@ -112,8 +112,8 @@ namespace Doodle
          * 拆掉本类持有的全部资源
          *
          * 顺序与 Initialize 相反：前向 pass → shadow pass → 驱动编译缓存 →
-         * 描述符管理器 → 深度图。管线布局引用描述符管理器的 set 布局，所以 pass
-         * 必须排在它之前。
+         * 描述符管理器 → 深度图。使用者先、被使用者后：pass 录制时绑的是描述符
+         * 管理器里的材质集合，所以 pass 排在它之前。
          *
          * 开头先清空待预热队列：里面是着色器的非拥有指针，资产可能已经先于本类
          * 销毁；清空只丢指针、不解引用，所以放在资源拆除之前即可。
@@ -207,9 +207,9 @@ namespace Doodle
         DoodleDepthImages m_depthImages;
 
         /**
-         * 材质描述符管理器：按纹理缓存 set 1；set 0 由各 pass 自己持有
+         * 材质描述符管理器：按材质缓存 set 1（布局来自材质的着色器）；set 0 由各 pass 自己持有
          *
-         * 排在深度图之后（默认白图上传要命令层）、所有管线之前（管线要它的 set 1 布局）
+         * 排在深度图之后（默认白图上传要命令层）、所有 pass 之前（pass 录制时绑它的集合）
          */
         DoodleDescriptorManager m_descriptorManager;
 
@@ -231,7 +231,8 @@ namespace Doodle
         /**
          * 阴影 pass 骨架：本次只占编排位置
          *
-         * 排在 forward 之前录；不建 shadow map、不分配 per-pass UBO、不建管线。
+         * 排在 forward 之前录；set 0 UBO 已由基类按 shadow 的契约建出，但还不建
+         * shadow map、不建管线。
          * 实现阴影时由它自己长成真正的深度 pass
          */
         DoodleShadowPass m_shadowPass;

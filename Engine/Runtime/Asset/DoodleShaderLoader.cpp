@@ -7,6 +7,8 @@
 
 #include "DoodleShaderLoader.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -53,7 +55,8 @@ namespace Doodle
             const EVertexFormat vertexFormat = ParseVertexFormat(config.GetString("vertexFormat", "posNormalUv"));
             const EInstanceFormat instanceFormat = ParseInstanceFormat(config.GetString("instanceFormat", "none"));
 
-            //passes 是必须的对象，且至少一节；每个 key 是 pass 名，value 是该 pass 的源文件
+            //passes 是必须的对象，且至少一节（DoodleShader::Initialize 不再核对）；
+            //每个 key 是 pass 名，value 是该 pass 的源文件
             const nlohmann::json& rootJson = config.GetJson();
             if (!rootJson.contains("passes") || !rootJson.at("passes").is_object())
             {
@@ -65,8 +68,8 @@ namespace Doodle
                 throw std::runtime_error("'passes' must contain at least one pass");
             }
 
-            std::vector<DoodlePassShaderSource> passSources;
-            passSources.reserve(passesJson.size());
+            std::vector<DoodleShaderInitInfo::PassInitInfo> passInfos;
+            passInfos.reserve(passesJson.size());
             for (const auto& [passName, passJson] : passesJson.items())
             {
                 if (!passJson.is_object())
@@ -76,6 +79,19 @@ namespace Doodle
 
                 //pass 名无条件解析：拼错的名字会让整节描述凭空消失，必须当场报错
                 const EDoodlePassType pass = ParseShaderPass(passName);
+
+                //JSON 对象的键本身不重复，这里防的是两个名字解析成同一个 pass。
+                //DoodleShader::Initialize 不再查重：重复会让后一节悄悄覆盖前一节的描述
+                const bool duplicated = std::ranges::any_of(
+                    passInfos,
+                    [pass](const DoodleShaderInitInfo::PassInitInfo& existing)
+                    {
+                        return existing.passType == pass;
+                    });
+                if (duplicated)
+                {
+                    throw std::runtime_error("pass '" + passName + "' is declared more than once");
+                }
 
                 const DoodleComponentConfig passConfig(passJson);
 #ifndef NDEBUG
@@ -102,21 +118,22 @@ namespace Doodle
                     renderState = ReadRenderState(renderConfig);
                 }
 
-                DoodlePassShaderSource source;
-                source.pass = pass;
-                source.vertexBytecode = ReadShaderFile(GetFileSystem(), vertexPath);
-                source.fragmentBytecode = ReadShaderFile(GetFileSystem(), fragmentPath);
-                source.renderState = renderState;
-                passSources.push_back(std::move(source));
+                DoodleShaderInitInfo::PassInitInfo passInfo;
+                passInfo.passType = pass;
+                passInfo.vertexBytecode = ReadSpirvFile(GetFileSystem(), vertexPath);
+                passInfo.fragmentBytecode = ReadSpirvFile(GetFileSystem(), fragmentPath);
+                passInfo.passRenderState = renderState;
+                passInfos.push_back(std::move(passInfo));
             }
 
-            auto shader = std::make_unique<DoodleShader>(key);
+            //DoodleShader 的构造只对本类开放（友元），make_unique 访问不到；裸 new 立刻交给 unique_ptr
+            auto shader = std::unique_ptr<DoodleShader>(new DoodleShader(key));
             shader->Initialize(
             {
                 .device = *m_pDevice,
                 .vertexFormat = vertexFormat,
                 .instanceFormat = instanceFormat,
-                .passSources = passSources
+                .passInitInfos = passInfos
             });
             return shader;
         }
@@ -144,6 +161,23 @@ namespace Doodle
             //工作目录也可能不对。内嵌副本与运行时文件出自同一次构建，退到它
             return DoodleShaderModule::ReadFile(path);
         }
+    }
+
+    std::vector<std::byte> DoodleShaderLoader::ReadSpirvFile(const DoodleFileSystem& fileSystem,
+                                                            const std::string& path)
+    {
+        //SPIR-V 是 32 位字的序列，开头 5 个字是模块头（magic、版本、生成器、bound、schema）
+        constexpr std::size_t kWordSize = sizeof(std::uint32_t);
+        constexpr std::size_t kHeaderSize = 5 * kWordSize;
+
+        std::vector<std::byte> bytecode = ReadShaderFile(fileSystem, path);
+        if (bytecode.size() < kHeaderSize || bytecode.size() % kWordSize != 0)
+        {
+            throw std::runtime_error("SPIR-V file '" + path + "' is " + std::to_string(bytecode.size()) +
+                                     " bytes; a module needs at least " + std::to_string(kHeaderSize) +
+                                     " bytes (the 5-word header) and a multiple of " + std::to_string(kWordSize));
+        }
+        return bytecode;
     }
 
     DoodleRenderState DoodleShaderLoader::ReadRenderState(const DoodleComponentConfig& config)

@@ -61,8 +61,8 @@ namespace Doodle
      * 着色器侧描述：一条管线里由着色器决定的全部输入
      *
      * 每次向管线缓存要管线时传入。由着色器资产（DoodleShader）按每个 pass 的
-     * 源数据与 SPIR-V 反射结果拼出来；各 pass 用 shader.GetPassDescription(pass)
-     * 取自己那一份。
+     * 输入（DoodleShaderInitInfo::PassInitInfo）与 SPIR-V 反射结果拼出来；各 pass 用
+     * shader.GetPassDescription(pass) 取自己那一份。
      *
      * 字节码按值持有（std::vector<std::byte>，与 DoodleFileSystem::ReadBinary 同一个类型）：
      * 管线缓存的条目要存一份副本，格式变了原地重建时再用
@@ -80,18 +80,27 @@ namespace Doodle
         std::vector<std::byte> fragmentBytecode;
 
         /**
-         * set 1 的描述符集布局：这个着色器的材质资源（贴图……）；不持有
+         * set 1 的描述符集布局：这个着色器的材质贴图；不持有
          *
-         * 由 DoodleShader 按 SPIR-V 反射结果建（每个 pass 的描述各一份）。可以为
-         * VK_NULL_HANDLE：不需要材质资源的着色器（调试线框、不透明阴影）只有 set 0，
-         * 与其它管线对 set 0 仍然兼容。DoodleDescriptorManager 按
-         * kMaterialTextureBinding 分配的集合，只在定义相同时才能绑到这条管线上；
-         * DoodleShader 加载时会按这个 pass 的接口契约核对这一点
+         * 由 DoodleShader 按各 pass 反射出的 set 1 合并建出，整个着色器一份，
+         * 每个 pass 的描述里放的都是同一个句柄。可以为 VK_NULL_HANDLE：不用贴图的
+         * 着色器只有 set 0，与其它管线对 set 0 仍然兼容。DoodleDescriptorManager
+         * 按同一个布局给用这个着色器的材质分配 set 1，所以材质集合在每个 pass 的
+         * 管线上都能绑
          *
          * 只在建管线布局时被读取一次：Vulkan 规定作为参数传给另一个对象创建的
          * set 布局，创建返回之后就不再被访问，所以这个布局先于管线布局销毁是合法的
          */
         VkDescriptorSetLayout materialDescriptorSetLayout = VK_NULL_HANDLE;
+
+        /**
+         * set 1 的绑定定义，按 binding 升序；与 materialDescriptorSetLayout 是同一份布局
+         *
+         * 管线表按它分键、不按句柄：set 1 按整个着色器的所有 pass 合并，同一份字节码
+         * 可能因为别的 pass 不同而配上不同的 set 1，这时不能共用管线；而定义相同的
+         * 两个布局在 Vulkan 里互相兼容，不同着色器资产各有各的句柄也能共用一条管线
+         */
+        std::vector<VkDescriptorSetLayoutBinding> materialBindings;
 
         /**
          * 渲染状态：剔除、深度、混合、深度偏移、拓扑

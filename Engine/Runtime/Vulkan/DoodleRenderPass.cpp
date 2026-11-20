@@ -8,9 +8,11 @@
 #include "DoodleRenderPass.h"
 
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #include "DoodleVulkanDevice.h"
+#include "Rendering/DoodleShader.h"
 #include "Utility/DoodleHash.h"
 
 namespace Doodle
@@ -18,18 +20,18 @@ namespace Doodle
     void DoodleRenderPass::Initialize(const DoodleRenderPassInitInfo& initInfo,
                                       const DoodleVulkanPipelinePassConfig& passConfig)
     {
+        //本 pass 的 set 0 与 push 范围按自己的契约取：着色器加载时按同一份核对
+        const DoodlePassShaderInterface& passInterface = GetPassShaderInterface(m_passType);
+
         const std::lock_guard lock(m_mutex);
 
         m_pDevice = &initInfo.device;
         m_pipelineCompileCache = initInfo.pipelineCompileCache;
-        m_pushConstantRange = initInfo.pushConstantRange;
+        m_pushConstantRange = passInterface.pushConstantRange;
         m_passConfig = passConfig;
 
-        //每个 pass 一份 set 0 常量资源；骨架阶段的 shadow pass 传 0，不建
-        if (initInfo.passUboBufferSize > 0)
-        {
-            CreatePassUboResources(initInfo);
-        }
+        //每个 pass 一份 set 0 常量资源
+        CreatePassUboResources(passInterface);
     }
 
     void DoodleRenderPass::Destroy()
@@ -41,6 +43,9 @@ namespace Doodle
             DestroyPipelines();
         }
 
+        //memo 里存的是刚拆掉的管线的地址，跟着清空
+        m_pipelinesByShader.clear();
+
         //管线先走：它们的管线布局引用 set 0 布局。然后拆本 pass 的常量资源；
         //最后交给派生类拆自己的资源 —— 此时 device / 句柄还没清空
         DestroyPassUboResources();
@@ -50,6 +55,31 @@ namespace Doodle
         m_pushConstantRange = {};
         m_pipelineCompileCache = VK_NULL_HANDLE;
         m_pDevice = nullptr;
+    }
+
+    void DoodleRenderPass::WarmupShaders(const std::vector<const DoodleShader*>& shaders)
+    {
+        //只解析 / 创建管线，不录制：把编译代价和失败点放在加载边界上。
+        //与 Render 走同一个 ResolvePipeline，预热过的着色器在第一帧只命中 memo。
+        //队列里只会出现初始化成功的着色器；空指针只可能是调用方传错，
+        //预热不是校验入口，跳过即可
+        for (const DoodleShader* pShader : shaders)
+        {
+            if (pShader == nullptr)
+            {
+                continue;
+            }
+
+            //队列里可能有只给别的 pass 用的着色器（例如 shadow-only）；
+            //没有本 pass 描述就跳过，真正的缺失由录制前的解析拦下
+            if (pShader->GetPassDescription(m_passType) == nullptr)
+            {
+                continue;
+            }
+
+            //结果不用：解析本身就会把管线建出来并填进 memo
+            static_cast<void>(ResolvePipeline(*pShader));
+        }
     }
 
     void DoodleRenderPass::RebuildPipelines(const DoodleVulkanPipelinePassConfig& passConfig)
@@ -99,6 +129,27 @@ namespace Doodle
         return m_passConfig;
     }
 
+    const DoodleVulkanPipelineObject& DoodleRenderPass::ResolvePipeline(const DoodleShader& shader)
+    {
+        const auto it = m_pipelinesByShader.find(&shader);
+        if (it != m_pipelinesByShader.end())
+        {
+            return *it->second;
+        }
+
+        const DoodleVulkanPipelineShaderDescription* pDescription = shader.GetPassDescription(m_passType);
+        if (pDescription == nullptr)
+        {
+            throw std::invalid_argument("shader '" + shader.GetAssetPath() + "' has no description for this pass");
+        }
+
+        //内容相同的两个着色器资产会在这里拿到同一条管线；memo 只省掉每绘制项的
+        //内容哈希与逐字节比对，不改变管线表「按内容查找」的语义
+        const DoodleVulkanPipelineObject& pipeline = GetPipeline(*pDescription);
+        m_pipelinesByShader.emplace(&shader, &pipeline);
+        return pipeline;
+    }
+
     std::size_t DoodleRenderPass::HashKey(const DoodleVulkanPipelineShaderDescription& shaderDescription)
     {
         //两段字节码各自哈希再按顺序混：同一份字节换个阶段，结果也不同
@@ -108,25 +159,59 @@ namespace Doodle
         DoodleHash::Combine(seed, shaderDescription.renderState.GetHashValue());
         DoodleHash::Combine(seed, static_cast<std::size_t>(shaderDescription.vertexFormat));
         DoodleHash::Combine(seed, static_cast<std::size_t>(shaderDescription.instanceFormat));
+
+        //set 1 只混定义，不混布局句柄：理由见类注释
+        for (const VkDescriptorSetLayoutBinding& binding : shaderDescription.materialBindings)
+        {
+            DoodleHash::Combine(seed, static_cast<std::size_t>(binding.binding));
+            DoodleHash::Combine(seed, static_cast<std::size_t>(binding.descriptorType));
+            DoodleHash::Combine(seed, static_cast<std::size_t>(binding.descriptorCount));
+            DoodleHash::Combine(seed, static_cast<std::size_t>(binding.stageFlags));
+        }
         return seed;
     }
 
     bool DoodleRenderPass::IsSameKey(const DoodleVulkanPipelineShaderDescription& lhs,
                                      const DoodleVulkanPipelineShaderDescription& rhs)
     {
-        //vector<std::byte> 的 == 就是逐字节比对；set 1 布局不在这里，理由见类注释
+        //set 1 的定义逐项比：两边都是 DoodleShader 按 binding 升序排好的，
+        //pImmutableSamplers 恒为空，不参与
+        const auto isSameMaterialBindings = [&lhs, &rhs]
+        {
+            if (lhs.materialBindings.size() != rhs.materialBindings.size())
+            {
+                return false;
+            }
+
+            for (std::size_t i = 0; i < lhs.materialBindings.size(); ++i)
+            {
+                const VkDescriptorSetLayoutBinding& a = lhs.materialBindings[i];
+                const VkDescriptorSetLayoutBinding& b = rhs.materialBindings[i];
+                if (a.binding != b.binding ||
+                    a.descriptorType != b.descriptorType ||
+                    a.descriptorCount != b.descriptorCount ||
+                    a.stageFlags != b.stageFlags)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        //vector<std::byte> 的 == 就是逐字节比对；set 1 布局句柄不在这里，理由见类注释
         return lhs.vertexBytecode == rhs.vertexBytecode
             && lhs.fragmentBytecode == rhs.fragmentBytecode
             && lhs.renderState == rhs.renderState
             && lhs.vertexFormat == rhs.vertexFormat
-            && lhs.instanceFormat == rhs.instanceFormat;
+            && lhs.instanceFormat == rhs.instanceFormat
+            && isSameMaterialBindings();
     }
 
     DoodleRenderPass::PipelineItem& DoodleRenderPass::CreatePipelineItem(
         const std::size_t keyHash,
         const DoodleVulkanPipelineShaderDescription& shaderDescription)
     {
-        //没有 set 0 布局的 pass（骨架阶段的 shadow）不应该走到这里：
+        //set 0 布局在 Initialize 里建好；没有它说明 pass 还没初始化（或已经销毁），
         //建出来的管线在录制时没有可绑的常量集，不如当场说清楚
         if (m_passUboDescriptorSetLayout == VK_NULL_HANDLE)
         {
@@ -172,14 +257,18 @@ namespace Doodle
         m_pipelineItems.clear();
     }
 
-    void DoodleRenderPass::CreatePassUboResources(const DoodleRenderPassInitInfo& initInfo)
+    void DoodleRenderPass::CreatePassUboResources(const DoodlePassShaderInterface& passInterface)
     {
+        const VkDescriptorSetLayoutBinding& passUboBinding = passInterface.passUboBinding;
+        const VkDeviceSize passUboSize = passInterface.passUboSize;
+
         //set 0 只声明一个 UBO 绑定；布局 / 池 / 集合 / 写入都按它建
-        if (initInfo.passUboBinding.descriptorType != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
-            initInfo.passUboBinding.descriptorCount != 1 ||
-            initInfo.passUboBinding.pImmutableSamplers != nullptr)
+        if (passUboBinding.descriptorType != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
+            passUboBinding.descriptorCount != 1 ||
+            passUboBinding.pImmutableSamplers != nullptr ||
+            passUboSize == 0)
         {
-            throw std::invalid_argument("render pass: set 0 must be a single uniform buffer");
+            throw std::invalid_argument("render pass: set 0 must be a single, non-empty uniform buffer");
         }
 
         try
@@ -189,7 +278,7 @@ namespace Doodle
             for (DoodleGraphicsBuffer& buffer : m_passUbos)
             {
                 buffer.Initialize(*m_pDevice,
-                                  initInfo.passUboBufferSize,
+                                  passUboSize,
                                   VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                   DoodleGraphicsBuffer::EMemoryType::HostVisible);
             }
@@ -198,7 +287,7 @@ namespace Doodle
             {
                 .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
                 .bindingCount = 1,
-                .pBindings = &initInfo.passUboBinding
+                .pBindings = &passUboBinding
             };
             if (vkCreateDescriptorSetLayout(m_pDevice->GetLogicalDevice(), &layoutInfo, nullptr,
                                             &m_passUboDescriptorSetLayout) != VK_SUCCESS)
@@ -251,14 +340,14 @@ namespace Doodle
                 {
                     .buffer = m_passUbos[i].GetBuffer(),
                     .offset = 0,
-                    .range = initInfo.passUboBufferSize
+                    .range = passUboSize
                 };
 
                 const VkWriteDescriptorSet descriptorWrite
                 {
                     .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                     .dstSet = m_passUboDescriptorSets[i],
-                    .dstBinding = initInfo.passUboBinding.binding,
+                    .dstBinding = passUboBinding.binding,
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
                     .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,

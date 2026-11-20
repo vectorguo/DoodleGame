@@ -1,5 +1,5 @@
 {
   "shader": "Shaders/tree_leaf.shader.json",
   "baseColor": [0.32, 0.55, 0.3, 1.0],
-  "texture": "Art/SceneRes/Tree/Tree2/tree2_leaf_d.tga"
+  "textures": { "albedoTexture": "Art/SceneRes/Tree/Tree2/tree2_leaf_d.tga" }
 }

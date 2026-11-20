@@ -59,7 +59,8 @@ endif()
 # 一个平台的窗口实现、文件来源和 Application 都在自己那个文件夹里。
 # 平台入口（main / android_main）不在 Engine —— 它们属于 App 组合根，
 # 单独列在下面的 DOODLE_APP_*_SOURCES 里。
-# Platform/ 根目录下的是各摞共用的那部分（接口、驱动层、日志）
+# Platform/ 根目录下的是各摞共用的那部分（接口、驱动层）。日志只在根目录留接口
+# DoodleLog.h，实现跟着平台分在下面那三摞里，不和别的平台的 #ifdef 挤在一个文件
 #
 # DoodleApplication 编进了共享那摞而不是 macOS 那摞：它不依赖任何平台 API。
 # 各个平台都要用它 —— 它是「当前应用」这个概念本身（持有 Vulkan 子系统、
@@ -68,7 +69,7 @@ endif()
 # DoodleAndroidApplication（在 Android 那摞里）
 # ============================================================================
 
-# 与平台无关的部分：Vulkan 各层 + 窗口抽象 + 日志
+# 与平台无关的部分：Vulkan 各层 + 窗口抽象 + 日志接口
 set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Vulkan/DoodleVulkanDevice.cpp
     Engine/Runtime/Vulkan/DoodleVulkanDevice.h
@@ -118,7 +119,6 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Platform/DoodleFileSystem.h
     Engine/Runtime/Platform/DoodleApplication.cpp
     Engine/Runtime/Platform/DoodleApplication.h
-    Engine/Runtime/Platform/DoodleLog.cpp
     Engine/Runtime/Platform/DoodleLog.h
     Engine/Runtime/Math/DoodleMath.cpp
     Engine/Runtime/Math/DoodleMath.h
@@ -175,6 +175,7 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Rendering/DoodleForwardPassData.h
     Engine/Runtime/Rendering/DoodleShadowPassData.h
     Engine/Runtime/Rendering/DoodlePassShaderInterface.h
+    Engine/Runtime/Rendering/DoodleMaterialShaderInterface.h
     Engine/Runtime/Rendering/DoodleShader.cpp
     Engine/Runtime/Rendering/DoodleShader.h
         Engine/Runtime/Vulkan/DoodlePipelineWarmupQueue.cpp
@@ -193,7 +194,7 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Utility/DoodleHash.h
 )
 
-# macOS 专属：窗口与文件来源实现
+# macOS 专属：窗口、文件来源与日志实现
 set(DOODLE_MACOS_SOURCES
         Engine/Runtime/Platform/MacOS/DoodleMacWindow.cpp
         Engine/Runtime/Platform/MacOS/DoodleMacWindow.h
@@ -201,9 +202,10 @@ set(DOODLE_MACOS_SOURCES
         Engine/Runtime/Platform/MacOS/DoodleMacFileSystem.h
         Engine/Runtime/Platform/MacOS/DoodleMacApplication.cpp
         Engine/Runtime/Platform/MacOS/DoodleMacApplication.h
+        Engine/Runtime/Platform/MacOS/DoodleMacLog.cpp
 )
 
-# Android 专属：驱动层、窗口与文件来源实现
+# Android 专属：驱动层、窗口、文件来源与日志实现
 set(DOODLE_ANDROID_SOURCES
     Engine/Runtime/Platform/Android/DoodleAndroidApplication.cpp
     Engine/Runtime/Platform/Android/DoodleAndroidApplication.h
@@ -211,9 +213,10 @@ set(DOODLE_ANDROID_SOURCES
     Engine/Runtime/Platform/Android/DoodleAndroidFileSystem.h
     Engine/Runtime/Platform/Android/DoodleAndroidWindow.cpp
     Engine/Runtime/Platform/Android/DoodleAndroidWindow.h
+    Engine/Runtime/Platform/Android/DoodleAndroidLog.cpp
 )
 
-# Windows 专属：窗口与文件来源实现
+# Windows 专属：窗口、文件来源与日志实现
 set(DOODLE_WINDOWS_SOURCES
     Engine/Runtime/Platform/Windows/DoodleWindowsApplication.cpp
     Engine/Runtime/Platform/Windows/DoodleWindowsApplication.h
@@ -221,6 +224,9 @@ set(DOODLE_WINDOWS_SOURCES
     Engine/Runtime/Platform/Windows/DoodleWindowsFileSystem.h
     Engine/Runtime/Platform/Windows/DoodleWindowsWindow.cpp
     Engine/Runtime/Platform/Windows/DoodleWindowsWindow.h
+    Engine/Runtime/Platform/Windows/DoodleWindowsPaths.cpp
+    Engine/Runtime/Platform/Windows/DoodleWindowsPaths.h
+    Engine/Runtime/Platform/Windows/DoodleWindowsLog.cpp
 )
 
 # 引擎自带的可选功能包。CameraDirector 只依赖 Engine，不依赖 GamePlay
@@ -623,6 +629,20 @@ if(WIN32)
         ${_doodle_shader_sources}
         "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/compile.sh"
     )
+
+    # 链接成 WINDOWS 子系统：启动时只出游戏窗口，不再跟着一个黑的控制台。
+    # 默认是 CONSOLE，从 VS 按 F5 或资源管理器双击都会先多出一个 cmd 窗口，
+    # 关掉它游戏也跟着没了 —— 两个窗口绑在一起，很别扭。
+    #
+    # 入口仍是普通的 main（见 App/Platform/Windows/DoodleWindowsMain.cpp）：
+    # MSVC 的链接器按子系统挑默认入口，WINDOWS 找的是 WinMainCRTStartup，
+    # 这里显式指回 mainCRTStartup，省得为一份入口再写个 WinMain 转发。
+    # 没有控制台之后日志的去处见 DoodleWindowsLog.cpp：
+    # exe 同目录的 DoodleGame.log + 调试器输出（OutputDebugString）
+    set_target_properties(DoodleGame PROPERTIES WIN32_EXECUTABLE TRUE)
+    if(MSVC)
+        target_link_options(DoodleGame PRIVATE /ENTRY:mainCRTStartup)
+    endif()
 
     # 与 Android 那段同一个规矩：不加工程根目录。
     # Vulkan 的头文件由下面链接的 Vulkan::Vulkan 带进来

@@ -75,6 +75,20 @@ namespace Doodle
                                                                    const std::string& path);
 
         /**
+         * 读一个 SPIR-V 文件（来源同 ReadShaderFile），并核对长度：至少有 5 个字的
+         * 模块头，且按 4 字节对齐
+         *
+         * 这两条是 SPIRV-Reflect 自己的合法性规则，但它建模块时先读模块头、后看判定，
+         * 不足 12 字节的输入会越界读 —— 所以在交给 DoodleShader 之前拦住，
+         * DoodleShader::Initialize 不再核对。magic 之类的内容错误留给反射报，
+         * 那时长度已经安全
+         *
+         * @throws std::runtime_error 两个来源都取不到，或长度不合法
+         */
+        [[nodiscard]] static std::vector<std::byte> ReadSpirvFile(const DoodleFileSystem& fileSystem,
+                                                                  const std::string& path);
+
+        /**
          * 从描述文件的 renderState 对象读出渲染状态；缺省字段取 DoodleRenderState 的默认值
          *
          * @throws std::runtime_error 字段类型不对，或枚举字符串不认识

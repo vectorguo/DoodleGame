@@ -4,7 +4,8 @@
 // C++ 侧对应 Rendering/DoodleShadowPassData.h。真正实现阴影时：
 // - 顶点着色器用 lightView / lightProj 把顶点变到光空间；
 // - push constant 里的 localToWorld 与 forward 相同；
-// - 需要 alpha 镂空的材质另在 set 1 声明材质纹理。
+// - 需要 alpha 镂空的着色器在 set 1 声明贴图，名字与 binding 要和它的 forward 一致 ——
+//   一个着色器的各个 pass 合用一份 set 1（见 DoodleMaterialShaderInterface.h）。
 //
 // set/binding 与 DoodlePassShaderInterface 里的 shadow passUboBinding 对齐
 

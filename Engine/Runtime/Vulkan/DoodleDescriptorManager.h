@@ -13,42 +13,45 @@
 #include <vulkan/vulkan_core.h>
 
 #include "Rendering/DoodleDrawItem.h"
-#include "Rendering/DoodlePassShaderInterface.h"
 #include "Rendering/DoodleTexture.h"
 #include "Vulkan/DoodleVulkanConfig.h"
 
 namespace Doodle
 {
     class DoodleVulkanDevice;
+    class DoodleMaterial;
 
     /**
-     * 描述符管理器：材质纹理描述符集
+     * 描述符管理器：材质的 set 1
      *
-     * 本类拥有 set 1 的布局、按需增长的池、对应的集合、默认 1×1 白图与纹理集合缓存：
+     * 本类拥有材质集合的池（按需增长）、按材质缓存的集合与默认 1×1 白图：
      *
-     * - set 1：每张纹理一个集合，按 DoodleTexture 指针缓存；没有纹理的材质
-     *   使用默认白图的集合。本类按 kMaterialTextureBinding（一张 combined image
-     *   sampler）分配这些集合；每个着色器资产另有一份按反射结果建的 set 1 布局，
-     *   两者定义相同，所以这些集合能绑到任何着色器的管线上。
-     *   第 3 步起 set 1 改为每个材质一个、按材质自己着色器的布局分配。
+     * - set 1：每个材质一个集合，按 DoodleMaterial 指针缓存。布局不归本类 ——
+     *   用材质着色器的 set 1 布局分配（DoodleShader::GetMaterialDescriptorSetLayout），
+     *   着色器声明了几张贴图就写几张：材质配了的写材质的贴图，没配的写默认白图。
+     *   着色器没有声明贴图时没有 set 1，缓存 VK_NULL_HANDLE，录制侧不绑。
+     *   着色器的 set 1 布局按它所有 pass 合并，所以同一个集合在每个 pass 里都能绑。
      *
      * set 0 的每帧常量归各自的 pass：DoodleRenderPass 按每个 pass 的
      * DoodlePassShaderInterface 自己建 UBO / 布局 / 池 / 集合。本类只负责
-     * 资产作用域的材质纹理，不再持有一份全工程共用的帧常量。
+     * 资产作用域的材质贴图。
      *
-     * 它不拥有纹理资产与管线：纹理由资产系统保证寿命，管线拿着自己的 set 1
-     * 布局句柄去建自己的管线布局。生命周期由 DoodleRenderPipeline 管理：
-     * Initialize 排在命令管理器之后（默认白图上传要借传输池）、所有管线之前
-     * （管线要读布局）；销毁排在所有管线之后。
+     * 它不拥有材质、贴图、着色器与管线：它们由资产系统保证寿命，管线拿着着色器的
+     * set 1 布局去建自己的管线布局。生命周期由 DoodleRenderPipeline 管理：
+     * Initialize 排在命令管理器之后（默认白图上传要借传输池）；销毁排在所有 pass 之后。
      *
-     * 每帧的纹理集合解析结果（与 drawItems 等长）保存在内部，下一次调用
+     * 材质加载完成后只读（setter 只有加载器在用）：集合在第一次画这个材质时写好，
+     * 之后不再改。资产系统当前不卸载材质；若将来支持卸载或运行时换贴图，必须在这里
+     * 同步移除条目，否则指针复用会把新材质映射到旧集合。
+     *
+     * 每帧的集合解析结果（与 drawItems 等长）保存在内部，下一次调用
      * ResolveMaterialDescriptorSets 前有效。
      */
     class DoodleDescriptorManager
     {
     public:
         /**
-         * 建 set 1 布局、纹理描述符池与默认白图
+         * 建第一块材质描述符池与默认白图
          *
          * 前置条件：命令管理器已经初始化（默认白图要借它的传输池上传）。
          *
@@ -57,48 +60,25 @@ namespace Doodle
         void Initialize(const DoodleVulkanDevice& device);
 
         /**
-         * 销毁材质池、默认白图与所有集合句柄，最后销毁 set 1 布局
+         * 销毁材质池（集合随之失效）与默认白图
          *
-         * 前置条件：GPU 已空闲。必须在所有管线之后调用；重复调用幂等
+         * 前置条件：GPU 已空闲。必须在所有 pass 之后调用；重复调用幂等
          */
         void Destroy();
 
         /**
-         * set 1 的描述符集布局：一张 combined image sampler（材质纹理）
-         *
-         * 本类按它分配纹理集合。管线不用它建布局 —— 管线用的是各自着色器资产
-         * 按反射建的那一份，定义与它相同
-         */
-        [[nodiscard]] VkDescriptorSetLayout GetMaterialDescriptorSetLayout() const
-        {
-            return m_materialDescriptorSetLayout;
-        }
-
-        /**
          * 为每条绘制项解析 set 1，返回与 drawItems 等长的集合数组
          *
-         * 第一次用到的纹理在这里分配集合并缓存；没有配置纹理的材质用默认白图。
-         * 返回值引用内部数组，下一次调用前有效。
+         * 第一次用到的材质在这里分配集合、写好贴图并缓存。材质的着色器没有声明贴图时，
+         * 对应位置是 VK_NULL_HANDLE。返回值引用内部数组，下一次调用前有效。
          *
          * @param drawItems 本帧的绘制项；pMaterial 必须非空（收集侧保证）
+         * @throw std::logic_error 材质没有着色器
+         * @throw std::runtime_error 集合分配失败
          */
         [[nodiscard]] const std::vector<VkDescriptorSet>& ResolveMaterialDescriptorSets(const std::vector<DoodleDrawItem>& drawItems);
 
     private:
-        /**
-         * 建 set 1 的描述符集布局
-         *
-         * binding 0 是一个片元阶段可见的 combined image sampler
-         */
-        void CreateMaterialDescriptorSetLayout();
-
-        /**
-         * 销毁一个描述符集布局，并把句柄置空；句柄为空时什么都不做
-         *
-         * 调用前必须确认从它分配集合的池已经销毁
-         */
-        void DestroyDescriptorSetLayout(VkDescriptorSetLayout& descriptorSetLayout) const;
-
         /**
          * 建一组描述符池
          *
@@ -106,8 +86,7 @@ namespace Doodle
          * 随池一起失效。
          *
          * descriptorCount 与 maxSets 分开传，而不是取同一个值：Vulkan 里它们是
-         * 两个量，当前恰好都满足「每个集合占一个描述符」，将来材质 set 增加
-         * 取样器后前者就不再等于后者。
+         * 两个量 —— 材质集合有几张贴图由着色器决定，一个集合占的描述符数不固定。
          *
          * @param type 池内唯一一种描述符类型
          * @param descriptorCount 该类型描述符的总数
@@ -127,17 +106,17 @@ namespace Doodle
         void DestroyDescriptorPool(VkDescriptorPool& descriptorPool) const;
 
         /**
-         * 追加一块纹理描述符池；池满时再由 GetOrCreateTextureDescriptorSet 调用
+         * 追加一块材质描述符池；池满时再由 GetOrCreateMaterialDescriptorSet 调用
          */
-        void AddTextureDescriptorPool();
+        void AddMaterialDescriptorPool();
 
         /**
-         * 销毁所有纹理描述符池
+         * 销毁所有材质描述符池
          */
-        void DestroyTextureDescriptorPools();
+        void DestroyMaterialDescriptorPools();
 
         /**
-         * 建 1×1 白图，作为没有配置纹理的材质的默认绑定
+         * 建 1×1 白图，作为材质没配的贴图槽的默认绑定
          */
         void CreateDefaultTexture();
 
@@ -147,11 +126,12 @@ namespace Doodle
         void DestroyDefaultTexture();
 
         /**
-         * 取一张纹理的描述符集；没有就分配并写入
+         * 取一个材质的 set 1；没有就按它着色器的布局分配并写入
          *
-         * 池块满了会追加新块再试，不设总量上限
+         * 池块满了会追加新块再试，不设总量上限。着色器没有声明贴图时返回并缓存
+         * VK_NULL_HANDLE
          */
-        [[nodiscard]] VkDescriptorSet GetOrCreateTextureDescriptorSet(const DoodleTexture& texture);
+        [[nodiscard]] VkDescriptorSet GetOrCreateMaterialDescriptorSet(const DoodleMaterial& material);
 
     private:
         /**
@@ -160,38 +140,26 @@ namespace Doodle
         const DoodleVulkanDevice* m_pDevice = nullptr;
 
         /**
-         * set 1 的描述符集布局：材质纹理（一张 combined image sampler）
+         * 材质描述符池块。按需增长：一块满了就追加下一块
          */
-        VkDescriptorSetLayout m_materialDescriptorSetLayout = VK_NULL_HANDLE;
+        std::vector<VkDescriptorPool> m_materialDescriptorPools;
 
         /**
-         * 纹理描述符池块。按需增长：一块满了就追加下一块
-         */
-        std::vector<VkDescriptorPool> m_textureDescriptorPools;
-
-        /**
-         * 默认白图：材质没有纹理时绑定它，让着色器只有一条采样路径
+         * 默认白图：材质没配的贴图槽都绑它，让着色器只有一条采样路径
          */
         DoodleTexture m_defaultTexture;
 
         /**
-         * 默认白图的描述符集
+         * 材质 → 它的 set 1。按 DoodleMaterial 指针缓存，一个材质只建一个集合；
+         * 着色器没有声明贴图的材质映射到 VK_NULL_HANDLE
          */
-        VkDescriptorSet m_defaultTextureDescriptorSet = VK_NULL_HANDLE;
+        std::unordered_map<const DoodleMaterial*, VkDescriptorSet> m_materialDescriptorSets;
 
         /**
-         * 纹理 → 描述符集。按 DoodleTexture 指针缓存，同一张纹理只建一个集合
-         *
-         * 资产系统当前不卸载纹理；若将来支持卸载，必须在这里同步移除条目，
-         * 否则指针复用会把新纹理映射到旧集合
-         */
-        std::unordered_map<const DoodleTexture*, VkDescriptorSet> m_textureDescriptorSets;
-
-        /**
-         * 本帧每条绘制项对应的纹理集合，与 drawItems 等长
+         * 本帧每条绘制项对应的材质集合，与 drawItems 等长
          *
          * 只在两次 ResolveMaterialDescriptorSets 之间有效；集合本身由
-         * m_textureDescriptorSets 持有
+         * m_materialDescriptorSets 持有
          */
         std::vector<VkDescriptorSet> m_drawItemMaterialDescriptorSets;
     };
