@@ -1,4 +1,4 @@
-# 只跟踪源码与构建脚本。
+# 只跟踪源码、构建脚本，以及待解决问题的记录（待解决问题/）。
 # 其余全部忽略：AI 工具产物（AI/、.claude/、.codex/、.cindy/、.agents/、.mcp.json、
 # documents/、_local_*/）、IDE 配置（.idea/）、构建输出（cmake-build-debug/）等。
 /*
@@ -12,6 +12,7 @@
 !/Resources/
 !/android/
 !/windows/
+!/待解决问题/
 
 # Shaders/ 下只有源文件，这里刻意不写任何忽略规则。
 #
