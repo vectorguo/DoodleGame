@@ -13,12 +13,13 @@ namespace Doodle
 {
     //只在接口签名与成员指针里出现，完整定义留给源文件
     class DoodleVulkanDevice;
+    struct DoodleShaderPass;
 
     /**
      * 建一条图形管线的全部输入
      *
-     * 设备与 pass 侧的共享输入由外层提供，passConfig / shaderDescription 是本次
-     * 要建什么样的描述。Vulkan 创建管线本来就是「一大包输入」的形态；以后加
+     * 设备与 pass 侧的共享输入由外层提供，passConfig / shaderPass 是本次
+     * 要建什么样的输入。Vulkan 创建管线本来就是「一大包输入」的形态；以后加
      * specialization constants、dynamic state 时往这里加字段，Initialize 签名不动。
      *
      * 必填项用引用：漏填直接编译不过。pipelineCompileCache 允许为空，用值 + 默认值。
@@ -53,22 +54,23 @@ namespace Doodle
         const DoodleVulkanPipelinePassConfig& passConfig;
 
         /**
-         * 着色器侧描述；只在本次调用期间读取，不保存
+         * 着色器侧输入；只在本次调用期间读取，不保存
          */
-        const DoodleVulkanPipelineShaderDescription& shaderDescription;
+        const DoodleShaderPass& shaderPass;
     };
 
     /**
      * 一条图形管线：按参数建出来的管线布局 + 管线
      *
      * 只拥有这两样东西。一条管线由三部分输入决定：
-     * - 着色器侧描述（DoodleVulkanPipelineShaderDescription）：字节码、set 1 布局、
-     *   渲染状态、顶点与实例格式；
+     * - 着色器侧输入（DoodleShaderPass）：两段字节码、set 1 布局、渲染状态、
+     *   顶点与实例格式；
      * - pass 侧配置（DoodleVulkanPipelinePassConfig）：附件格式与采样数；
      * - pass 侧共享：本 pass 的 set 0 布局、本 pass 的 push constant 范围、
      *   驱动编译缓存（VkPipelineCache）。
      *
-     * 前两样是管线的创建输入，定义在 DoodleVulkanPipelineConfig.h（原因见该文件开头）。
+     * 前两样是管线的创建输入。着色器侧那份定义在 DoodleShaderPass.h，
+     * pass 侧那份定义在 DoodleVulkanPipelineConfig.h。
      *
      * 本类不读文件、不认识门面、也不是单例：字节由要管线的一方读好传进来，
      * 设备与布局都是参数。同一份输入建几次都一样，谁来建、建几条由
@@ -92,9 +94,9 @@ namespace Doodle
         /**
          * 建管线布局与管线
          *
-         * @param info 设备、两个共享句柄与这次要建的描述，见 DoodleVulkanPipelineInitInfo
+         * @param info 设备、两个共享句柄与着色器侧输入，见 DoodleVulkanPipelineInitInfo
          *
-         * @throw std::invalid_argument 描述本身不合法（字节码为空、
+         * @throw std::invalid_argument 输入不合法（字节码为空、
          *        深度偏移因子不是有限值、set 0 布局为空……）
          * @throw std::runtime_error 布局 / 模块 / 管线创建失败
          *
@@ -110,11 +112,11 @@ namespace Doodle
          * 所以布局原样保留（也就不再读 set 1 布局），持有本对象引用的一方不受影响。
          * 先建新的、成功了再拆旧的：建失败时旧管线原样可用，异常向上抛
          *
-         * 由管线缓存在附件格式变化时调用
+         * 由持有它的 pass 在附件格式变化时调用
          *
          * @param pipelineCompileCache 驱动编译缓存，可为 VK_NULL_HANDLE
          * @param passConfig 新的附件格式与采样数
-         * @param shaderDescription 必须与 Initialize 时那份内容相同（管线缓存条目里存的副本）
+         * @param shaderPass 必须与 Initialize 时那份内容相同（条目里存的副本）
          *
          * @throw std::logic_error 尚未初始化
          * @throw std::runtime_error 模块 / 管线创建失败
@@ -123,7 +125,7 @@ namespace Doodle
          */
         void Rebuild(VkPipelineCache pipelineCompileCache,
                      const DoodleVulkanPipelinePassConfig& passConfig,
-                     const DoodleVulkanPipelineShaderDescription& shaderDescription);
+                     const DoodleShaderPass& shaderPass);
 
         /**
          * 销毁管线与管线布局
@@ -150,11 +152,11 @@ namespace Doodle
 
     private:
         /**
-         * 检查着色器侧描述里 Vulkan 不会替我们检查、或者检查了也只报在别处的那几条
+         * 检查着色器侧输入里 Vulkan 不会替我们检查、或者检查了也只报在别处的那几条
          *
          * @throw std::invalid_argument 不合法
          */
-        static void ValidateShaderDescription(const DoodleVulkanPipelineShaderDescription& shaderDescription);
+        static void ValidateShaderPass(const DoodleShaderPass& shaderPass);
 
         /**
          * 建管线布局：set 0（+ set 1）与本 pass 的 push constant 范围
@@ -172,14 +174,14 @@ namespace Doodle
         void DestroyPipelineLayout();
 
         /**
-         * 按 pass 配置与着色器侧描述建一条管线，返回句柄
+         * 按 pass 配置与着色器侧输入建一条管线，返回句柄
          *
          * 返回句柄而不是直接写成员：调用方决定什么时候装上它。
          * 前置条件：m_pipelineLayout 已创建
          */
         [[nodiscard]] VkPipeline CreateGraphicsPipeline(VkPipelineCache pipelineCompileCache,
                                                         const DoodleVulkanPipelinePassConfig& passConfig,
-                                                        const DoodleVulkanPipelineShaderDescription& shaderDescription) const;
+                                                        const DoodleShaderPass& shaderPass) const;
 
         /**
          * 销毁图形管线，并把句柄置空

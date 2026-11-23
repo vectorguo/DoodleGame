@@ -9,7 +9,6 @@
 
 #include "../Platform/DoodleWindow.h"
 #include "Rendering/DoodleCamera.h"
-#include "Rendering/DoodleLight.h"
 
 namespace Doodle
 {
@@ -37,7 +36,7 @@ namespace Doodle
     void DoodleRenderManager::Render(const std::vector<DoodleDrawItem>& drawItems)
     {
         // 先排空待预热队列：着色器资产在初始化成功时投递，这里按 pass 把它们的
-        // 管线建出来。输入不是绘制项 —— 管线身份只取决于「着色器 × 渲染状态 × pass」，
+        // 管线建出来。输入不是绘制项 —— 每个着色器在每个 pass 里只有一条管线，
         // 跟本帧画了多少东西无关；队列为空时本调用只是一次判空。
         //
         // 位置在取主相机之前、BeginFrame 之前：建管线不需要相机，也不需要交换链
@@ -58,12 +57,7 @@ namespace Doodle
         // 相机、光源与绘制项在本帧组成一份上下文；后端会在 BeginFrame 里
         // 填它的状态字段（status / frameIndex / imageIndex / commandBuffer）。
         // drawItems 是调用方容器的引用，本层不拥有它，Render 返回后即可复用
-        DoodleFrameContext frameContext
-        {
-            .camera = *pMainCamera,
-            .drawItems = drawItems,
-            .pLight = DoodleLight::GetMainLight(),
-        };
+        DoodleFrameContext frameContext(pMainCamera, drawItems);
 
         //帧时序与边界条件全在后端。这里只按状态分支：
         //- Skipped：表面被 OnSurfaceLost 拆掉，本帧什么都不做；

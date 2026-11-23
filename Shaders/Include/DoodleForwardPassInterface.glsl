@@ -21,7 +21,7 @@ layout(set = 0, binding = 0, std140) uniform ForwardPassUbo
 // 每条绘制项自己的数据：局部到世界矩阵 + 材质基色。
 // 顶点阶段读 localToWorld，片元阶段读 baseColor —— 两个阶段声明的是同一段
 // push constant，必须逐成员一致
-layout(push_constant) uniform ForwardPassPushConstants
+layout(push_constant) uniform ForwardPassDrawItemData
 {
     mat4 localToWorld;
     vec4 baseColor;

@@ -10,22 +10,22 @@
 
 #include <vulkan/vulkan_core.h>
 
-#include "DoodleForwardPassData.h"
-#include "DoodleShadowPassData.h"
+#include "../Vulkan/DoodleForwardPassData.h"
+#include "../Vulkan/DoodleShadowPassData.h"
 
 namespace Doodle
 {
     /**
      * 着色器侧的 pass 身份
      *
-     * 一个着色器资产可以按 pass 各存一份管线描述（不同字节码 / 渲染状态）。
+     * 一个着色器资产可以按 pass 各存一份数据（不同字节码 / 渲染状态）。
      * loader 把描述文件里的 passes.forward / passes.shadow 映射成这个枚举；
      * 各 pass 类在构造时把自己的枚举交给 DoodleRenderPass，基类按它取契约、
-     * 用 shader.GetPassDescription(这个枚举) 取着色器的那一条。
+     * 用 shader.GetPass(这个枚举) 取着色器的那一份。
      *
      * 它不是渲染 pass 的基类，不决定 pass 顺序，也不替代 DoodleForwardPass /
      * DoodleShadowPass —— 真正的 pass 类仍然各自存在，这里只解决「这份着色器
-     * 描述属于哪个 pass」。
+     * 数据属于哪个 pass」。
      */
     enum class EDoodlePassType : std::uint8_t
     {
@@ -89,7 +89,7 @@ namespace Doodle
             {
                 .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                 .offset = 0,
-                .size = static_cast<uint32_t>(sizeof(DoodleForwardPassPushConstants))
+                .size = static_cast<uint32_t>(sizeof(DoodleForwardPassDrawItemData))
             }
         };
 
@@ -108,7 +108,7 @@ namespace Doodle
             {
                 .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
                 .offset = 0,
-                .size = static_cast<uint32_t>(sizeof(DoodleShadowPassPushConstants))
+                .size = static_cast<uint32_t>(sizeof(DoodleShadowPassDrawItemData))
             }
         };
 
@@ -124,6 +124,6 @@ namespace Doodle
         throw std::invalid_argument("unknown pass type");
     }
 
-    static_assert(sizeof(DoodleForwardPassPushConstants) <= 128, "forward push constant 超过了规范保证的 maxPushConstantsSize 下限 128");
-    static_assert(sizeof(DoodleShadowPassPushConstants) <= 128, "shadow push constant 超过了规范保证的 maxPushConstantsSize 下限 128");
+    static_assert(sizeof(DoodleForwardPassDrawItemData) <= 128, "forward 逐绘制项数据块超过了规范保证的 maxPushConstantsSize 下限 128");
+    static_assert(sizeof(DoodleShadowPassDrawItemData) <= 128, "shadow 逐绘制项数据块超过了规范保证的 maxPushConstantsSize 下限 128");
 }

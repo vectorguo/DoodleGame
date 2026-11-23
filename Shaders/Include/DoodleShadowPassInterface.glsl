@@ -15,7 +15,7 @@ layout(set = 0, binding = 0, std140) uniform ShadowPassUbo
     mat4 lightProj;
 } shadowUbo;
 
-layout(push_constant) uniform ShadowPassPushConstants
+layout(push_constant) uniform ShadowPassDrawItemData
 {
     mat4 localToWorld;
 } shadowPc;

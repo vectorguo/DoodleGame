@@ -11,14 +11,15 @@
 
 #include "DoodleDepthImages.h"
 #include "DoodleShaderModule.h"
+#include "DoodleShaderPass.h"
 #include "DoodleVulkanDevice.h"
 
 namespace Doodle
 {
     void DoodleVulkanPipelineObject::Initialize(const DoodleVulkanPipelineInitInfo& info)
     {
-        //描述不合法时什么都不建：先查，再动设备
-        ValidateShaderDescription(info.shaderDescription);
+        //输入不合法时什么都不建：先查，再动设备
+        ValidateShaderPass(info.shaderPass);
         if (info.passUboDescriptorSetLayout == VK_NULL_HANDLE)
         {
             throw std::invalid_argument("graphics pipeline: set 0 layout is null");
@@ -27,16 +28,16 @@ namespace Doodle
         m_pDevice = &info.device;
 
         //布局是管线的输入，先建布局再建管线。中途失败时把已经建出来的收掉，
-        //对象回到未初始化状态 —— 管线缓存只在成功之后才收下这个对象，
+        //对象回到未初始化状态 —— 持有它的 pass 只在成功之后才收下这个对象，
         //失败的那份会被直接丢弃，没有人再来调 Destroy
         try
         {
             CreatePipelineLayout(info.passUboDescriptorSetLayout,
-                                 info.shaderDescription.materialDescriptorSetLayout,
+                                 info.shaderPass.materialDescriptorSetLayout,
                                  info.pushConstantRange);
             m_graphicsPipeline = CreateGraphicsPipeline(info.pipelineCompileCache,
                                                         info.passConfig,
-                                                        info.shaderDescription);
+                                                        info.shaderPass);
         }
         catch (...)
         {
@@ -48,7 +49,7 @@ namespace Doodle
 
     void DoodleVulkanPipelineObject::Rebuild(VkPipelineCache pipelineCompileCache,
                                          const DoodleVulkanPipelinePassConfig& passConfig,
-                                         const DoodleVulkanPipelineShaderDescription& shaderDescription)
+                                         const DoodleShaderPass& shaderPass)
     {
         if (m_pDevice == nullptr || m_pipelineLayout == VK_NULL_HANDLE)
         {
@@ -57,7 +58,7 @@ namespace Doodle
 
         //布局与附件格式无关，原样保留；只换管线本身。
         //新的建出来之前不动旧的：CreateGraphicsPipeline 抛异常时旧管线仍然完好
-        const VkPipeline rebuiltPipeline = CreateGraphicsPipeline(pipelineCompileCache, passConfig, shaderDescription);
+        const VkPipeline rebuiltPipeline = CreateGraphicsPipeline(pipelineCompileCache, passConfig, shaderPass);
         DestroyGraphicsPipeline();
         m_graphicsPipeline = rebuiltPipeline;
     }
@@ -75,20 +76,20 @@ namespace Doodle
         m_pDevice = nullptr;
     }
 
-    void DoodleVulkanPipelineObject::ValidateShaderDescription(const DoodleVulkanPipelineShaderDescription& shaderDescription)
+    void DoodleVulkanPipelineObject::ValidateShaderPass(const DoodleShaderPass& shaderPass)
     {
         //字节码长度由 DoodleShaderModule 检查；这里只挡掉空的，让报错说清是哪个阶段
-        if (shaderDescription.vertexBytecode.empty())
+        if (shaderPass.vertexBytecode.empty())
         {
             throw std::invalid_argument("graphics pipeline: vertex shader bytecode is empty");
         }
-        if (shaderDescription.fragmentBytecode.empty())
+        if (shaderPass.fragmentBytecode.empty())
         {
             throw std::invalid_argument("graphics pipeline: fragment shader bytecode is empty");
         }
 
-        //NaN 不等于自己：带着它的渲染状态在缓存里永远查不到，每要一次就多建一条管线
-        const auto& renderState = shaderDescription.renderState;
+        //NaN 会让深度偏移参数失去意义，建出来的管线不可用
+        const auto& renderState = shaderPass.renderState;
         if (!std::isfinite(renderState.depthBiasConstantFactor) || !std::isfinite(renderState.depthBiasSlopeFactor))
         {
             throw std::invalid_argument("graphics pipeline: depth bias factors must be finite");
@@ -151,10 +152,10 @@ namespace Doodle
 
     VkPipeline DoodleVulkanPipelineObject::CreateGraphicsPipeline(VkPipelineCache pipelineCompileCache,
                                                              const DoodleVulkanPipelinePassConfig& passConfig,
-                                                             const DoodleVulkanPipelineShaderDescription& shaderDescription) const
+                                                             const DoodleShaderPass& shaderPass) const
     {
         const VkDevice logicalDevice = m_pDevice->GetLogicalDevice();
-        const DoodleRenderState& renderState = shaderDescription.renderState;
+        const DoodleRenderState& renderState = shaderPass.renderState;
 
         //先把所有可能抛异常的准备做完，再建着色器模块：模块是裸句柄，
         //建出来之后到销毁之前只剩 vkCreateGraphicsPipelines 这一步，中间不会再抛
@@ -166,7 +167,7 @@ namespace Doodle
         //VkPipelineVertexInputStateCreateInfo 里存的是裸指针、不拷贝内容，
         //所以它必须活到 vkCreateGraphicsPipelines 返回为止 —— 局部量正好满足
         const DoodleVertexInput vertexInput = DoodleVertexInput::Describe(
-            shaderDescription.vertexFormat, shaderDescription.instanceFormat);
+            shaderPass.vertexFormat, shaderPass.instanceFormat);
 
         //颜色混合：pass 有几个颜色附件就给几份，全部按渲染状态里同一种混合方式。
         //动态渲染下这个数量必须等于 VkPipelineRenderingCreateInfo 的颜色附件数
@@ -178,11 +179,11 @@ namespace Doodle
         //着色器模块用局部变量管住寿命。vkCreateGraphicsPipelines 是拷贝语义：
         //它把编译结果存进管线对象，之后不再引用模块，所以函数返回前销毁即可。
         //这正是 DoodleShaderModule 做成静态工具类而不是一层的原因
-        const VkShaderModule vertShaderModule = DoodleShaderModule::CreateShaderModule(logicalDevice, shaderDescription.vertexBytecode);
+        const VkShaderModule vertShaderModule = DoodleShaderModule::CreateShaderModule(logicalDevice, shaderPass.vertexBytecode);
         VkShaderModule fragShaderModule = VK_NULL_HANDLE;
         try
         {
-            fragShaderModule = DoodleShaderModule::CreateShaderModule(logicalDevice, shaderDescription.fragmentBytecode);
+            fragShaderModule = DoodleShaderModule::CreateShaderModule(logicalDevice, shaderPass.fragmentBytecode);
         }
         catch (...)
         {

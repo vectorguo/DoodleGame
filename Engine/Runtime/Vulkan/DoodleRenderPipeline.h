@@ -139,7 +139,7 @@ namespace Doodle
          * 排空待预热队列，让每个 pass 把新着色器的管线建出来
          *
          * 由 DoodleRenderManager::Render 在取帧之前每帧调用一次。输入不是绘制项：
-         * 管线身份只取决于「着色器 × 渲染状态 × pass」，跟本帧画了多少东西无关。
+         * 每个着色器在每个 pass 里只有一条管线，跟本帧画了多少东西无关。
          * 队列为空时直接返回，稳态开销是常数。
          *
          * 按 pass 顺序逐个分发 —— 每个 pass 自己决定要哪些管线，本类只负责
@@ -178,8 +178,9 @@ namespace Doodle
          * Render / WarmupPipelines 正序遍历，Destroy 逆序遍历。集中在一处，
          * 以后加 pass 时不会漏掉某个调用点
          */
-        [[nodiscard]] std::array<DoodleRenderPass*, 2> GetPasses();
+        [[nodiscard]] std::array<DoodleRenderPass*, 2> GetRenderPasses();
 
+    private:
         /**
          * 当前实例，构造时登记、析构时清空
          */

@@ -69,6 +69,10 @@ namespace Doodle
      */
     struct DoodleFrameContext
     {
+    public:
+        DoodleFrameContext(const DoodleCamera* pCamera, const std::vector<DoodleDrawItem>& drawItems);
+
+    public:
         /**
          * 本帧的相机
          */

@@ -7,10 +7,6 @@
 
 #pragma once
 
-#include <cstddef>
-
-#include "Utility/DoodleHash.h"
-
 namespace Doodle
 {
     /**
@@ -109,8 +105,9 @@ namespace Doodle
      * 翻译成 Vk* 结构是 DoodleVulkanPipelineObject 的事。
      *
      * 全部烘焙进管线，不走 Vulkan 1.3 的扩展动态状态：MoltenVK 与 Android
-     * 驱动上烘焙更稳，而且管线数只取决于「着色器 × 渲染状态 × pass」，
-     * 与世界有多大无关 —— 组合数是有界的。视口与剪裁仍是动态状态（与窗口尺寸有关）。
+     * 驱动上烘焙更稳，而且渲染状态是着色器资产的一部分，每个着色器在本 pass
+     * 只有一条管线 —— 管线数只跟着着色器数走，与世界多大无关。
+     * 视口与剪裁仍是动态状态（与窗口尺寸有关）。
      *
      * 刻意不放进来的三样：
      * - frontFace：全局约定，理由见 ECullMode；
@@ -120,11 +117,9 @@ namespace Doodle
      * 默认值就是第 1 步之前管线里写死的那一组：剔除背面、深度测试与写入都开、
      * LESS、不透明、不偏移、三角形列表。
      *
-     * 它是管线缓存查找键的一部分，所以要能判等、能算哈希（见 GetHashValue）。
-     * 判等用默认的逐成员比较：以后加字段时自动参与比较，
-     * 不会出现「两份不同的状态被当成同一条管线」。两个浮点因子必须是有限值 ——
-     * NaN 不等于自己，会让同一份状态每次都查不到；DoodleVulkanPipelineObject
-     * 建管线时会拦下来
+     * 判等用默认的逐成员比较：以后加字段时自动参与比较。
+     * 两个浮点因子必须是有限值：NaN 会让深度偏移参数失去意义，
+     * DoodleVulkanPipelineObject 建管线时会拦下来
      */
     struct DoodleRenderState
     {
@@ -174,30 +169,5 @@ namespace Doodle
         EPrimitiveTopology topology = EPrimitiveTopology::TriangleList;
 
         [[nodiscard]] bool operator==(const DoodleRenderState&) const = default;
-
-        /**
-         * 这个状态的哈希值：逐成员混进同一个种子
-         *
-         * 与 operator== 必须同口径：判等的成员都要进哈希。漏一个只会多些碰撞，
-         * 不会出错（命中后还有逐项比对）；反过来哈希多算一个判等不看的成员就错了。
-         * 浮点走 DoodleHash::FloatToHashValue：+0 与 -0 的归一在那边（与 == 一致）
-         *
-         * 做成成员而不是 std::hash 特化：哈希与 == 挨在一起，加字段时两个都在眼前。
-         * 代价是拿它当标准容器的键时要另补一个转发特化 —— 现在没人这么用
-         */
-        [[nodiscard]] std::size_t GetHashValue() const noexcept
-        {
-            std::size_t seed = 0;
-            DoodleHash::Combine(seed, static_cast<std::size_t>(cullMode));
-            DoodleHash::Combine(seed, static_cast<std::size_t>(depthTestEnabled));
-            DoodleHash::Combine(seed, static_cast<std::size_t>(depthWriteEnabled));
-            DoodleHash::Combine(seed, static_cast<std::size_t>(depthCompareOp));
-            DoodleHash::Combine(seed, static_cast<std::size_t>(blendMode));
-            DoodleHash::Combine(seed, static_cast<std::size_t>(depthBiasEnabled));
-            DoodleHash::Combine(seed, DoodleHash::FloatToHashValue(depthBiasConstantFactor));
-            DoodleHash::Combine(seed, DoodleHash::FloatToHashValue(depthBiasSlopeFactor));
-            DoodleHash::Combine(seed, static_cast<std::size_t>(topology));
-            return seed;
-        }
     };
 }

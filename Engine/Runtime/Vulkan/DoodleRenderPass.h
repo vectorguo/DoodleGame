@@ -10,13 +10,13 @@
 #include <array>
 #include <cstddef>
 #include <memory>
-#include <mutex>
 #include <unordered_map>
 #include <vector>
 
 #include <vulkan/vulkan_core.h>
 
 #include "DoodleGraphicsBuffer.h"
+#include "DoodleShaderPass.h"
 #include "DoodleVulkanConfig.h"
 #include "DoodleVulkanPipelineObject.h"
 #include "Rendering/DoodlePassShaderInterface.h"
@@ -88,29 +88,26 @@ namespace Doodle
      * set 0 UBO / 描述符集 / push 范围，以及「着色器 → 管线」的解析、查找、持有与
      * 批量重建。
      *
-     * **查找键按内容计算**：字节码内容、渲染状态、顶点格式、实例格式、set 1 的绑定
-     * 定义。哈希只用来分桶，命中后还要逐项比对，所以哈希碰撞、对象地址被复用都不会
-     * 拿错管线。内容相同的两个着色器自动共用一条管线；以后做热重载、字节码变了，
-     * 自然拿到新管线。set 1 布局按定义进键、不按句柄：set 1 按整个着色器的所有 pass
-     * 合并，同一份字节码可能配上不同的 set 1；而定义相同的布局在 Vulkan 里彼此兼容
-     * （每个着色器资产的布局句柄不同，但定义一样就能共用管线）。
+     * **每个着色器在本 pass 一条管线**：键是着色器资产指针。渲染状态、顶点 / 实例
+     * 格式、set 1 布局都是着色器描述的一部分，一个着色器在一个 pass 只有一份描述，
+     * 不存在同一着色器要多条管线的情况。多个材质共用同一个着色器时，ResolvePipeline
+     * 返回同一条管线；材质之间不同的是 set 1 与 push constant 的数据，不是管线。
      *
-     * **管线数量跟着「着色器 × 渲染状态 × pass」走，不跟着材质数量走。**
-     * 多个材质共用同一个着色器时，GetPipeline 返回同一条管线；材质之间不同的是
-     * set 1 与 push constant 的数据，不是管线。
+     * **按资产指针做键的前提**：着色器资产常驻，地址稳定（见 DoodleShader 的类注释）。
+     * 同样的字节码出现在两个着色器资产里属于资产配置的重复，由资产侧的检查拦下；
+     * 管线表不按内容去重，也因此不必对字节码做哈希与逐字节比对。
      *
-     * **PipelineItem 稳定**：每个条目单独堆上分配（unique_ptr），GetPipeline 返回的
-     * 引用在 Destroy 之前一直有效 —— 着色器 memo（ResolvePipeline）会长期保存它。
-     * 附件格式变化时 RebuildPipelines 原地重建，交出去的引用照样有效。
+     * **PipelineItem 稳定**：每个条目单独堆上分配（unique_ptr），ResolvePipeline 返回的
+     * 引用在 Destroy 之前一直有效。附件格式变化时 RebuildPipelines 原地重建，交出去的
+     * 引用照样有效。
      *
-     * **常驻，不淘汰**：管线数量只取决于「着色器 × 渲染状态 × pass」，与世界多大
-     * 无关，没有回收的必要。着色器资产同样常驻：大世界流式加载时卸载的是网格、
-     * 贴图和材质，不是着色器。
+     * **常驻，不淘汰**：管线数量等于本 pass 有描述的着色器数量，与世界多大无关，
+     * 没有回收的必要。着色器资产同样常驻：大世界流式加载时卸载的是网格、贴图和
+     * 材质，不是着色器。
      *
-     * **加锁**：管线表的查找与插入都在锁内。现在只有渲染线程调用（材质加载不再碰
-     * 管线表，见 DoodleMaterial 的类注释）；以后要做后台并行预编译，再和任务系统一起定。
-     * 这一步直接在锁内建管线（同一时刻只编一条）；驱动编译缓存本身是内部同步的，
-     * 不拖后腿。着色器 memo 只在渲染线程读写，不加锁。
+     * **线程**：只有渲染线程使用，不加锁（材质加载不再碰管线表，见 DoodleMaterial 的
+     * 类注释）。以后要做后台并行预编译，再和任务系统一起定加锁范围 —— 管线表、pass
+     * 配置都要重新过一遍。
      *
      * **生命周期**：由 DoodleRenderPipeline 持有，排在描述符管理器与驱动编译缓存之后建、
      * 之前拆 —— 原地重建时还要用到 set 0 布局与驱动编译缓存。Destroy 先拆管线，
@@ -124,14 +121,14 @@ namespace Doodle
         /**
          * 一条管线记录：重建所需的全部输入 + 建出来的管线
          *
-         * 描述按值拷一份（字节码副本、渲染状态、顶点 / 实例格式、set 1 布局句柄与定义）：
-         * 调用方的那份可能早就释放了，原地重建时要用的是这里的。
+         * pass 数据按值拷一份（字节码副本、渲染状态、顶点 / 实例格式、set 1 布局句柄）：
+         * 着色器资产那份可能早就销毁了，原地重建时要用的是这里的。
          * set 1 布局句柄只在建管线布局时用过一次，原地重建保留布局、不再读它，
          * 所以着色器资产先于本 pass 销毁之后它悬空也无妨
          */
         struct PipelineItem
         {
-            DoodleVulkanPipelineShaderDescription shaderDescription;
+            DoodleShaderPass shaderPass;
             DoodleVulkanPipelineObject pipeline;
         };
 
@@ -183,16 +180,16 @@ namespace Doodle
          * 调用方记住「预热过了」；稳态队列为空，本函数一次都不会被调用。
          * 只解析管线，不碰附件、描述符集与命令缓冲。
          *
-         * 单位是着色器而不是绘制项：管线的身份只取决于「着色器 × 渲染状态 × pass」，
+         * 单位是着色器而不是绘制项：每个着色器在本 pass 只有一条管线，
          * 与绘制项数量无关。默认实现按着色器解析本 pass 的管线（与录制共用
-         * ResolvePipeline，预热过的着色器在录制时只剩一次 memo 查表），没有本 pass
+         * ResolvePipeline，预热过的着色器在录制时只剩一次查表），没有本 pass
          * 描述的着色器跳过 —— 队列里可能有别的 pass 专用的着色器。还不能建管线的
          * pass（附件格式未定）覆盖成空实现；要按网格或深度状态解析的 pass，
          * 由那个 pass 自己覆盖。
          *
          * @param shaders 刚初始化成功、管线还没建的着色器
          *
-         * @throw 管线建不出来时向上抛（与 GetPipeline 同口径），由渲染管理器
+         * @throw 管线建不出来时向上抛（与 ResolvePipeline 同口径），由渲染管理器
          *        在取帧之前抛给应用
          *
          * @note 可重复调用；已经建过的管线不会重建。前置条件：已初始化、未 Destroy
@@ -217,31 +214,14 @@ namespace Doodle
         void RebuildPipelines(const DoodleVulkanPipelinePassConfig& passConfig);
 
         /**
-         * 取一条管线；没有就建一条
-         *
-         * 名字不体现「创建」：调用方只需要知道「给我这个描述对应的管线」。
-         * 首次未命中会创建管线（可能编译、可能抛异常）；之后同一份描述只查表。
-         * 返回的引用在 Destroy 之前一直有效。
-         *
-         * 线程安全：哈希在锁外算，查表与创建在锁内
-         *
-         * @throw std::invalid_argument / std::runtime_error 描述不合法或管线建不出来，
-         *        见 DoodleVulkanPipelineObject::Initialize。失败时表里不留任何东西
-         *
-         * @note 前置条件：已初始化、未 Destroy
-         */
-        [[nodiscard]] const DoodleVulkanPipelineObject& GetPipeline(const DoodleVulkanPipelineShaderDescription& shaderDescription);
-
-        /**
          * 这个 pass 里有几条管线
          *
-         * 验收与以后的调试界面都要看它：同一个着色器配了几种渲染状态、
-         * 有没有因为描述写法不同而白建了重复的管线
+         * 验收与以后的调试界面都要看它：每个在本 pass 有描述的着色器一条
          */
         [[nodiscard]] std::size_t GetPipelineCount() const;
 
         /**
-         * 当前的 pass 配置（按值返回，取的时候在锁内）
+         * 当前的 pass 配置（按值返回）
          */
         [[nodiscard]] DoodleVulkanPipelinePassConfig GetPassConfig() const;
 
@@ -275,13 +255,14 @@ namespace Doodle
         virtual void OnDestroy() {}
 
         /**
-         * 取某个着色器在本 pass 里的管线；没解析过就向管线表要一条
+         * 取某个着色器在本 pass 里的管线；没解析过就建一条
          *
-         * 着色器 memo 只是内容键查表的缓存：着色器资产常驻（见类注释），地址稳定，
-         * 表的大小只跟着着色器数量走；RebuildPipelines 原地重建不改变管线对象地址，
-         * 所以 memo 不需要失效。内容相同的两个着色器资产在这里拿到同一条管线
+         * 键是着色器资产。资产常驻、地址稳定（见类注释），表的大小只跟着着色器
+         * 数量走；RebuildPipelines 原地重建不改变管线对象地址，已返回的引用一直有效。
          *
-         * @throw std::invalid_argument 着色器没有本 pass 的描述；其余同 GetPipeline
+         * @throw std::invalid_argument 着色器没有本 pass 的描述；其余同
+         *        DoodleVulkanPipelineObject::Initialize（描述不合法或管线建不出来，
+         *        失败时表里不留任何东西）
          */
         [[nodiscard]] const DoodleVulkanPipelineObject& ResolvePipeline(const DoodleShader& shader);
 
@@ -333,30 +314,15 @@ namespace Doodle
 
     private:
         /**
-         * 查找键的哈希：只用来分桶
-         *
-         * 与 IsSameKey 同口径：判等看的成员都要进哈希；set 1 两边都只看定义、不看句柄
-         */
-        [[nodiscard]] static std::size_t HashKey(const DoodleVulkanPipelineShaderDescription& shaderDescription);
-
-        /**
-         * 两份描述是不是同一个查找键：字节码逐字节、渲染状态逐成员、
-         * 顶点与实例格式、set 1 的绑定定义，全部相等才算
-         */
-        [[nodiscard]] static bool IsSameKey(const DoodleVulkanPipelineShaderDescription& lhs,
-                                            const DoodleVulkanPipelineShaderDescription& rhs);
-
-        /**
          * 建一条 PipelineItem 并插进表里
          *
-         * 调用方必须已经持有 m_mutex（GetPipeline 在锁内调它，避免两个线程同时
-         * 为同一份描述各建一条）。失败时把刚插入的条目摘掉再抛
+         * 只由 ResolvePipeline 在未命中时调用。失败时把刚插入的条目摘掉再抛
          */
-        [[nodiscard]] PipelineItem& CreatePipelineItem(const std::size_t keyHash,
-                                                       const DoodleVulkanPipelineShaderDescription& shaderDescription);
+        [[nodiscard]] PipelineItem& CreatePipelineItem(const DoodleShader& shader,
+                                                       const DoodleShaderPass& shaderPass);
 
         /**
-         * 销毁表里的每条管线并清空；调用方必须已经持有 m_mutex
+         * 销毁表里的每条管线并清空
          */
         void DestroyPipelines();
 
@@ -424,23 +390,12 @@ namespace Doodle
         DoodleVulkanPipelinePassConfig m_passConfig;
 
         /**
-         * 查找键哈希 → 管线记录。哈希只分桶：同一个桶里可能有内容不同的记录，
-         * 取的时候逐个 IsSameKey
-         */
-        std::unordered_multimap<std::size_t, std::unique_ptr<PipelineItem>> m_pipelineItems;
-
-        /**
          * 着色器 → 本 pass 的管线
          *
-         * 只是「着色器描述 → 管线」这张内容键查表的 memo：着色器资产常驻，
-         * 按资产地址做键是安全的，规模只跟着着色器数量走。管线原地重建不改变
-         * 对象地址，所以不需要失效；Destroy 时跟着管线一起清空
+         * 键是着色器资产指针：资产常驻、地址稳定（见类注释），规模只跟着着色器
+         * 数量走。管线原地重建不改变对象地址，已返回的引用一直有效；Destroy 时
+         * 连同条目一起清空
          */
-        std::unordered_map<const DoodleShader*, const DoodleVulkanPipelineObject*> m_pipelinesByShader;
-
-        /**
-         * 保护 m_pipelineItems 与 m_passConfig
-         */
-        mutable std::mutex m_mutex;
+        std::unordered_map<const DoodleShader*, std::unique_ptr<PipelineItem>> m_pipelinesByShader;
     };
 }

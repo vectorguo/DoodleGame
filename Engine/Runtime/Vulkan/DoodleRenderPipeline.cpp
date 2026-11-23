@@ -17,12 +17,6 @@ namespace Doodle
 {
     DoodleRenderPipeline* DoodleRenderPipeline::s_pInstance = nullptr;
 
-    std::array<DoodleRenderPass*, 2> DoodleRenderPipeline::GetPasses()
-    {
-        //渲染顺序：阴影先、前向后。Destroy 逆序遍历这个数组
-        return { &m_shadowPass, &m_forwardPass };
-    }
-
     void DoodleRenderPipeline::Initialize(const DoodleVulkanManager& vulkanManager)
     {
         //只从后端取本次初始化需要的两样；以后要用新的后端服务，也从这个参数取，
@@ -82,27 +76,25 @@ namespace Doodle
         //这里只丢指针、不解引用；放在早退之前，从未初始化的幂等路径也走一次
         m_pipelineWarmupQueue.Clear();
 
-        if (m_pDevice == nullptr)
+        if (m_pDevice != nullptr)
         {
-            return;
-        }
+            //按「使用者先、被使用者后」拆；pass 按渲染顺序的逆序走。
+            //
+            //pass 先走：管线与各自的 set 0 常量资源都由 pass 自己拆；接着驱动编译缓存；
+            //描述符管理器释放材质池与默认白图；
+            //深度图不依赖上面的任何一层，最后走
+            const auto passes = GetRenderPasses();
+            for (auto iter = passes.rbegin(); iter != passes.rend(); ++iter)
+            {
+                (*iter)->Destroy();
+            }
+            m_pipelineCompileCache.Destroy();
+            m_descriptorManager.Destroy();
+            m_depthImages.Destroy();
 
-        //按「使用者先、被使用者后」拆；pass 按渲染顺序的逆序走。
-        //
-        //pass 先走：管线与各自的 set 0 常量资源都由 pass 自己拆；接着驱动编译缓存；
-        //描述符管理器释放材质池与默认白图；
-        //深度图不依赖上面的任何一层，最后走
-        const std::array<DoodleRenderPass*, 2> passes = GetPasses();
-        for (auto it = passes.rbegin(); it != passes.rend(); ++it)
-        {
-            (*it)->Destroy();
+            m_pSwapChain = nullptr;
+            m_pDevice = nullptr;
         }
-        m_pipelineCompileCache.Destroy();
-        m_descriptorManager.Destroy();
-        m_depthImages.Destroy();
-
-        m_pSwapChain = nullptr;
-        m_pDevice = nullptr;
     }
 
     void DoodleRenderPipeline::Render(const DoodleFrameContext& frameContext)
@@ -117,9 +109,9 @@ namespace Doodle
 
         //按渲染顺序把每个 pass 录进同一条命令缓冲；pass 自己的附件与每帧常量
         //由各自的 pass 负责
-        for (DoodleRenderPass* pPass : GetPasses())
+        for (auto* pRenderPass : GetRenderPasses())
         {
-            pPass->Render(frameContext, passContext);
+            pRenderPass->Render(frameContext, passContext);
         }
     }
 
@@ -134,9 +126,9 @@ namespace Doodle
 
         //按渲染顺序逐个分发 —— 本函数只负责排空与分发，
         //每个 pass 自己决定要什么管线
-        for (DoodleRenderPass* pPass : GetPasses())
+        for (auto* pRenderPass : GetRenderPasses())
         {
-            pPass->WarmupShaders(pendingShaders);
+            pRenderPass->WarmupShaders(pendingShaders);
         }
     }
 
@@ -159,4 +151,9 @@ namespace Doodle
         m_forwardPass.RebuildIfPassConfigChanged(*m_pSwapChain, m_depthImages);
     }
 
+    std::array<DoodleRenderPass*, 2> DoodleRenderPipeline::GetRenderPasses()
+    {
+        //渲染顺序：阴影先、前向后。Destroy 逆序遍历这个数组
+        return { &m_shadowPass, &m_forwardPass };
+    }
 }

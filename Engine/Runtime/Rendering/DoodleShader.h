@@ -21,7 +21,7 @@
 #include "Rendering/DoodlePassShaderInterface.h"
 #include "Rendering/DoodleRenderState.h"
 #include "Rendering/DoodleVertex.h"
-#include "Vulkan/DoodleVulkanPipelineConfig.h"
+#include "Vulkan/DoodleShaderPass.h"
 
 namespace Doodle
 {
@@ -43,7 +43,7 @@ namespace Doodle
          * 一个 pass 的输入：属于哪个 pass、它的两段 SPIR-V 与渲染状态
          *
          * 只是初始化输入的一部分，所以嵌在这里：Initialize 把它与外层的两个格式、
-         * 整个着色器的 set 1 布局合成这个 pass 的 DoodleVulkanPipelineShaderDescription，
+         * 整个着色器的 set 1 布局合成这个 pass 的 DoodleShaderPass，
          * 之后就用不到它了。顶点 / 实例格式是资产级的（同一份网格数据供所有 pass
          * 使用），所以在外层、不在这里
          */
@@ -89,7 +89,7 @@ namespace Doodle
          * 每个 pass 一项；至少一项，同一个 pass 不能重复，两段字节码的长度都合法
          * （至少一个模块头、按 4 字节对齐）。这几条都由 DoodleShaderLoader 读描述
          * 文件时保证，Initialize 不再核对。
-         * 只在本次调用期间读取 —— 字节码会各拷一份进 pass 描述
+         * 只在本次调用期间读取 —— 字节码会各拷一份进 pass 数据
          */
         const std::vector<PassInitInfo>& passInitInfos;
     };
@@ -106,14 +106,14 @@ namespace Doodle
      * **只能由 DoodleShaderLoader 创建**：构造、Initialize 与 Destroy 都是私有的，
      * loader 是友元。和网格 / 纹理不同，着色器没有「运行时动态创建」这条路 ——
      * 下游假设着色器常驻、地址稳定：Initialize 把自己的地址投进待预热队列，各 pass
-     * 的管线 memo 按着色器地址做键。只有 loader 缓存里的那份满足这两点；在 loader
-     * 之外建一份再提前销毁，队列与 memo 里就会留下悬空指针，它的 set 1 布局也不归
+     * 的管线表按着色器地址做键。只有 loader 缓存里的那份满足这两点；在 loader
+     * 之外建一份再提前销毁，队列与管线表里就会留下悬空指针，它的 set 1 布局也不归
      * loader 回收。
      *
      * **本类不持有管线**：管线由渲染 pass 里的管线表统一创建与持有。着色器按 pass
-     * 各提供一份「着色器侧描述」（GetPassDescription），由各个 pass 在录制 / 预热时
-     * 向自己的管线表要管线。内容相同的两个着色器资产会拿到同一条管线 ——
-     * 管线表按字节码内容做键。
+     * 各提供一份 DoodleShaderPass（GetPass），由各个 pass 在录制 / 预热时
+     * 向自己的管线表要管线。管线表按着色器资产做键：每个着色器在一个 pass 里只有
+     * 一条管线。
      *
      * **两份契约**：每个 pass 的 set 0 与 push constant 按 DoodlePassShaderInterface
      * 核对；set 1 按 DoodleMaterialShaderInterface 的规则核对。不符合就加载失败。
@@ -146,7 +146,7 @@ namespace Doodle
          * 反射每个 pass 的字节码、核对两份契约、建 set 1 布局，并记下各 pass 的描述
          *
          * 先反射与核对，全部通过才动设备：不合法的着色器什么都不建。
-         * 字节码各拷一份留在描述里 —— pass 还要拿它向管线表要管线。
+         * 字节码各拷一份留在 pass 数据里 —— pass 还要拿它建管线。
          *
          * @param info 设备、顶点 / 实例格式与各 pass 的输入，见 DoodleShaderInitInfo
          *
@@ -166,12 +166,12 @@ namespace Doodle
 
     public:
         /**
-         * 取某个 pass 的着色器侧描述；这个着色器没有该 pass 时返回 nullptr
+         * 取某个 pass 的数据；这个着色器没有该 pass 时返回 nullptr
          *
-         * pass 录制 / 预热时把它交给自己的管线表（DoodleRenderPass::GetPipeline）。
+         * pass 录制 / 预热时用它向自己的管线表要管线（DoodleRenderPass::ResolvePipeline）。
          * 返回的指针在 Destroy 之前一直有效。
          */
-        [[nodiscard]] const DoodleVulkanPipelineShaderDescription* GetPassDescription(EDoodlePassType pass) const;
+        [[nodiscard]] const DoodleShaderPass* GetPass(EDoodlePassType pass) const;
 
         /**
          * 这个着色器的贴图槽，按 binding 升序；没有声明贴图时为空
@@ -280,15 +280,15 @@ namespace Doodle
         const DoodleVulkanDevice* m_pDevice = nullptr;
 
         /**
-         * 每个 pass 一份着色器侧描述，按 pass 做键；这个着色器没有的 pass 不在表里。
-         * 描述里的 materialDescriptorSetLayout 只是 m_materialDescriptorSetLayout 的副本，
-         * 不归描述所有
+         * 每个 pass 一份数据，按 pass 做键；这个着色器没有的 pass 不在表里。
+         * 数据里的 materialDescriptorSetLayout 只是 m_materialDescriptorSetLayout 的副本，
+         * 不归 pass 数据所有
          *
-         * 只在 Initialize 里插入，之后不再增删：节点地址不变，GetPassDescription
+         * 只在 Initialize 里插入，之后不再增删：节点地址不变，GetPass
          * 返回的指针因此在 Destroy 之前一直有效。查找只用 find / contains ——
-         * operator[] 查不到会插入一份空描述，下游会以为这个 pass 存在
+         * operator[] 查不到会插入一份空数据，下游会以为这个 pass 存在
          */
-        std::map<EDoodlePassType, DoodleVulkanPipelineShaderDescription> m_passDescriptions;
+        std::map<EDoodlePassType, DoodleShaderPass> m_passes;
 
         /**
          * 贴图槽表：各 pass 的 set 1 合并后的结果，按 binding 升序

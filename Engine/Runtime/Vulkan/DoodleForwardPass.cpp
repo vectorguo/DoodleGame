@@ -13,7 +13,7 @@
 #include "DoodleSwapChain.h"
 #include "DoodleVulkanUtils.h"
 #include "Rendering/DoodleCamera.h"
-#include "Rendering/DoodleForwardPassData.h"
+#include "DoodleForwardPassData.h"
 #include "Rendering/DoodleFrameContext.h"
 #include "Rendering/DoodleLight.h"
 #include "Rendering/DoodleMaterial.h"
@@ -206,8 +206,8 @@ namespace Doodle
             const auto& submesh = mesh.GetSubmesh(drawItem.submeshIndex);
             const auto& material = *drawItem.pMaterial;
 
-            //管线按材质的着色器解析：着色器资产常驻，同一份描述只会有一条管线；
-            //memo 命中后这里只是一次指针查表。同一条管线会连续出现在多个材质上，
+            //管线按材质的着色器解析：着色器资产常驻，每个着色器在本 pass 只有一条
+            //管线；这里是一次指针查表。同一条管线会连续出现在多个材质上，
             //只有变了才重绑
             const DoodleShader* pShader = material.GetShader();
             if (pShader == nullptr)
@@ -259,8 +259,8 @@ namespace Doodle
                 boundMaterialSet = materialDescriptorSet;
             }
 
-            //localToWorld 与材质基色每个绘制项一份，走 push constant。数据块的布局
-            //由 DoodleForwardPassPushConstants 钉住，阶段 / 偏移 / 大小取本 pass 的
+            //localToWorld 与材质基色每个绘制项一份，经 push constant 推送。数据块的布局
+            //由 DoodleForwardPassDrawItemData 钉住，阶段 / 偏移 / 大小取本 pass 的
             //pushConstantRange —— 管线布局与这里只认同一份定义，改一处不会漏另一处
             //
             //基色在写进 push constant 的这一处才从作者写的 sRGB 转成线性：
@@ -268,7 +268,7 @@ namespace Doodle
             //
             //push 的是这条命令缓冲的当前值，下一条 push 直接覆盖 ——
             //不需要每绘制项一块 UBO，也不需要等 GPU 用完上一份
-            const DoodleForwardPassPushConstants pushConstants
+            const DoodleForwardPassDrawItemData drawItemData
             {
                 .localToWorld = drawItem.localToWorld,
                 .baseColor = material.GetBaseColor().SRGBToLinear().ToVec4()
@@ -279,7 +279,7 @@ namespace Doodle
                 pushConstantRange.stageFlags,
                 pushConstantRange.offset,
                 pushConstantRange.size,
-                &pushConstants);
+                &drawItemData);
 
             //绑定顶点缓冲。这里的 binding 编号 0 指回管线顶点输入描述里的 binding = 0 ——
             //所以它必须在 vkCmdBindPipeline 之后：管线还没绑定时，这个编号无从对应。

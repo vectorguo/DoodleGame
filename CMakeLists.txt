@@ -78,6 +78,7 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Vulkan/DoodleVulkanPipelineObject.cpp
     Engine/Runtime/Vulkan/DoodleVulkanPipelineObject.h
     Engine/Runtime/Vulkan/DoodleVulkanPipelineConfig.h
+    Engine/Runtime/Vulkan/DoodleShaderPass.h
     Engine/Runtime/Vulkan/DoodleForwardPass.cpp
     Engine/Runtime/Vulkan/DoodleForwardPass.h
     Engine/Runtime/Vulkan/DoodleShadowPass.cpp
@@ -172,8 +173,8 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Rendering/DoodleMeshRenderer.h
     Engine/Runtime/Rendering/DoodleMeshRenderer.cpp
     Engine/Runtime/Rendering/DoodleDrawItem.h
-    Engine/Runtime/Rendering/DoodleForwardPassData.h
-    Engine/Runtime/Rendering/DoodleShadowPassData.h
+        Engine/Runtime/Vulkan/DoodleForwardPassData.h
+        Engine/Runtime/Vulkan/DoodleShadowPassData.h
     Engine/Runtime/Rendering/DoodlePassShaderInterface.h
     Engine/Runtime/Rendering/DoodleMaterialShaderInterface.h
     Engine/Runtime/Rendering/DoodleShader.cpp
@@ -191,7 +192,7 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Core/DoodleBuiltinComponentRegistration.h
     Engine/Runtime/Core/DoodleBuiltinComponentRegistration.cpp
     Engine/Runtime/Utility/Singleton.h
-    Engine/Runtime/Utility/DoodleHash.h
+        Engine/Runtime/Rendering/DoodleFrameContext.cpp
 )
 
 # macOS 专属：窗口、文件来源与日志实现

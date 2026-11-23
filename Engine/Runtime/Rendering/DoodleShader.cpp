@@ -50,7 +50,7 @@ namespace Doodle
             }
             ValidateMaterialBindings(materialBindings);
 
-            //set 1 的布局定义：建布局用它，每个 pass 的描述也各带一份 —— 管线表按它分键
+            //set 1 的布局定义：建布局用它
             std::vector<VkDescriptorSetLayoutBinding> materialLayoutBindings;
             materialLayoutBindings.reserve(materialBindings.size());
             m_materialTextureSlots.reserve(materialBindings.size());
@@ -67,30 +67,29 @@ namespace Doodle
                 m_materialTextureSlots.push_back({.binding = reflected.binding, .name = reflected.name});
             }
 
-            //第二步：占位并填好各 pass 的描述。这里只有内存分配会失败，此时还没有句柄可漏。
-            //字节码各拷一份留在描述里：pass 向管线表要管线时，表按内容做键并把这份
-            //描述连同字节码存进条目，格式变化原地重建时用它。
+            //第二步：占位并填好各 pass 的数据。这里只有内存分配会失败，此时还没有句柄可漏。
+            //字节码各拷一份留在 pass 数据里：pass 第一次解析管线时把它存进条目，
+            //格式变化原地重建时用它。
             //pass 不重复由 loader 保证，这里拿到的总是新节点
             for (const auto& passInitInfo : initInfo.passInitInfos)
             {
-                DoodleVulkanPipelineShaderDescription& description = m_passDescriptions.try_emplace(passInitInfo.passType).first->second;
-                description.vertexBytecode = passInitInfo.vertexBytecode;
-                description.fragmentBytecode = passInitInfo.fragmentBytecode;
-                description.renderState = passInitInfo.passRenderState;
-                description.vertexFormat = initInfo.vertexFormat;
-                description.instanceFormat = initInfo.instanceFormat;
-                description.materialBindings = materialLayoutBindings;
+                DoodleShaderPass& pass = m_passes.try_emplace(passInitInfo.passType).first->second;
+                pass.vertexBytecode = passInitInfo.vertexBytecode;
+                pass.fragmentBytecode = passInitInfo.fragmentBytecode;
+                pass.renderState = passInitInfo.passRenderState;
+                pass.vertexFormat = initInfo.vertexFormat;
+                pass.instanceFormat = initInfo.instanceFormat;
             }
 
-            //第三步：最后才建那一份 set 1 布局；把句柄写进每个 pass 的描述只是赋值，不会再失败。
+            //第三步：最后才建那一份 set 1 布局；把句柄写进每个 pass 的数据只是赋值，不会再失败。
             //建出来之后再失败（下面的投递），由 Destroy 统一收掉
             m_materialDescriptorSetLayout = CreateMaterialSetLayout(materialLayoutBindings);
-            for (auto& [passType, description] : m_passDescriptions)
+            for (auto& entry : m_passes)
             {
-                description.materialDescriptorSetLayout = m_materialDescriptorSetLayout;
+                entry.second.materialDescriptorSetLayout = m_materialDescriptorSetLayout;
             }
 
-            //一切状态都已就绪，此刻起可以拿这些描述向任何 pass 的管线表要管线。
+            //一切状态都已就绪，此刻起可以拿这些 pass 数据向任何 pass 的管线表要管线。
             //投递给渲染侧，在下一帧取帧之前统一建出来，不落进命令录制。
             //必须是 try 里的最后一步：投递本身也可能失败（加锁、扩容），失败时照样
             //收掉布局；投出去之后就不能再失败，否则队列里会留下一个要被删掉的着色器。
@@ -113,23 +112,23 @@ namespace Doodle
         }
 
         //set 1 布局可能与管线表里的管线布局、描述符管理器里的材质集合存在「出生关系」，
-        //但它先于它们销毁是合法的（见类注释）。各 pass 描述里只是句柄副本，不另销毁；
+        //但它先于它们销毁是合法的（见类注释）。各 pass 数据里只是句柄副本，不另销毁；
         //失败在建布局之前时，这里还是 VK_NULL_HANDLE
         if (m_materialDescriptorSetLayout != VK_NULL_HANDLE)
         {
             vkDestroyDescriptorSetLayout(m_pDevice->GetLogicalDevice(), m_materialDescriptorSetLayout, nullptr);
             m_materialDescriptorSetLayout = VK_NULL_HANDLE;
         }
-        m_passDescriptions.clear();
+        m_passes.clear();
         m_materialTextureSlots.clear();
 
         m_pDevice = nullptr;
     }
 
-    const DoodleVulkanPipelineShaderDescription* DoodleShader::GetPassDescription(const EDoodlePassType pass) const
+    const DoodleShaderPass* DoodleShader::GetPass(const EDoodlePassType pass) const
     {
-        const auto it = m_passDescriptions.find(pass);
-        if (it == m_passDescriptions.end())
+        const auto it = m_passes.find(pass);
+        if (it == m_passes.end())
         {
             return nullptr;
         }
@@ -420,8 +419,8 @@ namespace Doodle
             }
         }
 
-        //按 binding 升序：布局定义、贴图槽表、管线表的键都按这个顺序排，
-        //内容相同的两个着色器排出来也相同
+        //按 binding 升序：贴图槽表按这个顺序排（DoodleShader.h 的承诺），
+        //建布局用的是同一份定义
         std::sort(materialBindings.begin(), materialBindings.end(),
                   [](const ReflectedBinding& lhs, const ReflectedBinding& rhs)
                   {

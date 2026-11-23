@@ -40,8 +40,9 @@ namespace Doodle
      * 各自配不同材质资产，资产缓存不会和外观绑死。
      *
      * 顶点格式跟着网格走：Initialize 从顶点类型（TVertex::kVertexFormat）取得
-     * 格式并保存在这里，绘制端按它选管线（管线缓存的键里含这一维）。本类不
-     * 理解格式的内存布局 —— 那是 DoodleVertex.h 的事，这里只记一个枚举值。
+     * 格式并保存在这里。绘制它的管线按着色器资产声明的顶点格式建，两份必须
+     * 一致，网格的数据才会被正确读取。本类不理解格式的内存布局 —— 那是
+     * DoodleVertex.h 的事，这里只记一个枚举值。
      *
      * 资产路径与「运行时动态创建」的约定在基类 DoodleAsset 里：文件资产的
      * 路径就是 loader 的缓存键，空串表示动态创建、不能序列化。本类只关心
@@ -145,8 +146,8 @@ namespace Doodle
         /**
          * 顶点格式：这份网格的顶点缓冲按哪种布局组织
          *
-         * 绘制端按它选管线（管线缓存的键里含这一维），所以格式跟着网格走，
-         * 不只跟着管线走。Initialize 时由 TVertex::kVertexFormat 写入；
+         * 绘制它的管线按着色器资产声明的顶点格式建，两者必须一致。格式跟着
+         * 网格走，不只跟着着色器走。Initialize 时由 TVertex::kVertexFormat 写入；
          * 在此之前读到的是枚举的 0 值，和缓冲为空一样属于「未初始化」
          */
         [[nodiscard]] EVertexFormat GetVertexFormat() const
