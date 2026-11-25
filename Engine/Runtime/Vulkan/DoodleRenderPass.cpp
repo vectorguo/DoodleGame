@@ -24,7 +24,7 @@ namespace Doodle
         //附件格式向派生类要一次记下：之后新建的管线都按这份建。派生类在调这里之前已经绑好了自己的附件来源
         m_attachmentFormats = GetAttachmentFormats();
 
-        //每个 pass 一份 set 0 常量资源
+        //每帧常量资源，每个 pass 一份
         CreatePassUboResources();
     }
 
@@ -33,7 +33,7 @@ namespace Doodle
         //表里的管线是显式 Destroy 的：DoodleVulkanPipelineObject 的析构不收句柄
         DestroyPipelines();
 
-        //管线先走：它们的管线布局引用 set 0 布局。然后拆本 pass 的常量资源
+        //管线先走：它们的管线布局引用每帧常量的描述符集布局。然后拆本 pass 的常量资源
         DestroyPassUboResources();
 
         m_pipelineCompileCache = VK_NULL_HANDLE;
@@ -103,11 +103,11 @@ namespace Doodle
 
     const DoodleVulkanPipelineObject& DoodleRenderPass::CreatePipeline(const DoodleShader& shader, const DoodleShaderPass& shaderPass)
     {
-        //set 0 布局在 Initialize 里建好；没有它说明 pass 还没初始化（或已经销毁），
+        //每帧常量的描述符集布局在 Initialize 里建好；没有它说明 pass 还没初始化（或已经销毁），
         //建出来的管线在录制时没有可绑的常量集，不如当场说清楚
         if (m_passUboDescriptorSetLayout == VK_NULL_HANDLE)
         {
-            throw std::logic_error("graphics pipeline: pass has no set 0 uniform layout");
+            throw std::logic_error("graphics pipeline: pass has no per-frame constants descriptor set layout");
         }
 
         //先把条目放进表、再建管线：放表这一步只可能因为内存不足失败，
@@ -150,7 +150,7 @@ namespace Doodle
 
     void DoodleRenderPass::CreatePassUboResources()
     {
-        //set 0 按本 pass 的契约取：着色器加载时按同一份核对
+        //每帧常量的绑定与大小按本 pass 的契约取：着色器加载时按同一份核对
         const DoodleRenderPassLayout& passLayout = GetRenderPassLayout(m_passType);
         const VkDescriptorSetLayoutBinding& passUboBinding = passLayout.passUboBinding;
         const VkDeviceSize passUboSize = passLayout.passUboSize;
@@ -175,7 +175,7 @@ namespace Doodle
             };
             if (vkCreateDescriptorSetLayout(m_pDevice->GetLogicalDevice(), &layoutInfo, nullptr, &m_passUboDescriptorSetLayout) != VK_SUCCESS)
             {
-                throw std::runtime_error("failed to create the pass set 0 layout!");
+                throw std::runtime_error("failed to create the per-frame constants descriptor set layout!");
             }
 
             const VkDescriptorPoolSize poolSize
@@ -194,7 +194,7 @@ namespace Doodle
             if (vkCreateDescriptorPool(m_pDevice->GetLogicalDevice(), &poolInfo, nullptr,
                                        &m_passUboDescriptorPool) != VK_SUCCESS)
             {
-                throw std::runtime_error("failed to create the pass set 0 descriptor pool!");
+                throw std::runtime_error("failed to create the per-frame constants descriptor pool!");
             }
 
             //pSetLayouts 要求「每个集合一个布局句柄」，不会自动广播同一个布局，
@@ -211,7 +211,7 @@ namespace Doodle
             m_passUboDescriptorSets.fill(VK_NULL_HANDLE);
             if (vkAllocateDescriptorSets(m_pDevice->GetLogicalDevice(), &allocInfo, m_passUboDescriptorSets.data()) != VK_SUCCESS)
             {
-                throw std::runtime_error("failed to allocate the pass set 0 descriptor sets!");
+                throw std::runtime_error("failed to allocate the per-frame constants descriptor sets!");
             }
 
             //把第 i 块 UBO 接到第 i 个集合的 binding 上。

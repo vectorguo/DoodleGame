@@ -9,7 +9,7 @@ namespace Doodle
 {
     void DoodleShadowPass::Initialize(const DoodleShadowPassInitInfo& info)
     {
-        //set 0 与逐绘制项数据范围由基类按 shadow 的契约自己取；附件格式由 GetAttachmentFormats 报。
+        //每帧常量与逐绘制项数据范围由基类按 shadow 的契约自己取；附件格式由 GetAttachmentFormats 报。
         //shadow map 还没建，本 pass 自己没有别的资源
         DoodleRenderPass::Initialize(info.renderPassInfo);
     }

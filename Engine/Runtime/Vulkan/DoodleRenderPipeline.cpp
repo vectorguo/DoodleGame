@@ -41,7 +41,7 @@ namespace Doodle
             //驱动编译缓存先建：每次建管线都把它传给 vkCreateGraphicsPipelines
             m_pipelineCompileCache.Initialize(device, {});
 
-            //shadow 目前只是骨架：基类按 shadow 的契约建出 set 0，不建管线、不录命令
+            //shadow 目前只是骨架：基类按 shadow 的契约建出每帧常量资源，不建管线、不录命令
             m_shadowPass.Initialize(
             {
                 .renderPassInfo =
@@ -51,7 +51,7 @@ namespace Doodle
                 }
             });
 
-            //前向 pass：自己建 set 0 常量资源，再按附件格式与编译缓存建管线表
+            //前向 pass：自己建每帧常量资源，再按附件格式与编译缓存建管线表
             m_forwardPass.Initialize(
             {
                 .renderPassInfo =
@@ -80,7 +80,7 @@ namespace Doodle
         {
             //按「使用者先、被使用者后」拆；pass 按渲染顺序的逆序走。
             //
-            //pass 先走：管线与各自的 set 0 常量资源都由 pass 自己拆；接着驱动编译缓存；
+            //pass 先走：管线与各自的每帧常量资源都由 pass 自己拆；接着驱动编译缓存；
             //描述符管理器释放材质池与默认白图；
             //深度图不依赖上面的任何一层，最后走
             const auto passes = GetRenderPasses();

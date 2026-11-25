@@ -27,7 +27,7 @@ namespace Doodle
         m_pSwapChain = &info.swapChain;
         m_pDepthImages = &info.depthImages;
 
-        //set 0 与逐绘制项数据范围由基类按 forward 的契约自己取。附件格式不用交：
+        //每帧常量与逐绘制项数据范围由基类按 forward 的契约自己取。附件格式不用交：
         //基类在 Initialize 里按上面这两个附件来源问一次（GetAttachmentFormats），所以要先绑好再调
         DoodleRenderPass::Initialize(info.renderPassInfo);
     }
@@ -225,7 +225,7 @@ namespace Doodle
                 boundMaterialSet = VK_NULL_HANDLE;
             }
 
-            //set 0 整帧只绑一次：本 pass 内所有管线共用同一个 set 0 布局与 push 范围，
+            //每帧常量整帧只绑一次：本 pass 内所有管线共用它的描述符集布局与 push 范围，
             //换管线不会让它失效。用当前管线的布局来解释它
             if (!frameSetBound)
             {

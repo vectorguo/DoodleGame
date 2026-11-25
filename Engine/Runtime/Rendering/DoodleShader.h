@@ -18,9 +18,9 @@
 
 #include "Asset/DoodleAsset.h"
 #include "Rendering/DoodleMaterialTextureSlot.h"
-#include "Rendering/DoodleRenderPassLayout.h"
 #include "Rendering/DoodleRenderState.h"
 #include "Rendering/DoodleVertex.h"
+#include "Vulkan/DoodleRenderPassLayout.h"
 #include "Vulkan/DoodleShaderPass.h"
 
 namespace Doodle
@@ -115,7 +115,7 @@ namespace Doodle
      * 向自己的管线表要管线。管线表按着色器资产做键：每个着色器在一个 pass 里只有
      * 一条管线。
      *
-     * **两份契约**：每个 pass 的 set 0 与 push constant 按 DoodleRenderPassLayout
+     * **两份契约**：每个 pass 的每帧常量与 push constant 按 DoodleRenderPassLayout
      * 核对；set 1 按 DoodleMaterialTextureSlot.h 的规则核对。不符合就加载失败。
      *
      * **set 1 按反射建、整个着色器一份**：贴图有几张由 GLSL 自己声明，不在描述文件里
@@ -234,7 +234,7 @@ namespace Doodle
                                  std::vector<VkPushConstantRange>& pushConstantRanges);
 
         /**
-         * 按 pass 契约核对一个 pass 的 set 0 与 push constant，并拒绝 set 0 / 1 以外的集合
+         * 按 pass 契约核对一个 pass 的每帧常量与 push constant，并拒绝每帧常量、材质贴图以外的集合
          *
          * set 1 在这里不看：它按整个着色器合并后另行核对（MergeMaterialBindings /
          * ValidateMaterialBindings）

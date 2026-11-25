@@ -34,7 +34,7 @@ namespace Doodle
         //那样清理对不对，就取决于循环里的 catch 会不会一直重抛
         try
         {
-            //第一步：逐个 pass 反射，按 pass 契约核对 set 0 与 push constant；
+            //第一步：逐个 pass 反射，按 pass 契约核对每帧常量与 push constant；
             //各 pass 的 set 1 并成整个着色器的一张表，最后按材质契约核对。这一步不碰设备
             std::vector<ReflectedBinding> materialBindings;
             for (const auto& passInitInfo : initInfo.passInitInfos)
@@ -177,7 +177,7 @@ namespace Doodle
             throw std::runtime_error(std::string("the ") + stageName + " shader has no entry point named 'main'");
         }
 
-        //描述符绑定：按入口点取。同一份资源可能在两个阶段都声明（set 0 的 UBO
+        //描述符绑定：按入口点取。同一份资源可能在两个阶段都声明（每帧常量的 UBO
         //就是），所以合并到同一张表里，阶段取并集
         uint32_t bindingCount = 0;
         if (module.EnumerateEntryPointDescriptorBindings(pEntryPoint, &bindingCount, nullptr) != SPV_REFLECT_RESULT_SUCCESS)
@@ -236,8 +236,8 @@ namespace Doodle
                     (reflected.set == 1 && sameBinding->name != reflected.name))
                 {
                     throw std::runtime_error(
-                        "set " + std::to_string(reflected.set) + " binding " + std::to_string(reflected.binding) +
-                        " is declared differently in the vertex and fragment shaders");
+                        "layout(set = " + std::to_string(reflected.set) + ", binding = " + std::to_string(reflected.binding) +
+                        ") is declared differently in the vertex and fragment shaders");
                 }
                 sameBinding->stageFlags |= expectedStage;
             }
@@ -283,6 +283,7 @@ namespace Doodle
             switch (reflected.set)
             {
             case 0:
+                //每帧常量：先记下来，循环之后按 pass 契约核对
                 ++frameBindingCount;
                 pFrameBinding = &reflected;
                 break;
@@ -292,17 +293,18 @@ namespace Doodle
                 break;
 
             default:
-                //set 0 是本 pass 的常量；set 1 是材质资源。第三个集合没有宿主，
+                //只有每帧常量与材质贴图（set 1）两个集合。别的集合没有宿主，
                 //声明了也没有人能给它分配集合
-                throw std::runtime_error("set " + std::to_string(reflected.set) +
-                                         " is not supported (only set 0 and set 1 are)");
+                throw std::runtime_error("layout(set = " + std::to_string(reflected.set) +
+                                         ") is not supported; a shader may only declare "
+                                         "per-frame constants and material textures");
             }
         }
 
-        //set 0 可以有，也可以没有；有就必须是这个 pass 的 UBO，且不能读出缓冲之外
+        //每帧常量可以有，也可以没有；有就必须是这个 pass 的 UBO，且不能读出缓冲之外
         if (frameBindingCount > 1)
         {
-            throw std::runtime_error("set 0 must contain only the pass uniform buffer (binding 0)");
+            throw std::runtime_error("per-frame constants must contain only the pass uniform buffer (binding 0)");
         }
         if (pFrameBinding != nullptr)
         {
@@ -311,16 +313,16 @@ namespace Doodle
                 pFrameBinding->descriptorType != passBinding.descriptorType ||
                 pFrameBinding->descriptorCount != passBinding.descriptorCount)
             {
-                throw std::runtime_error("set 0 binding 0 must be a single uniform buffer, as declared by the render pass layout");
+                throw std::runtime_error("per-frame constants must be a single uniform buffer at binding 0, as declared by the render pass layout");
             }
             if ((pFrameBinding->stageFlags & ~passBinding.stageFlags) != 0)
             {
-                throw std::runtime_error("set 0 UBO is used in a shader stage the render pass layout does not cover");
+                throw std::runtime_error("per-frame constants are used in a shader stage the render pass layout does not cover");
             }
             if (pFrameBinding->blockSize > passLayout.passUboSize)
             {
                 throw std::runtime_error(
-                    "set 0 UBO block is " + std::to_string(pFrameBinding->blockSize) +
+                    "per-frame constants block is " + std::to_string(pFrameBinding->blockSize) +
                     " bytes but this pass allows " + std::to_string(passLayout.passUboSize) +
                     " bytes");
             }

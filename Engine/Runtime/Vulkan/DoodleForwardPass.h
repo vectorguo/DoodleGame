@@ -18,7 +18,7 @@ namespace Doodle
     /**
      * 初始化前向 pass 的全部输入
      *
-     * renderPassInfo 是基类要的设备与编译缓存，原样转交；set 0 与逐绘制项数据范围由基类按
+     * renderPassInfo 是基类要的设备与编译缓存，原样转交；每帧常量与逐绘制项数据范围由基类按
      * forward 的契约自己取。swapChain / depthImages 是本 pass 算附件格式的来源
      * —— 格式由本类从这两样算出来，不由调用方给。
      */
@@ -74,8 +74,8 @@ namespace Doodle
          * 录一个前向 pass：颜色 / 深度附件、动态渲染、逐绘制项绘制
          *
          * 每条绘制项按材质的着色器向基类解析管线；管线变了才重新绑定，
-         * set 1 跟着失效。本 pass 内的所有管线共用同一个 set 0 布局与 push 范围，
-         * 换管线不必重绑 set 0。
+         * set 1 跟着失效。本 pass 内的所有管线共用每帧常量的描述符集布局与 push 范围，
+         * 换管线不必重绑每帧常量。
          *
          * 本帧的相机 / 光源常量在录任何命令之前写进基类的 per-pass UBO；
          * 调用位置由 DoodleRenderPipeline 保证在帧栅栏之后。

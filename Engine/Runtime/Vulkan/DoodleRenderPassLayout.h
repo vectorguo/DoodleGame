@@ -10,8 +10,8 @@
 
 #include <vulkan/vulkan_core.h>
 
-#include "../Vulkan/DoodleForwardPassData.h"
-#include "../Vulkan/DoodleShadowPassData.h"
+#include "DoodleForwardPassData.h"
+#include "DoodleShadowPassData.h"
 
 namespace Doodle
 {
@@ -34,12 +34,16 @@ namespace Doodle
     };
 
     /**
-     * 管线布局里归 pass 的那部分：set 0 与逐绘制项数据
+     * 管线布局里归 pass 的那部分：每帧常量与逐绘制项数据
+     *
+     * 每帧常量是每帧写一次、这个 pass 的所有绘制项共用的那份数据：前向是相机与主光源，
+     * 阴影是光空间矩阵。它装在 pass 的 UBO 里，对应的描述符集排在管线布局最前面，
+     * GLSL 里用 layout(set = 0, ...) 声明。逐绘制项数据则是每条绘制项一份，经 push constant 传。
      *
      * 每种 pass 一份静态数据，没有 Initialize / Destroy、不持有 Vulkan 句柄。两处读它：
-     * - DoodleShader::Initialize 反射完 SPIR-V 后，按它核对每个 pass 的 set 0 与 push constant；
-     * - DoodleRenderPass 按自己的 pass 类型取它：Initialize 建本 pass 的 set 0 UBO /
-     *   布局 / 池 / 集合；建管线布局与录制时的 vkCmdPushConstants 都读 drawItemDataRange
+     * - DoodleShader::Initialize 反射完 SPIR-V 后，按它核对每个 pass 的每帧常量与 push constant；
+     * - DoodleRenderPass 按自己的 pass 类型取它：Initialize 建本 pass 每帧常量的 UBO /
+     *   描述符集布局 / 池 / 集合；建管线布局与录制时的 vkCmdPushConstants 都读 drawItemDataRange
      *   （GetDrawItemDataRange）。pass 不另存副本，用到时按类型再取。
      *
      * 它也是 pass 与着色器之间的契约：一个查着色器、一个建资源，两边认同一份定义；
@@ -52,7 +56,7 @@ namespace Doodle
     struct DoodleRenderPassLayout
     {
         /**
-         * set 0 的 UBO 绑定（binding / 类型 / 数量 / 阶段）
+         * 每帧常量的 UBO 绑定（binding / 类型 / 数量 / 阶段）
          *
          * 只能是单个 UBO（UNIFORM_BUFFER、数量 1）：DoodleRenderPass 按它建布局 / 池 / 集合并写入，不另做检查
          */

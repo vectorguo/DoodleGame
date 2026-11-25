@@ -209,7 +209,7 @@ namespace Doodle
         DoodleDepthImages m_depthImages;
 
         /**
-         * 材质描述符管理器：按材质缓存 set 1（布局来自材质的着色器）；set 0 由各 pass 自己持有
+         * 材质描述符管理器：按材质缓存 set 1（布局来自材质的着色器）；每帧常量由各 pass 自己持有
          *
          * 排在深度图之后（默认白图上传要命令层）、所有 pass 之前（pass 录制时绑它的集合）
          */
@@ -233,7 +233,7 @@ namespace Doodle
         /**
          * 阴影 pass 骨架：本次只占编排位置
          *
-         * 排在 forward 之前录；set 0 UBO 已由基类按 shadow 的契约建出，但还不建
+         * 排在 forward 之前录；每帧常量的 UBO 已由基类按 shadow 的契约建出，但还不建
          * shadow map、不建管线。
          * 实现阴影时由它自己长成真正的深度 pass
          */

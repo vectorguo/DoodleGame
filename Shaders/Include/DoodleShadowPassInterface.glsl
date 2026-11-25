@@ -1,4 +1,4 @@
-// 阴影 pass 的接口块（预留）：set 0 的光空间矩阵与逐绘制项 push constant。
+// 阴影 pass 的接口块（预留）：每帧常量（光空间矩阵）与逐绘制项 push constant。
 //
 // 目前没有 shadow 着色器包含它，也没有 shadow map；这里先把字节布局定下来，
 // C++ 侧对应 Vulkan/DoodleShadowPassData.h。真正实现阴影时：

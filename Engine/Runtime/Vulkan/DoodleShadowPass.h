@@ -32,13 +32,13 @@ namespace Doodle
      * 阴影 pass 骨架：接口已就位，渲染尚未实现
      *
      * 本次只保留类、附件格式与编排位置：
-     * - set 0 UBO / 布局 / 集合已由基类按 shadow 的契约建好
+     * - 每帧常量的 UBO / 描述符集布局 / 集合已由基类按 shadow 的契约建好
      *   （DoodleShadowPassUbo 大小），但还没有人往里写；
      * - 不建 shadow map 深度图，深度格式未定，所以也不建 shadow 管线；
      * - Render / WarmupShaders 是显式空实现。
      *
      * 真正实现时按顺序接：shadow 深度目标（固定尺寸、可采样）→ 真实深度格式 →
-     * 每帧写 set 0 UBO（光空间矩阵）→ 逐投射物绘制（alpha 镂空用材质的 set 1，
+     * 写入每帧常量（光空间矩阵）→ 逐投射物绘制（alpha 镂空用材质的 set 1，
      * 与 forward 绑的是同一个集合）→ forward 采样 shadow map。
      */
     class DoodleShadowPass final : public DoodleRenderPass
@@ -54,7 +54,7 @@ namespace Doodle
         /**
          * 绑定阴影 pass 的共享输入
          *
-         * 基类按 shadow 的契约建出 set 0 常量资源；本 pass 自己还不建任何资源。
+         * 基类按 shadow 的契约建出每帧常量资源；本 pass 自己还不建任何资源。
          *
          * @param info 基类要的设备与编译缓存；都必须活得比本 pass 久
          *

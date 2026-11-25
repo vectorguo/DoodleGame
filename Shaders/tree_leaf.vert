@@ -7,7 +7,7 @@
 // 树叶的独立之处在片元（镂空 + 双面），以及绘制状态（不剔除）；
 // 以后要加风吹摆动，也在这个文件里改，不牵动其它着色器
 //
-// set 0 的 UBO 与 push constant 的声明在 Include/DoodleForwardPassInterface.glsl 里
+// 每帧常量与 push constant 的声明在 Include/DoodleForwardPassInterface.glsl 里
 
 #include "Include/DoodleForwardPassInterface.glsl"
 #include "Include/DoodleStandardVertex.glsl"

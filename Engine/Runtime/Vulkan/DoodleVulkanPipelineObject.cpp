@@ -22,7 +22,7 @@ namespace Doodle
         ValidateShaderPass(info.shaderPass);
         if (info.passUboDescriptorSetLayout == VK_NULL_HANDLE)
         {
-            throw std::invalid_argument("graphics pipeline: set 0 layout is null");
+            throw std::invalid_argument("graphics pipeline: per-frame constants descriptor set layout is null");
         }
 
         m_pDevice = &info.device;
@@ -100,14 +100,14 @@ namespace Doodle
                                                           VkDescriptorSetLayout materialDescriptorSetLayout,
                                                           VkPushConstantRange pushConstantRange)
     {
-        //set 0 负责本 pass 的每帧常量；set 1 负责这个着色器的材质贴图
+        //排在最前面的是本 pass 的每帧常量；后面的 set 1 负责这个着色器的材质贴图
         //（几张由着色器自己声明）。分成两个集合而不是一个：UBO 按帧轮转，材质按资产共享。
         //
-        //同一个 pass 内所有管线共用同一个 set 0 布局与 push constant 范围：
-        //Vulkan 的布局兼容规则要求 set 0..N 与 push constant 范围都相同，管线之间
-        //才对 set N 兼容，换管线时已经绑好的 set 0 不会失效
+        //同一个 pass 内所有管线共用每帧常量的描述符集布局与 push constant 范围：
+        //Vulkan 的布局兼容规则要求 push constant 范围相同，且一个集合以及排在它前面的集合
+        //布局都相同，这个集合才兼容。每帧常量排在最前面，所以换管线时，已经绑好的每帧常量不会失效
         //
-        //不需要材质资源的着色器没有 set 1，布局里只放 set 0 —— 对 set 0 依旧兼容
+        //不需要材质资源的着色器没有 set 1，布局里只放每帧常量 —— 每帧常量依旧兼容
         if (pushConstantRange.size > 0)
         {
             if (pushConstantRange.offset != 0 ||

@@ -17,10 +17,10 @@
 
 #include "DoodleGraphicsBuffer.h"
 #include "DoodleRenderPassAttachmentFormats.h"
+#include "DoodleRenderPassLayout.h"
 #include "DoodleShaderPass.h"
 #include "DoodleVulkanConfig.h"
 #include "DoodleVulkanPipelineObject.h"
-#include "Rendering/DoodleRenderPassLayout.h"
 
 namespace Doodle
 {
@@ -61,7 +61,7 @@ namespace Doodle
      *
      * 必填项用引用：漏填直接编译不过；可空的句柄用值 + 默认值。
      *
-     * 这里只放调用方真正提供的东西。本 pass 的 set 0 绑定、UBO 大小与逐绘制项数据
+     * 这里只放调用方真正提供的东西。本 pass 每帧常量的绑定与大小、逐绘制项数据的
      * 范围不在这里：基类按自己的 pass 类型从 DoodleRenderPassLayout 取。附件格式
      * 也不在这里：它由派生类按自己的附件现算（GetAttachmentFormats），不是调用方输入。
      */
@@ -85,7 +85,7 @@ namespace Doodle
      * DoodleForwardPass 是前向主 pass；以后阴影、延迟、后处理各派生一个。派生类在
      * 构造时报上自己的类型，负责自己的附件与 Render 录制，并按自己的附件报出格式
      * （GetAttachmentFormats：颜色 / 深度附件格式与采样数）；基类按类型取 DoodleRenderPassLayout，
-     * 负责每个 pass 一份的 set 0 UBO / 描述符集 / 逐绘制项数据范围，以及「着色器 → 管线」
+     * 负责每个 pass 一份的每帧常量（UBO / 描述符集）与逐绘制项数据范围，以及「着色器 → 管线」
      * 的解析、查找、持有与按附件格式原地重建。
      *
      * **附件格式**：真相在派生类的附件来源里，派生类通过 GetAttachmentFormats 报。
@@ -120,7 +120,7 @@ namespace Doodle
      * 格式都要重新过一遍。
      *
      * **生命周期**：由 DoodleRenderPipeline 持有，排在描述符管理器与驱动编译缓存之后建、
-     * 之前拆 —— 原地重建时还要用到 set 0 布局与驱动编译缓存。Destroy 先拆管线，
+     * 之前拆 —— 原地重建时还要用到每帧常量的描述符集布局与驱动编译缓存。Destroy 先拆管线，
      * 再拆本 pass 的常量资源（池 → 布局 → UBO）。派生 pass 目前没有自己要拆的资源
      * （前向 pass 的附件是借的）；以后哪个 pass 自己持有资源（比如阴影 pass 自己建
      * shadow map），在 Destroy 末尾加派生类的清理钩子，派生类不要覆盖 Destroy。
@@ -226,7 +226,7 @@ namespace Doodle
          * 此时还没有任何管线
          *
          * 由派生类在自己的 Initialize 里调用，把调用方给的设备 / 编译缓存原样交给这里；
-         * set 0 绑定、UBO 大小与逐绘制项数据范围由基类按构造时的 pass 类型从
+         * 每帧常量的绑定与大小、逐绘制项数据的范围由基类按构造时的 pass 类型从
          * DoodleRenderPassLayout 取。附件格式由基类在这里向派生类要一次（GetAttachmentFormats）
          * 记下，所以派生类要先绑好自己的附件来源再调这里。基类不关心这个 pass 的颜色 /
          * 深度附件从哪来。
@@ -252,7 +252,7 @@ namespace Doodle
         [[nodiscard]] const DoodleVulkanPipelineObject& ResolvePipeline(const DoodleShader& shader);
 
         /**
-         * 把本帧的常量写进 set 0 对应的 UBO
+         * 把每帧常量写进这一帧对应的 UBO
          *
          * 调用位置必须在帧栅栏之后、本 pass 录制之前（见各 pass 的 Render）。
          *
@@ -286,7 +286,7 @@ namespace Doodle
         }
 
         /**
-         * 本帧的 set 0 描述符集：派生 pass 在绘制前绑定它
+         * 本帧要用的每帧常量描述符集：派生 pass 在绘制前绑定它
          */
         [[nodiscard]] VkDescriptorSet GetPassUboDescriptorSet(const uint32_t frameIndex) const
         {
@@ -308,14 +308,14 @@ namespace Doodle
         void DestroyPipelines();
 
         /**
-         * 按本 pass 的契约建出 set 0 UBO、布局、池与每帧集合
+         * 按本 pass 的契约建出每帧常量的 UBO、描述符集布局、池与集合（每在途帧一个）
          *
          * 任一步失败都把已经建出的部分收掉再抛。调用前 m_pDevice 已经绑定。
          */
         void CreatePassUboResources();
 
         /**
-         * 销毁 set 0 的池、布局与 UBO；空句柄 / 未初始化时是空操作
+         * 销毁每帧常量的池、描述符集布局与 UBO；空句柄 / 未初始化时是空操作
          *
          * 顺序：池（集合随之失效）→ 布局 → UBO。必须在管线之后调用
          */
@@ -342,7 +342,7 @@ namespace Doodle
         const DoodleVulkanDevice* m_pDevice = nullptr;
 
         /**
-         * 本 pass 每帧一块 set 0 UBO，HostVisible 类型
+         * 每帧常量的 UBO：本 pass 每在途帧一块，HostVisible 类型
          *
          * 不随交换链重建：窗口缩放只改投影矩阵的内容，不改缓冲对象。
          * 数量必须与 MAX_FRAMES_IN_FLIGHT 一致
@@ -350,17 +350,17 @@ namespace Doodle
         std::array<DoodleGraphicsBuffer, MAX_FRAMES_IN_FLIGHT> m_passUbos;
 
         /**
-         * 本 pass 的 set 0 布局；这个 pass 的所有管线布局都用它
+         * 本 pass 每帧常量的描述符集布局；这个 pass 的所有管线布局都用它
          */
         VkDescriptorSetLayout m_passUboDescriptorSetLayout = VK_NULL_HANDLE;
 
         /**
-         * set 0 的描述符池；集合的寿命与池一致，随池一起失效
+         * 每帧常量的描述符池；集合的寿命与池一致，随池一起失效
          */
         VkDescriptorPool m_passUboDescriptorPool = VK_NULL_HANDLE;
 
         /**
-         * 每在途帧一个 set 0，各自把该帧的 UBO 接到 binding 0
+         * 每帧常量的描述符集：每在途帧一个，各自把该帧的 UBO 接到 binding 0
          */
         std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_passUboDescriptorSets{};
 

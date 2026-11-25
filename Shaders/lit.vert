@@ -8,7 +8,7 @@
 // 标准网格的顶点处理收在 Include/DoodleStandardVertex.glsl 里，
 // 三个网格着色器（lit / 树干 / 树叶）共用同一份。
 //
-// set 0 的 UBO 与 push constant 的声明在 Include/DoodleForwardPassInterface.glsl 里
+// 每帧常量与 push constant 的声明在 Include/DoodleForwardPassInterface.glsl 里
 
 #include "Include/DoodleForwardPassInterface.glsl"
 #include "Include/DoodleStandardVertex.glsl"

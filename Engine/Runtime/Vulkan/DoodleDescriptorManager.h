@@ -32,7 +32,7 @@ namespace Doodle
      *   着色器没有声明贴图时没有 set 1，缓存 VK_NULL_HANDLE，录制侧不绑。
      *   着色器的 set 1 布局按它所有 pass 合并，所以同一个集合在每个 pass 里都能绑。
      *
-     * set 0 的每帧常量归各自的 pass：DoodleRenderPass 按每个 pass 的
+     * 每帧常量归各自的 pass：DoodleRenderPass 按每个 pass 的
      * DoodleRenderPassLayout 自己建 UBO / 布局 / 池 / 集合。本类只负责
      * 资产作用域的材质贴图。
      *

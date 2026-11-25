@@ -23,7 +23,7 @@ namespace Doodle
      * specialization constants、dynamic state 时往这里加字段，Initialize 签名不动。
      *
      * 必填项用引用：漏填直接编译不过。pipelineCompileCache 允许为空，用值 + 默认值。
-     * passUboDescriptorSetLayout 为空时 Initialize 会抛 invalid_argument（没有 set 0
+     * passUboDescriptorSetLayout 为空时 Initialize 会抛 invalid_argument（没有每帧常量
      * 的管线在录制时没有意义）。
      */
     struct DoodleVulkanPipelineInitInfo
@@ -39,12 +39,12 @@ namespace Doodle
         VkPipelineCache pipelineCompileCache = VK_NULL_HANDLE;
 
         /**
-         * 本 pass 的 set 0 布局：这个 pass 的所有管线共用它，换管线时不必重绑 set 0
+         * 本 pass 每帧常量的描述符集布局：这个 pass 的所有管线共用它，换管线时不必重绑每帧常量
          */
         VkDescriptorSetLayout passUboDescriptorSetLayout;
 
         /**
-         * 本 pass 的 push constant 范围；与 set 0 布局一起决定同一 pass 内管线布局的兼容性
+         * 本 pass 的 push constant 范围；与每帧常量的描述符集布局一起决定同一 pass 内管线布局的兼容性
          */
         VkPushConstantRange pushConstantRange{};
 
@@ -68,7 +68,7 @@ namespace Doodle
      * - 着色器侧输入（DoodleShaderPass）：两段字节码、set 1 布局、渲染状态、
      *   顶点与实例格式；
      * - pass 侧附件（DoodleRenderPassAttachmentFormats）：附件格式与采样数；
-     * - pass 侧共享：本 pass 的 set 0 布局、本 pass 的 push constant 范围、
+     * - pass 侧共享：本 pass 每帧常量的描述符集布局、本 pass 的 push constant 范围、
      *   驱动编译缓存（VkPipelineCache）。
      *
      * 前两样是管线的创建输入。着色器侧那份定义在 DoodleShaderPass.h，
@@ -79,10 +79,11 @@ namespace Doodle
      * 设备与布局都是参数。同一份输入建几次都一样，谁来建、建几条由
      * 持有它的 pass（DoodleRenderPass）决定 —— 本类不再是「全工程那一条管线」
      *
-     * 同一个 pass 内所有管线共用 set 0 布局与 push constant 范围，是为了布局兼容：
-     * Vulkan 规定两个管线布局只有在 set 0..N 的布局都相同、且 push constant 范围
-     * 也相同时，才对 set N 兼容。共用这两样，换管线时不必重新绑定 set 0。
-     * 跨 pass 不承诺兼容 —— 不同 pass 各自重绑自己的 set 0。
+     * 同一个 pass 内所有管线共用每帧常量的描述符集布局与 push constant 范围，是为了
+     * 布局兼容：Vulkan 规定换管线后，已经绑好的描述符集要继续有效，两个管线布局的
+     * push constant 范围必须相同，这个集合以及排在它前面的集合，布局也都必须相同。
+     * 每帧常量排在最前面，共用这两样，换管线时就不必重新绑定它。
+     * 跨 pass 不承诺兼容 —— 不同 pass 各自重绑自己的每帧常量。
      *
      * 不可复制：复制一份就是两个对象各自去销毁同一组句柄
      */
@@ -100,7 +101,7 @@ namespace Doodle
          * @param info 设备、两个共享句柄与着色器侧输入，见 DoodleVulkanPipelineInitInfo
          *
          * @throw std::invalid_argument 输入不合法（字节码为空、
-         *        深度偏移因子不是有限值、set 0 布局为空……）
+         *        深度偏移因子不是有限值、每帧常量的描述符集布局为空……）
          * @throw std::runtime_error 布局 / 模块 / 管线创建失败
          *
          * @note 前置条件：尚未初始化。失败时已经建出来的部分会被收掉，
@@ -161,9 +162,9 @@ namespace Doodle
         static void ValidateShaderPass(const DoodleShaderPass& shaderPass);
 
         /**
-         * 建管线布局：set 0（+ set 1）与本 pass 的 push constant 范围
+         * 建管线布局：每帧常量（+ set 1 的材质贴图）与本 pass 的 push constant 范围
          *
-         * materialDescriptorSetLayout 为空时只有 set 0；pushConstantRange.size == 0
+         * materialDescriptorSetLayout 为空时只有每帧常量；pushConstantRange.size == 0
          * 时不声明 push constant
          */
         void CreatePipelineLayout(VkDescriptorSetLayout passUboDescriptorSetLayout,
@@ -225,7 +226,7 @@ namespace Doodle
         const DoodleShaderPass* m_pShaderPass = nullptr;
 
         /**
-         * 管线布局：set 0（+ set 1）与本 pass 的 push constant 范围
+         * 管线布局：每帧常量（+ set 1 的材质贴图）与本 pass 的 push constant 范围
          */
         VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
 

@@ -13,7 +13,7 @@ namespace Doodle
     /**
      * 材质对着色器提出的契约：set 1 的规则
      *
-     * 与 DoodleRenderPassLayout 是一对：那份按 pass 规定 set 0 与 push constant，
+     * 与 DoodleRenderPassLayout 是一对：那份按 pass 规定每帧常量与 push constant，
      * 这份规定 set 1 —— 材质贴图。set 1 的形状不归 pass 管，也不写死成某几张贴图：
      * 每个着色器在 GLSL 里声明自己要几张，DoodleShader 加载时反射出来、按下面的
      * 规则核对，再建这个着色器自己的 set 1 布局。
@@ -37,7 +37,7 @@ namespace Doodle
      * 一个着色器最多声明几张材质贴图
      *
      * 规范只保证每个阶段至少能用 16 个采样器（maxPerStageDescriptorSamplers），
-     * 余量留给以后 set 0 里的 pass 级贴图（例如 shadow map）。DoodleDescriptorManager
+     * 余量留给以后和每帧常量放在同一个集合里的 pass 级贴图（例如 shadow map）。DoodleDescriptorManager
      * 也按它给描述符池定容量：任何一个材质集合都放得进一块新池
      */
     inline constexpr uint32_t kMaxMaterialTextureSlots = 8;

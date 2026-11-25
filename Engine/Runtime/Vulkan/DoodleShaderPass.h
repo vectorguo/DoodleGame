@@ -24,7 +24,7 @@ namespace Doodle
      * 只记这一份的地址：附件格式变化时原地重建也直接读它，所以着色器资产要活到
      * 它的管线不再重建为止。
      *
-     * 与 DoodleRenderPassLayout 的分工：那个是 pass 侧的契约（set 0 与
+     * 与 DoodleRenderPassLayout 的分工：那个是 pass 侧的契约（每帧常量与
      * push constant 的约定，加载时按它核对）；本类是着色器侧的内容。
      */
     struct DoodleShaderPass
@@ -44,7 +44,7 @@ namespace Doodle
          *
          * 由 DoodleShader 按各 pass 反射出的 set 1 合并建出，整个着色器一份，
          * 每个 pass 的数据里放的都是同一个句柄。可以为 VK_NULL_HANDLE：不用贴图的
-         * 着色器只有 set 0，与其它管线对 set 0 仍然兼容。DoodleDescriptorManager
+         * 着色器只有每帧常量，与其它管线的每帧常量仍然兼容。DoodleDescriptorManager
          * 按同一个布局给用这个着色器的材质分配 set 1，所以材质集合在每个 pass 的
          * 管线上都能绑
          *
