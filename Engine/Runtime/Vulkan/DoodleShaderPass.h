@@ -20,11 +20,11 @@ namespace Doodle
     /**
      * 着色器的一个 pass：两段 SPIR-V 与这个 pass 的管线输入
      *
-     * 由 DoodleShader 按 pass 各持有一份；建管线的一方按值拷一份作为重建快照，
-     * 所以这份数据必须能独立于着色器资产存在 —— 资产先于渲染器销毁，交换链重建
-     * 时只剩快照可用。
+     * 由 DoodleShader 按 pass 各持有一份。管线（DoodleVulkanPipelineObject）不拷贝，
+     * 只记这一份的地址：附件格式变化时原地重建也直接读它，所以着色器资产要活到
+     * 它的管线不再重建为止。
      *
-     * 与 DoodlePassShaderInterface 的分工：那个是 pass 侧的契约（set 0 与
+     * 与 DoodleRenderPassLayout 的分工：那个是 pass 侧的契约（set 0 与
      * push constant 的约定，加载时按它核对）；本类是着色器侧的内容。
      */
     struct DoodleShaderPass

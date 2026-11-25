@@ -51,7 +51,7 @@ namespace Doodle
                 }
             });
 
-            //前向 pass：自己建 set 0 常量资源，再按附件配置与编译缓存建管线表
+            //前向 pass：自己建 set 0 常量资源，再按附件格式与编译缓存建管线表
             m_forwardPass.Initialize(
             {
                 .renderPassInfo =
@@ -147,8 +147,12 @@ namespace Doodle
         m_depthImages.Initialize(*m_pDevice, m_pSwapChain->GetImageExtent());
 
         //尺寸变化不影响管线（视口与剪裁是动态状态）；只有颜色 / 深度格式或
-        //采样数真的变了，前向 pass 才原地重建自己的管线。判断由它自己做
-        m_forwardPass.RebuildIfPassConfigChanged(*m_pSwapChain, m_depthImages);
+        //采样数真的变了，对应的管线才原地重建。判断在各 pass 里：按自己的附件现取格式，
+        //和自己记下的那份比。这里按渲染顺序挨个通知，以后加 pass 不用改这一处
+        for (auto* pRenderPass : GetRenderPasses())
+        {
+            pRenderPass->RebuildIfAttachmentFormatsChanged();
+        }
     }
 
     std::array<DoodleRenderPass*, 2> DoodleRenderPipeline::GetRenderPasses()

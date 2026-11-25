@@ -161,11 +161,12 @@ namespace Doodle
         void OnSurfaceLost();
 
         /**
-         * 交换链重建后调用：按新尺寸重建深度图，并让 pass 按新附件配置重建管线
+         * 交换链重建后调用：按新尺寸重建深度图，并让 pass 按新附件格式重建管线
          *
          * 会先销毁旧深度图再按新尺寸建（Destroy 幂等，OnSurfaceLost 之后调用也安全）。
          * 尺寸变化不影响管线（视口与剪裁是动态状态）；只有颜色 / 深度格式或
-         * 采样数真的变了，前向 pass 才会原地重建自己的管线。
+         * 采样数真的变了，对应 pass 的管线才会原地重建。每个 pass 都通知一遍，
+         * 变没变由 pass 自己按附件判断。
          *
          * @note 前置条件：新的交换链已经初始化
          */
@@ -175,8 +176,8 @@ namespace Doodle
         /**
          * 按渲染顺序列出本类持有的 pass
          *
-         * Render / WarmupPipelines 正序遍历，Destroy 逆序遍历。集中在一处，
-         * 以后加 pass 时不会漏掉某个调用点
+         * Render / WarmupPipelines / OnSwapChainRecreated 正序遍历，Destroy 逆序遍历。
+         * 集中在一处，以后加 pass 时不会漏掉某个调用点
          */
         [[nodiscard]] std::array<DoodleRenderPass*, 2> GetRenderPasses();
 

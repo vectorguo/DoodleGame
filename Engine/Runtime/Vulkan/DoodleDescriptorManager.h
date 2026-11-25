@@ -33,7 +33,7 @@ namespace Doodle
      *   着色器的 set 1 布局按它所有 pass 合并，所以同一个集合在每个 pass 里都能绑。
      *
      * set 0 的每帧常量归各自的 pass：DoodleRenderPass 按每个 pass 的
-     * DoodlePassShaderInterface 自己建 UBO / 布局 / 池 / 集合。本类只负责
+     * DoodleRenderPassLayout 自己建 UBO / 布局 / 池 / 集合。本类只负责
      * 资产作用域的材质贴图。
      *
      * 它不拥有材质、贴图、着色器与管线：它们由资产系统保证寿命，管线拿着着色器的

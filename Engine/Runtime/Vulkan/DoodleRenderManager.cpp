@@ -104,7 +104,7 @@ namespace Doodle
         if (m_vulkanManager.RecreateSwapChain())
         {
             //交换链与同步对象已经换新；渲染管线按新尺寸重建深度图，
-            //并让前向 pass 在附件格式真的变化时原地重建管线
+            //并让各 pass 在附件格式真的变化时原地重建管线
             m_renderPipeline.OnSwapChainRecreated();
         }
     }

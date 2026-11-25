@@ -14,7 +14,7 @@
 
 #include "DoodleVulkanDevice.h"
 #include "Rendering/DoodleMaterial.h"
-#include "Rendering/DoodleMaterialShaderInterface.h"
+#include "Rendering/DoodleMaterialTextureSlot.h"
 #include "Rendering/DoodleShader.h"
 
 namespace Doodle

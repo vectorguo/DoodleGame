@@ -16,10 +16,11 @@
 #include <vulkan/vulkan_core.h>
 
 #include "DoodleGraphicsBuffer.h"
+#include "DoodleRenderPassAttachmentFormats.h"
 #include "DoodleShaderPass.h"
 #include "DoodleVulkanConfig.h"
 #include "DoodleVulkanPipelineObject.h"
-#include "Rendering/DoodlePassShaderInterface.h"
+#include "Rendering/DoodleRenderPassLayout.h"
 
 namespace Doodle
 {
@@ -60,10 +61,9 @@ namespace Doodle
      *
      * 必填项用引用：漏填直接编译不过；可空的句柄用值 + 默认值。
      *
-     * 这里只放调用方真正提供的东西。本 pass 的 set 0 绑定、UBO 大小与 push 范围
-     * 不在这里：基类按自己的 pass 类型从 DoodlePassShaderInterface 取。passConfig
-     * 也不在这里：它的生产者是派生类（附件格式由派生类自己的资源决定），不是调用方
-     * 输入。放进来的话会变成「调用方填了也会被覆盖」的字段。
+     * 这里只放调用方真正提供的东西。本 pass 的 set 0 绑定、UBO 大小与逐绘制项数据
+     * 范围不在这里：基类按自己的 pass 类型从 DoodleRenderPassLayout 取。附件格式
+     * 也不在这里：它由派生类按自己的附件现算（GetAttachmentFormats），不是调用方输入。
      */
     struct DoodleRenderPassInitInfo
     {
@@ -79,64 +79,61 @@ namespace Doodle
     };
 
     /**
-     * 渲染 pass 基类：持有一个 pass 配置下的全部管线与本 pass 的每帧常量资源
+     * 渲染 pass 基类：持有一种 pass 的全部管线与本 pass 的每帧常量资源
      *
-     * 一个实例对应一种 pass 配置（颜色 / 深度附件格式与采样数）。具体是哪种 pass
-     * 由派生类决定：DoodleForwardPass 是前向主 pass；以后阴影、延迟、后处理各派生
-     * 一个。派生类在构造时报上自己的 EDoodlePassType，负责自己的附件、pass 配置与
-     * Render 录制；基类按这个类型取 DoodlePassShaderInterface，负责每个 pass 一份的
-     * set 0 UBO / 描述符集 / push 范围，以及「着色器 → 管线」的解析、查找、持有与
-     * 批量重建。
+     * 一个实例对应一种 pass（EDoodleRenderPassType）。具体是哪种由派生类决定：
+     * DoodleForwardPass 是前向主 pass；以后阴影、延迟、后处理各派生一个。派生类在
+     * 构造时报上自己的类型，负责自己的附件与 Render 录制，并按自己的附件报出格式
+     * （GetAttachmentFormats：颜色 / 深度附件格式与采样数）；基类按类型取 DoodleRenderPassLayout，
+     * 负责每个 pass 一份的 set 0 UBO / 描述符集 / 逐绘制项数据范围，以及「着色器 → 管线」
+     * 的解析、查找、持有与按附件格式原地重建。
+     *
+     * **附件格式**：真相在派生类的附件来源里，派生类通过 GetAttachmentFormats 报。
+     * 基类记一份表里管线建的时候用的（m_attachmentFormats）：Initialize 时问一次记下，之后新建的
+     * 管线都按它建，表里始终是同一份格式。附件重建之后调 RebuildIfAttachmentFormatsChanged，
+     * 现取一份和它比，变了才原地重建全部管线。建管线只读这份记录、不碰附件。
      *
      * **每个着色器在本 pass 一条管线**：键是着色器资产指针。渲染状态、顶点 / 实例
      * 格式、set 1 布局都是着色器描述的一部分，一个着色器在一个 pass 只有一份描述，
      * 不存在同一着色器要多条管线的情况。多个材质共用同一个着色器时，ResolvePipeline
-     * 返回同一条管线；材质之间不同的是 set 1 与 push constant 的数据，不是管线。
+     * 返回同一条管线；材质之间不同的是 set 1 与逐绘制项数据，不是管线。
      *
      * **按资产指针做键的前提**：着色器资产常驻，地址稳定（见 DoodleShader 的类注释）。
      * 同样的字节码出现在两个着色器资产里属于资产配置的重复，由资产侧的检查拦下；
      * 管线表不按内容去重，也因此不必对字节码做哈希与逐字节比对。
      *
-     * **PipelineItem 稳定**：每个条目单独堆上分配（unique_ptr），ResolvePipeline 返回的
-     * 引用在 Destroy 之前一直有效。附件格式变化时 RebuildPipelines 原地重建，交出去的
-     * 引用照样有效。
+     * **管线引用资产里的 pass 数据**：每条管线只记着色器 pass 数据的地址、不拷贝，
+     * 原地重建时直接读资产里那份，所以资产要活到它的管线不再重建为止。退出时资产
+     * 管理器先于渲染器销毁，那之后只剩 Destroy，不会再重建。以后卸载着色器时，
+     * 要先把它的管线从各 pass 的表里拆掉，再销毁资产。
+     *
+     * **管线对象稳定**：每条管线单独堆上分配（unique_ptr），ResolvePipeline 返回的
+     * 引用在 Destroy 之前一直有效。附件格式变化时 RebuildIfAttachmentFormatsChanged 原地重建，
+     * 交出去的引用照样有效。
      *
      * **常驻，不淘汰**：管线数量等于本 pass 有描述的着色器数量，与世界多大无关，
      * 没有回收的必要。着色器资产同样常驻：大世界流式加载时卸载的是网格、贴图和
      * 材质，不是着色器。
      *
      * **线程**：只有渲染线程使用，不加锁（材质加载不再碰管线表，见 DoodleMaterial 的
-     * 类注释）。以后要做后台并行预编译，再和任务系统一起定加锁范围 —— 管线表、pass
-     * 配置都要重新过一遍。
+     * 类注释）。以后要做后台并行预编译，再和任务系统一起定加锁范围 —— 管线表、附件
+     * 格式都要重新过一遍。
      *
      * **生命周期**：由 DoodleRenderPipeline 持有，排在描述符管理器与驱动编译缓存之后建、
      * 之前拆 —— 原地重建时还要用到 set 0 布局与驱动编译缓存。Destroy 先拆管线，
-     * 再拆本 pass 的常量资源（池 → 布局 → UBO），再调派生类的 OnDestroy 拆这个
-     * pass 自己的资源；派生类不要覆盖 Destroy。
+     * 再拆本 pass 的常量资源（池 → 布局 → UBO）。派生 pass 目前没有自己要拆的资源
+     * （前向 pass 的附件是借的）；以后哪个 pass 自己持有资源（比如阴影 pass 自己建
+     * shadow map），在 Destroy 末尾加派生类的清理钩子，派生类不要覆盖 Destroy。
      *
-     * 不可复制：PipelineItem 里的管线各自持有句柄
+     * 不可复制：表里的管线各自持有句柄
      */
     class DoodleRenderPass
     {
-        /**
-         * 一条管线记录：重建所需的全部输入 + 建出来的管线
-         *
-         * pass 数据按值拷一份（字节码副本、渲染状态、顶点 / 实例格式、set 1 布局句柄）：
-         * 着色器资产那份可能早就销毁了，原地重建时要用的是这里的。
-         * set 1 布局句柄只在建管线布局时用过一次，原地重建保留布局、不再读它，
-         * 所以着色器资产先于本 pass 销毁之后它悬空也无妨
-         */
-        struct PipelineItem
-        {
-            DoodleShaderPass shaderPass;
-            DoodleVulkanPipelineObject pipeline;
-        };
-
     protected:
         /**
-         * @param passType 这个 pass 是哪一种：基类按它取着色器契约与着色器的描述
+         * @param passType 这个 pass 是哪一种：基类按它取布局（GetRenderPassLayout）与着色器的描述
          */
-        explicit DoodleRenderPass(const EDoodlePassType passType)
+        explicit DoodleRenderPass(const EDoodleRenderPassType passType)
             : m_passType(passType)
         {
         }
@@ -148,9 +145,9 @@ namespace Doodle
         DoodleRenderPass& operator=(const DoodleRenderPass&) = delete;
 
         /**
-         * 销毁这个 pass 的全部管线、常量资源，再让派生类拆自己的资源
+         * 销毁这个 pass 的全部管线与常量资源
          *
-         * 可以重复调用。派生类通过 OnDestroy 挂接自己的清理，不要覆盖本函数。
+         * 可以重复调用，从未初始化时调用也安全。派生类不要覆盖本函数（见类注释）。
          * 前置条件：GPU 已空闲、没有线程还在用这个 pass
          */
         virtual void Destroy();
@@ -171,6 +168,23 @@ namespace Doodle
          *       录制期间改写它引用的附件
          */
         virtual void Render(const DoodleFrameContext& frameContext, const DoodleRenderPassContext& passContext) = 0;
+
+        /**
+         * 附件重建之后调用：按派生类现取的附件格式和表里管线建的时候用的那份比，
+         * 变了就原地重建这个 pass 的每一条管线
+         *
+         * 交换链重建（以后还有阴影图换格式）之后由 DoodleRenderPipeline 调用。只变尺寸时
+         * 格式相同，管线不动（视口与剪裁是动态状态）。每条管线只换管线本身，管线布局与
+         * 对象地址都不变，之前交出去的引用照样有效。
+         *
+         * 某一条建失败时异常向上抛：失败之前的几条已经是新格式，失败的那条和之后的
+         * 还是旧格式（每条各自保证「建不出新的就留着旧的」），记录的附件格式保持旧值。
+         * 这条路只会因设备级故障走到，调用方随后走销毁流程，不再继续画
+         *
+         * @note 前置条件：GPU 已空闲 —— 旧管线可能还被在途的命令引用着；派生类的附件
+         *       已经重建好；表里的着色器资产都还活着（管线按资产里的 pass 数据重建）
+         */
+        void RebuildIfAttachmentFormatsChanged();
 
         /**
          * 预先建出这批着色器在这个 pass 里会用到的管线，不录任何命令
@@ -197,106 +211,45 @@ namespace Doodle
         virtual void WarmupShaders(const std::vector<const DoodleShader*>& shaders);
 
         /**
-         * 换一套 pass 配置，原地重建这个 pass 的每一条管线
-         *
-         * 附件格式变了（交换链重建换了格式、阴影图换了格式）时由派生类调用。
-         * 每条管线只换管线本身，管线布局与对象地址都不变，之前交出去的引用照样有效。
-         *
-         * 不比对新旧配置：要不要重建由调用方判断（DoodleForwardPass 自己比对），
-         * 这样相同格式也能强制走一遍这条路。
-         *
-         * 某一条建失败时异常向上抛：失败之前的几条已经是新格式，失败的那条和之后的
-         * 还是旧格式（每条各自保证「建不出新的就留着旧的」），记录的 pass 配置保持旧值。
-         * 这条路只会因设备级故障走到，调用方随后走销毁流程，不再继续画
-         *
-         * @note 前置条件：GPU 已空闲 —— 旧管线可能还被在途的命令引用着
-         */
-        void RebuildPipelines(const DoodleVulkanPipelinePassConfig& passConfig);
-
-        /**
          * 这个 pass 里有几条管线
          *
          * 验收与以后的调试界面都要看它：每个在本 pass 有描述的着色器一条
          */
-        [[nodiscard]] std::size_t GetPipelineCount() const;
-
-        /**
-         * 当前的 pass 配置（按值返回）
-         */
-        [[nodiscard]] DoodleVulkanPipelinePassConfig GetPassConfig() const;
+        [[nodiscard]] std::size_t GetPipelineCount() const
+        {
+            return m_pipelines.size();
+        }
 
     protected:
         /**
-         * 绑定这个 pass 共用的服务、按本 pass 的契约建常量资源，并记下 pass 配置；
+         * 绑定这个 pass 共用的服务、按本 pass 的契约建常量资源，并记下附件格式；
          * 此时还没有任何管线
          *
-         * 由派生类在自己的 Initialize 里调用。派生类先按自己的附件算好 passConfig，
-         * 再连同调用方给的设备 / 编译缓存一起交给这里；set 0 绑定、UBO 大小与 push
-         * 范围由基类按构造时的 pass 类型从 DoodlePassShaderInterface 取。基类不关心
-         * 这个 pass 的颜色 / 深度附件从哪来。
+         * 由派生类在自己的 Initialize 里调用，把调用方给的设备 / 编译缓存原样交给这里；
+         * set 0 绑定、UBO 大小与逐绘制项数据范围由基类按构造时的 pass 类型从
+         * DoodleRenderPassLayout 取。附件格式由基类在这里向派生类要一次（GetAttachmentFormats）
+         * 记下，所以派生类要先绑好自己的附件来源再调这里。基类不关心这个 pass 的颜色 /
+         * 深度附件从哪来。
          *
          * @param initInfo 设备与编译缓存，都必须活得比本 pass 久
-         * @param passConfig 这种 pass 的附件格式与采样数
          *
-         * @throw std::invalid_argument / std::runtime_error set 0 绑定不合法或
-         *        常量资源建不出来；失败时已经建出的部分会被收掉
+         * @throw std::runtime_error 常量资源建不出来；失败时已经建出的部分会被收掉
          *
          * @note 前置条件：尚未初始化
          */
-        void Initialize(const DoodleRenderPassInitInfo& initInfo, const DoodleVulkanPipelinePassConfig& passConfig);
-
-        /**
-         * 派生类拆自己的资源；基类已经先把管线和常量资源拆完
-         *
-         * 此时基类的 device 仍然有效（句柄在 OnDestroy 返回之后才清空）。
-         * 可能在从未初始化时被调用，也可能被重复调用；实现要能处理这两种情况。
-         * 默认什么都不做。
-         */
-        virtual void OnDestroy() {}
+        void Initialize(const DoodleRenderPassInitInfo& initInfo);
 
         /**
          * 取某个着色器在本 pass 里的管线；没解析过就建一条
          *
          * 键是着色器资产。资产常驻、地址稳定（见类注释），表的大小只跟着着色器
-         * 数量走；RebuildPipelines 原地重建不改变管线对象地址，已返回的引用一直有效。
+         * 数量走；RebuildIfAttachmentFormatsChanged 原地重建不改变管线对象地址，已返回的引用一直有效。
          *
          * @throw std::invalid_argument 着色器没有本 pass 的描述；其余同
          *        DoodleVulkanPipelineObject::Initialize（描述不合法或管线建不出来，
          *        失败时表里不留任何东西）
          */
         [[nodiscard]] const DoodleVulkanPipelineObject& ResolvePipeline(const DoodleShader& shader);
-
-        /**
-         * 这个 pass 是哪一种
-         */
-        [[nodiscard]] EDoodlePassType GetPassType() const
-        {
-            return m_passType;
-        }
-
-        /**
-         * 这个 pass 绑定的设备；OnDestroy 时仍然有效
-         */
-        [[nodiscard]] const DoodleVulkanDevice* GetDevice() const
-        {
-            return m_pDevice;
-        }
-
-        /**
-         * 本 pass 的 push constant 范围：录制时 vkCmdPushConstants 用它
-         */
-        [[nodiscard]] VkPushConstantRange GetPushConstantRange() const
-        {
-            return m_pushConstantRange;
-        }
-
-        /**
-         * 本帧的 set 0 描述符集：派生 pass 在绘制前绑定它
-         */
-        [[nodiscard]] VkDescriptorSet GetPassUboDescriptorSet(const uint32_t frameIndex) const
-        {
-            return m_passUboDescriptorSets[frameIndex];
-        }
 
         /**
          * 把本帧的常量写进 set 0 对应的 UBO
@@ -312,14 +265,42 @@ namespace Doodle
             m_passUbos[frameIndex].Write(pData, size);
         }
 
+        /**
+         * 本 pass 的颜色 / 深度附件格式与采样数，由派生类按自己的附件现取
+         *
+         * 基类只在两处问：Initialize 时记下第一份（m_attachmentFormats），附件重建后
+         * RebuildIfAttachmentFormatsChanged 再取一份来比。两处附件都在：调基类 Initialize 之前
+         * 派生类已经绑好附件来源，比对在附件重建之后。还没有附件的 pass（阴影骨架）
+         * 返回占位值
+         */
+        [[nodiscard]] virtual DoodleRenderPassAttachmentFormats GetAttachmentFormats() const = 0;
+
+        /**
+         * 本 pass 逐绘制项数据的范围：录制时 vkCmdPushConstants 用它
+         *
+         * 直接取契约、不另存副本；建管线布局用的也是这一份
+         */
+        [[nodiscard]] VkPushConstantRange GetDrawItemDataRange() const
+        {
+            return GetRenderPassLayout(m_passType).drawItemDataRange;
+        }
+
+        /**
+         * 本帧的 set 0 描述符集：派生 pass 在绘制前绑定它
+         */
+        [[nodiscard]] VkDescriptorSet GetPassUboDescriptorSet(const uint32_t frameIndex) const
+        {
+            return m_passUboDescriptorSets[frameIndex];
+        }
+
     private:
         /**
-         * 建一条 PipelineItem 并插进表里
+         * 建一条管线并插进表里
          *
-         * 只由 ResolvePipeline 在未命中时调用。失败时把刚插入的条目摘掉再抛
+         * 只由 ResolvePipeline 在未命中时调用。shaderPass 是着色器资产里的那份，
+         * 管线记下它的地址。失败时把刚插入的条目摘掉再抛
          */
-        [[nodiscard]] PipelineItem& CreatePipelineItem(const DoodleShader& shader,
-                                                       const DoodleShaderPass& shaderPass);
+        [[nodiscard]] const DoodleVulkanPipelineObject& CreatePipeline(const DoodleShader& shader, const DoodleShaderPass& shaderPass);
 
         /**
          * 销毁表里的每条管线并清空
@@ -331,7 +312,7 @@ namespace Doodle
          *
          * 任一步失败都把已经建出的部分收掉再抛。调用前 m_pDevice 已经绑定。
          */
-        void CreatePassUboResources(const DoodlePassShaderInterface& passInterface);
+        void CreatePassUboResources();
 
         /**
          * 销毁 set 0 的池、布局与 UBO；空句柄 / 未初始化时是空操作
@@ -344,22 +325,21 @@ namespace Doodle
         /**
          * 这个 pass 是哪一种；构造时定下，之后不变
          */
-        const EDoodlePassType m_passType;
+        const EDoodleRenderPassType m_passType;
+
+        /**
+         * 表里管线建的时候用的附件格式与采样数：Initialize 时按 GetAttachmentFormats 记下，
+         * 新建的管线都按它建；RebuildIfAttachmentFormatsChanged 全部重建成功后才换
+         *
+         * 不是附件此刻的格式（那是 GetAttachmentFormats）：附件重建之后、比对之前两者可能不同 ——
+         * 要不要重建正是靠这份旧值判断
+         */
+        DoodleRenderPassAttachmentFormats m_attachmentFormats;
 
         /**
          * Vulkan设备层，在 Initialize 时绑定
          */
         const DoodleVulkanDevice* m_pDevice = nullptr;
-
-        /**
-         * 驱动编译缓存，不持有
-         */
-        VkPipelineCache m_pipelineCompileCache = VK_NULL_HANDLE;
-
-        /**
-         * 本 pass 的 push constant 范围
-         */
-        VkPushConstantRange m_pushConstantRange{};
 
         /**
          * 本 pass 每帧一块 set 0 UBO，HostVisible 类型
@@ -385,17 +365,17 @@ namespace Doodle
         std::array<VkDescriptorSet, MAX_FRAMES_IN_FLIGHT> m_passUboDescriptorSets{};
 
         /**
-         * 这种 pass 当前的附件格式与采样数
+         * 驱动编译缓存，不持有
          */
-        DoodleVulkanPipelinePassConfig m_passConfig;
+        VkPipelineCache m_pipelineCompileCache = VK_NULL_HANDLE;
 
         /**
-         * 着色器 → 本 pass 的管线
+         * 管线表：着色器 → 本 pass 的管线
          *
          * 键是着色器资产指针：资产常驻、地址稳定（见类注释），规模只跟着着色器
          * 数量走。管线原地重建不改变对象地址，已返回的引用一直有效；Destroy 时
          * 连同条目一起清空
          */
-        std::unordered_map<const DoodleShader*, std::unique_ptr<PipelineItem>> m_pipelinesByShader;
+        std::unordered_map<const DoodleShader*, std::unique_ptr<DoodleVulkanPipelineObject>> m_pipelines;
     };
 }

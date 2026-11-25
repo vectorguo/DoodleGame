@@ -44,8 +44,8 @@ namespace Doodle
                 ReflectStage(passInitInfo.vertexBytecode, VK_SHADER_STAGE_VERTEX_BIT, bindings, pushConstantRanges);
                 ReflectStage(passInitInfo.fragmentBytecode, VK_SHADER_STAGE_FRAGMENT_BIT, bindings, pushConstantRanges);
 
-                //未知的 pass 枚举值在这里被拒：GetPassShaderInterface 只认已知的 pass
-                ValidatePassInterface(GetPassShaderInterface(passInitInfo.passType), bindings, pushConstantRanges);
+                //未知的 pass 枚举值在这里被拒：GetRenderPassLayout 只认已知的 pass
+                ValidatePassBindings(GetRenderPassLayout(passInitInfo.passType), bindings, pushConstantRanges);
                 MergeMaterialBindings(bindings, materialBindings);
             }
             ValidateMaterialBindings(materialBindings);
@@ -68,8 +68,8 @@ namespace Doodle
             }
 
             //第二步：占位并填好各 pass 的数据。这里只有内存分配会失败，此时还没有句柄可漏。
-            //字节码各拷一份留在 pass 数据里：pass 第一次解析管线时把它存进条目，
-            //格式变化原地重建时用它。
+            //字节码各拷一份留在 pass 数据里：pass 第一次解析管线时，管线记下这份数据的地址，
+            //格式变化原地重建时还要读它。
             //pass 不重复由 loader 保证，这里拿到的总是新节点
             for (const auto& passInitInfo : initInfo.passInitInfos)
             {
@@ -125,7 +125,7 @@ namespace Doodle
         m_pDevice = nullptr;
     }
 
-    const DoodleShaderPass* DoodleShader::GetPass(const EDoodlePassType pass) const
+    const DoodleShaderPass* DoodleShader::GetPass(const EDoodleRenderPassType pass) const
     {
         const auto it = m_passes.find(pass);
         if (it == m_passes.end())
@@ -245,7 +245,7 @@ namespace Doodle
         }
         
         //push constant：记下这个阶段用到的那一段（偏移与大小）。可能没有，也可能
-        //只有部分成员；核对交给 ValidatePassInterface
+        //只有部分成员；核对交给 ValidatePassBindings
         uint32_t blockCount = 0;
         if (module.EnumerateEntryPointPushConstantBlocks(pEntryPoint, &blockCount, nullptr) != SPV_REFLECT_RESULT_SUCCESS)
         {
@@ -271,9 +271,9 @@ namespace Doodle
         }
     }
 
-    void DoodleShader::ValidatePassInterface(const DoodlePassShaderInterface& passInterface,
-                                             const std::vector<ReflectedBinding>& bindings,
-                                             const std::vector<VkPushConstantRange>& pushConstantRanges)
+    void DoodleShader::ValidatePassBindings(const DoodleRenderPassLayout& passLayout,
+                                            const std::vector<ReflectedBinding>& bindings,
+                                            const std::vector<VkPushConstantRange>& pushConstantRanges)
     {
         const ReflectedBinding* pFrameBinding = nullptr;
         std::size_t frameBindingCount = 0;
@@ -306,31 +306,31 @@ namespace Doodle
         }
         if (pFrameBinding != nullptr)
         {
-            const VkDescriptorSetLayoutBinding& passBinding = passInterface.passUboBinding;
+            const VkDescriptorSetLayoutBinding& passBinding = passLayout.passUboBinding;
             if (pFrameBinding->binding != passBinding.binding ||
                 pFrameBinding->descriptorType != passBinding.descriptorType ||
                 pFrameBinding->descriptorCount != passBinding.descriptorCount)
             {
-                throw std::runtime_error("set 0 binding 0 must be a single uniform buffer, as declared by the pass shader interface");
+                throw std::runtime_error("set 0 binding 0 must be a single uniform buffer, as declared by the render pass layout");
             }
             if ((pFrameBinding->stageFlags & ~passBinding.stageFlags) != 0)
             {
-                throw std::runtime_error("set 0 UBO is used in a shader stage the pass interface does not cover");
+                throw std::runtime_error("set 0 UBO is used in a shader stage the render pass layout does not cover");
             }
-            if (pFrameBinding->blockSize > passInterface.passUboSize)
+            if (pFrameBinding->blockSize > passLayout.passUboSize)
             {
                 throw std::runtime_error(
                     "set 0 UBO block is " + std::to_string(pFrameBinding->blockSize) +
-                    " bytes but this pass allows " + std::to_string(passInterface.passUboSize) +
+                    " bytes but this pass allows " + std::to_string(passLayout.passUboSize) +
                     " bytes");
             }
         }
 
-        //push constant 只能落在本 pass 那一段范围之内、只用它覆盖的阶段：
+        //push constant 只能落在本 pass 逐绘制项数据的范围之内、只用它覆盖的阶段：
         //超出范围时管线布局与录制侧的 push 对不上，校验层会在绘制时报
         for (const VkPushConstantRange& range : pushConstantRanges)
         {
-            const VkPushConstantRange& passRange = passInterface.pushConstantRange;
+            const VkPushConstantRange& passRange = passLayout.drawItemDataRange;
             if (range.offset < passRange.offset ||
                 range.offset + range.size > passRange.offset + passRange.size ||
                 (range.stageFlags & ~passRange.stageFlags) != 0)

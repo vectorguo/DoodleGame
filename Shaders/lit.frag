@@ -23,7 +23,7 @@ layout(location = 0) out vec4 outColor;
 // set 1：材质贴图。set 1 里声明几张 sampler2D，这个着色器就有几个贴图槽；
 // 材质按变量名配贴图（"textures": { "albedoTexture": ... }）。材质没配时绘制侧
 // 绑定 1×1 白图，所以这里不需要「有没有贴图」的分支，采样永远只有一条路。
-// 规则见 DoodleMaterialShaderInterface.h（DoodleShader 加载时反射核对）；
+// 规则见 DoodleMaterialTextureSlot.h（DoodleShader 加载时反射核对）；
 // 采样器随贴图一起写入（COMBINED_IMAGE_SAMPLER），不在着色器里另声明
 layout(set = 1, binding = 0) uniform sampler2D albedoTexture;
 

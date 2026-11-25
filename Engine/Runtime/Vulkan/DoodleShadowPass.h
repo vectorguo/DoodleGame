@@ -31,8 +31,8 @@ namespace Doodle
     /**
      * 阴影 pass 骨架：接口已就位，渲染尚未实现
      *
-     * 本次只保留类、pass 配置与编排位置：
-     * - set 0 UBO / 布局 / 集合与 push 范围已由基类按 shadow 的契约建好
+     * 本次只保留类、附件格式与编排位置：
+     * - set 0 UBO / 布局 / 集合已由基类按 shadow 的契约建好
      *   （DoodleShadowPassUbo 大小），但还没有人往里写；
      * - 不建 shadow map 深度图，深度格式未定，所以也不建 shadow 管线；
      * - Render / WarmupShaders 是显式空实现。
@@ -45,14 +45,14 @@ namespace Doodle
     {
     public:
         DoodleShadowPass()
-            : DoodleRenderPass(EDoodlePassType::Shadow)
+            : DoodleRenderPass(EDoodleRenderPassType::Shadow)
         {
         }
 
         ~DoodleShadowPass() override = default;
 
         /**
-         * 绑定阴影 pass 的共享输入并记下预留的 pass 配置
+         * 绑定阴影 pass 的共享输入
          *
          * 基类按 shadow 的契约建出 set 0 常量资源；本 pass 自己还不建任何资源。
          *
@@ -77,10 +77,12 @@ namespace Doodle
          */
         void WarmupShaders(const std::vector<const DoodleShader*>& shaders) override;
 
-    private:
+    protected:
         /**
-         * 阴影 pass 的附件配置：没有颜色附件，深度格式等 shadow map 落地后再定
+         * 阴影 pass 的附件格式：没有颜色附件，深度格式等 shadow map 落地后再定
+         *
+         * 现在是占位：基类会在 Initialize 时记下它，但本 pass 不建管线，没有管线按它建
          */
-        [[nodiscard]] static DoodleVulkanPipelinePassConfig MakePassConfig();
+        [[nodiscard]] DoodleRenderPassAttachmentFormats GetAttachmentFormats() const override;
     };
 }

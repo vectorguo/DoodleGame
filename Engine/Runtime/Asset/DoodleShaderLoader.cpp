@@ -78,7 +78,7 @@ namespace Doodle
                 }
 
                 //pass 名无条件解析：拼错的名字会让整节描述凭空消失，必须当场报错
-                const EDoodlePassType pass = ParseShaderPass(passName);
+                const EDoodleRenderPassType pass = ParseShaderPass(passName);
 
                 //JSON 对象的键本身不重复，这里防的是两个名字解析成同一个 pass。
                 //DoodleShader::Initialize 不再查重：重复会让后一节悄悄覆盖前一节的描述
@@ -196,15 +196,15 @@ namespace Doodle
         return renderState;
     }
 
-    EDoodlePassType DoodleShaderLoader::ParseShaderPass(const std::string& value)
+    EDoodleRenderPassType DoodleShaderLoader::ParseShaderPass(const std::string& value)
     {
         if (value == "forward")
         {
-            return EDoodlePassType::Forward;
+            return EDoodleRenderPassType::Forward;
         }
         if (value == "shadow")
         {
-            return EDoodlePassType::Shadow;
+            return EDoodleRenderPassType::Shadow;
         }
         throw std::runtime_error("unknown pass '" + value + "'");
     }

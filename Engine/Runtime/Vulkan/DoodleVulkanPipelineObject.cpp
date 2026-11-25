@@ -26,6 +26,8 @@ namespace Doodle
         }
 
         m_pDevice = &info.device;
+        //着色器侧输入只记地址：Rebuild 按同一份重建，寿命约定见 m_pShaderPass
+        m_pShaderPass = &info.shaderPass;
 
         //布局是管线的输入，先建布局再建管线。中途失败时把已经建出来的收掉，
         //对象回到未初始化状态 —— 持有它的 pass 只在成功之后才收下这个对象，
@@ -35,30 +37,27 @@ namespace Doodle
             CreatePipelineLayout(info.passUboDescriptorSetLayout,
                                  info.shaderPass.materialDescriptorSetLayout,
                                  info.pushConstantRange);
-            m_graphicsPipeline = CreateGraphicsPipeline(info.pipelineCompileCache,
-                                                        info.passConfig,
-                                                        info.shaderPass);
+            m_graphicsPipeline = CreateGraphicsPipeline(info.pipelineCompileCache, info.attachmentFormats);
         }
         catch (...)
         {
             DestroyPipelineLayout();
+            m_pShaderPass = nullptr;
             m_pDevice = nullptr;
             throw;
         }
     }
 
-    void DoodleVulkanPipelineObject::Rebuild(VkPipelineCache pipelineCompileCache,
-                                         const DoodleVulkanPipelinePassConfig& passConfig,
-                                         const DoodleShaderPass& shaderPass)
+    void DoodleVulkanPipelineObject::Rebuild(VkPipelineCache pipelineCompileCache, const DoodleRenderPassAttachmentFormats& attachmentFormats)
     {
         if (m_pDevice == nullptr || m_pipelineLayout == VK_NULL_HANDLE)
         {
             throw std::logic_error("graphics pipeline: Rebuild called before Initialize");
         }
 
-        //布局与附件格式无关，原样保留；只换管线本身。
+        //布局与附件格式无关，原样保留；只换管线本身，着色器侧输入还是 Initialize 时记下的那份。
         //新的建出来之前不动旧的：CreateGraphicsPipeline 抛异常时旧管线仍然完好
-        const VkPipeline rebuiltPipeline = CreateGraphicsPipeline(pipelineCompileCache, passConfig, shaderPass);
+        const VkPipeline rebuiltPipeline = CreateGraphicsPipeline(pipelineCompileCache, attachmentFormats);
         DestroyGraphicsPipeline();
         m_graphicsPipeline = rebuiltPipeline;
     }
@@ -73,6 +72,7 @@ namespace Doodle
         //逆着创建序拆：管线引用布局
         DestroyGraphicsPipeline();
         DestroyPipelineLayout();
+        m_pShaderPass = nullptr;
         m_pDevice = nullptr;
     }
 
@@ -150,11 +150,10 @@ namespace Doodle
         }
     }
 
-    VkPipeline DoodleVulkanPipelineObject::CreateGraphicsPipeline(VkPipelineCache pipelineCompileCache,
-                                                             const DoodleVulkanPipelinePassConfig& passConfig,
-                                                             const DoodleShaderPass& shaderPass) const
+    VkPipeline DoodleVulkanPipelineObject::CreateGraphicsPipeline(VkPipelineCache pipelineCompileCache, const DoodleRenderPassAttachmentFormats& attachmentFormats) const
     {
         const VkDevice logicalDevice = m_pDevice->GetLogicalDevice();
+        const DoodleShaderPass& shaderPass = *m_pShaderPass;
         const DoodleRenderState& renderState = shaderPass.renderState;
 
         //先把所有可能抛异常的准备做完，再建着色器模块：模块是裸句柄，
@@ -173,7 +172,7 @@ namespace Doodle
         //动态渲染下这个数量必须等于 VkPipelineRenderingCreateInfo 的颜色附件数
         //（VUID-VkGraphicsPipelineCreateInfo-renderPass-06055）
         const std::vector<VkPipelineColorBlendAttachmentState> colorBlendAttachments(
-            passConfig.colorFormats.size(),
+            attachmentFormats.colorFormats.size(),
             MakeColorBlendAttachment(renderState.blendMode));
 
         //着色器模块用局部变量管住寿命。vkCreateGraphicsPipelines 是拷贝语义：
@@ -276,7 +275,7 @@ namespace Doodle
         const VkPipelineMultisampleStateCreateInfo multisampling
         {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-            .rasterizationSamples = passConfig.sampleCount,
+            .rasterizationSamples = attachmentFormats.sampleCount,
             .sampleShadingEnable = VK_FALSE
         };
 
@@ -297,18 +296,18 @@ namespace Doodle
         //约束退化成一句：这里声明的格式与数量，必须与录制时 vkCmdBeginRendering
         //给的附件视图一致。对不上校验层会在绘制时报出来，而不是在创建这里
         //
-        //格式来自 pass 配置：本类不再引用交换链与深度图组。pColorAttachmentFormats
-        //指向的数组只在本次创建调用期间被读取，pass 配置活过这次调用，够用
+        //格式由 pass 给：本类不再引用交换链与深度图组。pColorAttachmentFormats
+        //指向的数组只在本次创建调用期间被读取，attachmentFormats 活过这次调用，够用
         //
         //含模板分量时，stencil 那一栏必须一起填，且与深度相同；
         //只填 depth 不填 stencil，校验层会报两者不一致。
         //没有模板分量（或没有深度附件）时保持 VK_FORMAT_UNDEFINED（这里的零值语义）
-        const VkFormat depthFormat = passConfig.depthFormat;
+        const VkFormat depthFormat = attachmentFormats.depthFormat;
         const VkPipelineRenderingCreateInfo renderingCreateInfo
         {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-            .colorAttachmentCount = static_cast<uint32_t>(passConfig.colorFormats.size()),
-            .pColorAttachmentFormats = passConfig.colorFormats.data(),
+            .colorAttachmentCount = static_cast<uint32_t>(attachmentFormats.colorFormats.size()),
+            .pColorAttachmentFormats = attachmentFormats.colorFormats.data(),
             .depthAttachmentFormat = depthFormat,
             .stencilAttachmentFormat =
                 DoodleDepthImages::HasStencilComponent(depthFormat) ? depthFormat : VK_FORMAT_UNDEFINED

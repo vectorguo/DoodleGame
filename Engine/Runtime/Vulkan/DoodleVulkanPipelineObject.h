@@ -6,7 +6,7 @@
 
 #include <vulkan/vulkan_core.h>
 
-#include "DoodleVulkanPipelineConfig.h"
+#include "DoodleRenderPassAttachmentFormats.h"
 #include "Rendering/DoodleRenderState.h"
 
 namespace Doodle
@@ -18,7 +18,7 @@ namespace Doodle
     /**
      * 建一条图形管线的全部输入
      *
-     * 设备与 pass 侧的共享输入由外层提供，passConfig / shaderPass 是本次
+     * 设备与 pass 侧的共享输入由外层提供，attachmentFormats / shaderPass 是本次
      * 要建什么样的输入。Vulkan 创建管线本来就是「一大包输入」的形态；以后加
      * specialization constants、dynamic state 时往这里加字段，Initialize 签名不动。
      *
@@ -51,10 +51,12 @@ namespace Doodle
         /**
          * 附件格式与采样数
          */
-        const DoodleVulkanPipelinePassConfig& passConfig;
+        const DoodleRenderPassAttachmentFormats& attachmentFormats;
 
         /**
-         * 着色器侧输入；只在本次调用期间读取，不保存
+         * 着色器侧输入：着色器资产里的那份（DoodleShader::GetPass）
+         *
+         * 不拷贝，只记地址：Rebuild 还要按它重建，所以它要活到这条管线不再 Rebuild 为止
          */
         const DoodleShaderPass& shaderPass;
     };
@@ -65,12 +67,13 @@ namespace Doodle
      * 只拥有这两样东西。一条管线由三部分输入决定：
      * - 着色器侧输入（DoodleShaderPass）：两段字节码、set 1 布局、渲染状态、
      *   顶点与实例格式；
-     * - pass 侧配置（DoodleVulkanPipelinePassConfig）：附件格式与采样数；
+     * - pass 侧附件（DoodleRenderPassAttachmentFormats）：附件格式与采样数；
      * - pass 侧共享：本 pass 的 set 0 布局、本 pass 的 push constant 范围、
      *   驱动编译缓存（VkPipelineCache）。
      *
      * 前两样是管线的创建输入。着色器侧那份定义在 DoodleShaderPass.h，
-     * pass 侧那份定义在 DoodleVulkanPipelineConfig.h。
+     * pass 侧那份定义在 DoodleRenderPassAttachmentFormats.h。着色器侧那份不拷贝、
+     * 只记地址（见 m_pShaderPass）：附件格式变化时 Rebuild 还要按它重建。
      *
      * 本类不读文件、不认识门面、也不是单例：字节由要管线的一方读好传进来，
      * 设备与布局都是参数。同一份输入建几次都一样，谁来建、建几条由
@@ -106,26 +109,25 @@ namespace Doodle
         void Initialize(const DoodleVulkanPipelineInitInfo& info);
 
         /**
-         * 换一套 pass 配置，重建管线本身；管线布局与对象地址不变
+         * 换一套附件格式，重建管线本身；管线布局与对象地址不变
          *
          * 附件格式只影响管线：布局里是 set 布局与 push constant 范围，与格式无关。
          * 所以布局原样保留（也就不再读 set 1 布局），持有本对象引用的一方不受影响。
+         * 着色器侧输入用 Initialize 时记下的那份。
          * 先建新的、成功了再拆旧的：建失败时旧管线原样可用，异常向上抛
          *
          * 由持有它的 pass 在附件格式变化时调用
          *
          * @param pipelineCompileCache 驱动编译缓存，可为 VK_NULL_HANDLE
-         * @param passConfig 新的附件格式与采样数
-         * @param shaderPass 必须与 Initialize 时那份内容相同（条目里存的副本）
+         * @param attachmentFormats 新的附件格式与采样数
          *
          * @throw std::logic_error 尚未初始化
          * @throw std::runtime_error 模块 / 管线创建失败
          *
-         * @note 前置条件：GPU 已空闲 —— 旧管线可能还被在途的命令引用着
+         * @note 前置条件：GPU 已空闲 —— 旧管线可能还被在途的命令引用着；
+         *       Initialize 时给的着色器资产还活着
          */
-        void Rebuild(VkPipelineCache pipelineCompileCache,
-                     const DoodleVulkanPipelinePassConfig& passConfig,
-                     const DoodleShaderPass& shaderPass);
+        void Rebuild(VkPipelineCache pipelineCompileCache, const DoodleRenderPassAttachmentFormats& attachmentFormats);
 
         /**
          * 销毁管线与管线布局
@@ -174,14 +176,13 @@ namespace Doodle
         void DestroyPipelineLayout();
 
         /**
-         * 按 pass 配置与着色器侧输入建一条管线，返回句柄
+         * 按附件格式与记下的着色器侧输入建一条管线，返回句柄
          *
          * 返回句柄而不是直接写成员：调用方决定什么时候装上它。
-         * 前置条件：m_pipelineLayout 已创建
+         * 前置条件：m_pShaderPass 已记下、m_pipelineLayout 已创建
          */
         [[nodiscard]] VkPipeline CreateGraphicsPipeline(VkPipelineCache pipelineCompileCache,
-                                                        const DoodleVulkanPipelinePassConfig& passConfig,
-                                                        const DoodleShaderPass& shaderPass) const;
+                                                        const DoodleRenderPassAttachmentFormats& attachmentFormats) const;
 
         /**
          * 销毁图形管线，并把句柄置空
@@ -213,6 +214,15 @@ namespace Doodle
          * Vulkan设备层，在 Initialize 时绑定
          */
         const DoodleVulkanDevice* m_pDevice = nullptr;
+
+        /**
+         * 着色器侧输入：指向着色器资产里的那份，不持有；在 Initialize 时记下
+         *
+         * 只有建管线（Initialize / Rebuild）读它，Destroy 不读。所以资产先于本对象
+         * 销毁时，只要之后不再 Rebuild，悬空的地址就不会被读到 —— 退出流程正是这样：
+         * 资产管理器先于渲染器销毁，那之后管线只会被 Destroy
+         */
+        const DoodleShaderPass* m_pShaderPass = nullptr;
 
         /**
          * 管线布局：set 0（+ set 1）与本 pass 的 push constant 范围

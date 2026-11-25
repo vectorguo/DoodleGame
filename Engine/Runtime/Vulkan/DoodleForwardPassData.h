@@ -23,8 +23,8 @@ namespace Doodle
      * 或存储缓冲，改的是 DoodleForwardPass 的录制，类型名与着色器里的 block 不用动。
      * 「绘制项」就是 DoodleDrawItem：DrawItemData 是它送进本 pass 着色器的那一份
      * （localToWorld 原样、baseColor 取自它的材质），不是绘制命令本身。
-     * 放在 Rendering 而不是 Vulkan 同理：数据形状归渲染域；把 UBO 写进哪块缓冲、
-     * 把逐绘制项数据推到哪条命令，归 DoodleForwardPass / DoodleRenderPass。
+     * 本文件只定数据形状；把 UBO 写进哪块缓冲、把逐绘制项数据推到哪条命令，
+     * 归 DoodleForwardPass / DoodleRenderPass。
      *
      * 它们只属于前向 pass。别人的每帧数据（阴影的光空间矩阵、后处理的参数）
      * 各有自己的 per-pass 数据块，不在这份里加字段。

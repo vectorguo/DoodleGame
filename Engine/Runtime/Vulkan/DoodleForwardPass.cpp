@@ -27,8 +27,9 @@ namespace Doodle
         m_pSwapChain = &info.swapChain;
         m_pDepthImages = &info.depthImages;
 
-        //set 0 与 push 范围由基类按 forward 的契约自己取；这里只给附件配置
-        DoodleRenderPass::Initialize(info.renderPassInfo, MakePassConfig(info.swapChain, info.depthImages));
+        //set 0 与逐绘制项数据范围由基类按 forward 的契约自己取。附件格式不用交：
+        //基类在 Initialize 里按上面这两个附件来源问一次（GetAttachmentFormats），所以要先绑好再调
+        DoodleRenderPass::Initialize(info.renderPassInfo);
     }
 
     void DoodleForwardPass::UpdatePassUbo(const DoodleFrameContext& context)
@@ -78,8 +79,7 @@ namespace Doodle
         WritePassUbo(context.frameIndex, &ubo, sizeof(ubo));
     }
 
-    void DoodleForwardPass::Render(const DoodleFrameContext& frameContext,
-                                   const DoodleRenderPassContext& passContext)
+    void DoodleForwardPass::Render(const DoodleFrameContext& frameContext, const DoodleRenderPassContext& passContext)
     {
         //材质描述符集与绘制项必须一一对应。检查放在录制之前：录到一半抛异常
         //会把命令缓冲留在 recording 状态，调用方随后 end 会撞 VUID
@@ -194,7 +194,7 @@ namespace Doodle
         const DoodleVulkanPipelineObject* pBoundPipeline = nullptr;
         bool frameSetBound = false;
         VkDescriptorSet boundMaterialSet = VK_NULL_HANDLE;
-        const VkPushConstantRange pushConstantRange = GetPushConstantRange();
+        const VkPushConstantRange drawItemDataRange = GetDrawItemDataRange();
         for (std::size_t i = 0; i < frameContext.drawItems.size(); ++i)
         {
             const DoodleDrawItem& drawItem = frameContext.drawItems[i];
@@ -261,7 +261,7 @@ namespace Doodle
 
             //localToWorld 与材质基色每个绘制项一份，经 push constant 推送。数据块的布局
             //由 DoodleForwardPassDrawItemData 钉住，阶段 / 偏移 / 大小取本 pass 的
-            //pushConstantRange —— 管线布局与这里只认同一份定义，改一处不会漏另一处
+            //逐绘制项数据范围 —— 管线布局与这里只认同一份定义，改一处不会漏另一处
             //
             //基色在写进 push constant 的这一处才从作者写的 sRGB 转成线性：
             //纹理按 SRGB 格式上传，采样结果本来就是线性，两者相乘才在同一空间
@@ -276,9 +276,9 @@ namespace Doodle
             vkCmdPushConstants(
                 commandBuffer,
                 pPipeline->GetPipelineLayout(),
-                pushConstantRange.stageFlags,
-                pushConstantRange.offset,
-                pushConstantRange.size,
+                drawItemDataRange.stageFlags,
+                drawItemDataRange.offset,
+                drawItemDataRange.size,
                 &drawItemData);
 
             //绑定顶点缓冲。这里的 binding 编号 0 指回管线顶点输入描述里的 binding = 0 ——
@@ -327,23 +327,12 @@ namespace Doodle
         RecordImageTransitionToPresent(frameContext);
     }
 
-    void DoodleForwardPass::RebuildIfPassConfigChanged(const DoodleSwapChain& swapChain,
-                                                       const DoodleDepthImages& depthImages)
-    {
-        const DoodleVulkanPipelinePassConfig passConfig = MakePassConfig(swapChain, depthImages);
-        if (passConfig != GetPassConfig())
-        {
-            RebuildPipelines(passConfig);
-        }
-    }
-
-    DoodleVulkanPipelinePassConfig DoodleForwardPass::MakePassConfig(const DoodleSwapChain& swapChain,
-                                                                    const DoodleDepthImages& depthImages)
+    DoodleRenderPassAttachmentFormats DoodleForwardPass::GetAttachmentFormats() const
     {
         return
         {
-            .colorFormats = {swapChain.GetImageFormat()},
-            .depthFormat = depthImages.GetFormat(),
+            .colorFormats = {m_pSwapChain->GetImageFormat()},
+            .depthFormat = m_pDepthImages->GetFormat(),
             .sampleCount = VK_SAMPLE_COUNT_1_BIT
         };
     }

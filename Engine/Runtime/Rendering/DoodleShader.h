@@ -17,8 +17,8 @@
 #include <vulkan/vulkan_core.h>
 
 #include "Asset/DoodleAsset.h"
-#include "Rendering/DoodleMaterialShaderInterface.h"
-#include "Rendering/DoodlePassShaderInterface.h"
+#include "Rendering/DoodleMaterialTextureSlot.h"
+#include "Rendering/DoodleRenderPassLayout.h"
 #include "Rendering/DoodleRenderState.h"
 #include "Rendering/DoodleVertex.h"
 #include "Vulkan/DoodleShaderPass.h"
@@ -52,7 +52,7 @@ namespace Doodle
             /**
              * 属于哪个 pass
              */
-            EDoodlePassType passType = EDoodlePassType::Forward;
+            EDoodleRenderPassType passType = EDoodleRenderPassType::Forward;
 
             /**
              * 这个 pass 的渲染状态
@@ -115,8 +115,8 @@ namespace Doodle
      * 向自己的管线表要管线。管线表按着色器资产做键：每个着色器在一个 pass 里只有
      * 一条管线。
      *
-     * **两份契约**：每个 pass 的 set 0 与 push constant 按 DoodlePassShaderInterface
-     * 核对；set 1 按 DoodleMaterialShaderInterface 的规则核对。不符合就加载失败。
+     * **两份契约**：每个 pass 的 set 0 与 push constant 按 DoodleRenderPassLayout
+     * 核对；set 1 按 DoodleMaterialTextureSlot.h 的规则核对。不符合就加载失败。
      *
      * **set 1 按反射建、整个着色器一份**：贴图有几张由 GLSL 自己声明，不在描述文件里
      * 手写一遍 —— 手写的那份迟早和 GLSL 对不上。各 pass 反射出的 set 1 合并成一张
@@ -127,6 +127,8 @@ namespace Doodle
      * 管线布局、描述符管理器里按它分配的材质集合先销毁 —— Vulkan 允许：管线布局
      * 只在创建时读一次布局；按它分配的集合只是在布局销毁之后不能再更新。那时已经
      * 停止录制，集合既不会再更新、也不会再绑定，最后随描述符池一起释放。
+     * 管线表里的管线还记着各 pass 数据的地址（原地重建时要读）：资产销毁之后
+     * 管线只会被 Destroy、不会再重建，这些地址不会再被读到。
      */
     class DoodleShader : public DoodleAsset
     {
@@ -151,7 +153,7 @@ namespace Doodle
          * @param info 设备、顶点 / 实例格式与各 pass 的输入，见 DoodleShaderInitInfo
          *
          * @throw std::runtime_error 字节码反射失败、阶段不对，或违反
-         *        DoodlePassShaderInterface / DoodleMaterialShaderInterface 的约定
+         *        DoodleRenderPassLayout / DoodleMaterialTextureSlot.h 的约定
          * @note 前置条件：尚未初始化；passInitInfos 满足 DoodleShaderInitInfo 里的约定 ——
          *       pass 重复会让后一项覆盖前一项
          */
@@ -160,7 +162,8 @@ namespace Doodle
         /**
          * 销毁 set 1 布局、清空各 pass 的描述；可以重复调用。由 loader 的 DestroyAsset 调用
          *
-         * @note 前置条件：没有人还要用它建管线布局、分配材质集合。已经建好的不受影响
+         * @note 前置条件：没有人还要用它建管线布局、分配材质集合，也没有管线还要按它的
+         *       pass 数据原地重建（管线只记地址）。已经建好的不受影响
          */
         void Destroy();
 
@@ -171,7 +174,7 @@ namespace Doodle
          * pass 录制 / 预热时用它向自己的管线表要管线（DoodleRenderPass::ResolvePipeline）。
          * 返回的指针在 Destroy 之前一直有效。
          */
-        [[nodiscard]] const DoodleShaderPass* GetPass(EDoodlePassType pass) const;
+        [[nodiscard]] const DoodleShaderPass* GetPass(EDoodleRenderPassType pass) const;
 
         /**
          * 这个着色器的贴图槽，按 binding 升序；没有声明贴图时为空
@@ -236,11 +239,11 @@ namespace Doodle
          * set 1 在这里不看：它按整个着色器合并后另行核对（MergeMaterialBindings /
          * ValidateMaterialBindings）
          *
-         * @throw std::runtime_error 违反约定（见 DoodlePassShaderInterface）
+         * @throw std::runtime_error 违反约定（见 DoodleRenderPassLayout）
          */
-        static void ValidatePassInterface(const DoodlePassShaderInterface& passInterface,
-                                          const std::vector<ReflectedBinding>& bindings,
-                                          const std::vector<VkPushConstantRange>& pushConstantRanges);
+        static void ValidatePassBindings(const DoodleRenderPassLayout& passLayout,
+                                         const std::vector<ReflectedBinding>& bindings,
+                                         const std::vector<VkPushConstantRange>& pushConstantRanges);
 
         /**
          * 把一个 pass 的 set 1 绑定并进整个着色器的贴图槽表
@@ -256,7 +259,7 @@ namespace Doodle
         /**
          * 按材质契约核对合并后的 set 1，并按 binding 升序排好
          *
-         * @throw std::runtime_error 违反约定（见 DoodleMaterialShaderInterface）
+         * @throw std::runtime_error 违反约定（见 DoodleMaterialTextureSlot.h）
          */
         static void ValidateMaterialBindings(std::vector<ReflectedBinding>& materialBindings);
 
@@ -288,7 +291,7 @@ namespace Doodle
          * 返回的指针因此在 Destroy 之前一直有效。查找只用 find / contains ——
          * operator[] 查不到会插入一份空数据，下游会以为这个 pass 存在
          */
-        std::map<EDoodlePassType, DoodleShaderPass> m_passes;
+        std::map<EDoodleRenderPassType, DoodleShaderPass> m_passes;
 
         /**
          * 贴图槽表：各 pass 的 set 1 合并后的结果，按 binding 升序

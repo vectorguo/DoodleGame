@@ -51,7 +51,7 @@ namespace Doodle
          * 读描述文件、逐 pass 读字节码，反射并建出着色器资产
          *
          * @throws std::runtime_error 描述文件解析失败、passes 为空、pass 名不认识、
-         *         字节码读取或反射失败，或违反某个 pass 的接口约定
+         *         字节码读取或反射失败，或违反某个 pass 的布局约定
          */
         [[nodiscard]] std::unique_ptr<DoodleShader> Create(std::string_view key) override;
 
@@ -101,7 +101,7 @@ namespace Doodle
          * 不认识的名字无条件报错（不只在 Debug）：拼错 pass 名会导致该 pass
          * 的描述凭空消失，必须当场说出来
          */
-        [[nodiscard]] static EDoodlePassType ParseShaderPass(const std::string& value);
+        [[nodiscard]] static EDoodleRenderPassType ParseShaderPass(const std::string& value);
 
         /**
          * 顶点格式的字符串名 → 枚举

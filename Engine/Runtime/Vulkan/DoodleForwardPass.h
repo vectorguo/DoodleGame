@@ -18,9 +18,9 @@ namespace Doodle
     /**
      * 初始化前向 pass 的全部输入
      *
-     * renderPassInfo 是基类要的设备与编译缓存，原样转交；set 0 与 push 范围由基类按
-     * forward 的契约自己取。swapChain / depthImages 是本 pass 算附件配置的来源
-     * —— 配置由本类从这两样算出来，不由调用方给。
+     * renderPassInfo 是基类要的设备与编译缓存，原样转交；set 0 与逐绘制项数据范围由基类按
+     * forward 的契约自己取。swapChain / depthImages 是本 pass 算附件格式的来源
+     * —— 格式由本类从这两样算出来，不由调用方给。
      */
     struct DoodleForwardPassInitInfo
     {
@@ -43,10 +43,10 @@ namespace Doodle
     /**
      * 前向主 pass：颜色附件来自交换链，深度附件来自深度图组
      *
-     * 它负责前向 pass 特有的事：按交换链 / 深度图算出 pass 配置、交换链重建后
-     * 判断配置变没变，以及把这一 pass 录进命令缓冲（附件屏障、动态渲染、
-     * 视口 / 剪裁、逐绘制项绘制）。管线表、着色器 → 管线的解析与预热、批量重建
-     * 与 per-pass 常量资源都在 DoodleRenderPass 基类里。
+     * 它负责前向 pass 特有的事：按交换链 / 深度图报出附件格式（GetAttachmentFormats，
+     * 基类初始化与比对时来问），以及把这一 pass 录进命令缓冲（附件屏障、动态渲染、
+     * 视口 / 剪裁、逐绘制项绘制）。管线表、着色器 → 管线的解析与预热、附件格式的
+     * 比对与原地重建、per-pass 常量资源都在 DoodleRenderPass 基类里。
      *
      * 阴影 pass 目前是 DoodleShadowPass 骨架；延迟、后处理以后各派生一个，
      * 构造与销毁由 DoodleRenderPipeline 负责。
@@ -54,14 +54,14 @@ namespace Doodle
     class DoodleForwardPass final : public DoodleRenderPass
     {
     public:
-        DoodleForwardPass() : DoodleRenderPass(EDoodlePassType::Forward)
+        DoodleForwardPass() : DoodleRenderPass(EDoodleRenderPassType::Forward)
         {
         }
 
         ~DoodleForwardPass() override = default;
 
         /**
-         * 绑定前向 pass 的公共输入并算出初始 pass 配置
+         * 绑定前向 pass 的公共输入与颜色 / 深度附件来源
          *
          * @param info 基类要的共享服务 + 本 pass 的颜色 / 深度附件来源；
          *        句柄与附件对象都必须活得比本 pass 久
@@ -82,22 +82,16 @@ namespace Doodle
          */
         void Render(const DoodleFrameContext& frameContext, const DoodleRenderPassContext& passContext) override;
 
+    protected:
         /**
-         * 交换链 / 深度图重建后调用：配置没变就什么也不做
+         * 前向 pass 的附件格式：颜色格式取自交换链、深度格式取自深度图组
          *
-         * 尺寸变化不影响管线（视口与剪裁是动态状态）；只有颜色 / 深度格式或
-         * 采样数真的变了，才让基类原地重建这个 pass 的管线。
+         * 读的是本 pass 录制时用的那两个附件来源：建管线与录制认的是同一对对象。
+         * 两者都原地重建、地址不变，所以交换链重建之后问到的就是新格式
          */
-        void RebuildIfPassConfigChanged(const DoodleSwapChain& swapChain, const DoodleDepthImages& depthImages);
+        [[nodiscard]] DoodleRenderPassAttachmentFormats GetAttachmentFormats() const override;
 
     private:
-        /**
-         * 前向 pass 的附件配置：颜色格式来自交换链、深度格式来自深度图组
-         */
-        [[nodiscard]] static DoodleVulkanPipelinePassConfig MakePassConfig(
-            const DoodleSwapChain& swapChain,
-            const DoodleDepthImages& depthImages);
-
         /**
          * 把本帧的 view / proj 与主光源写进基类的 per-pass UBO
          *

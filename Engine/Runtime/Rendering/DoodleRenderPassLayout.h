@@ -1,5 +1,5 @@
 //
-//  DoodlePassShaderInterface.h
+//  DoodleRenderPassLayout.h
 //  Doodle
 //
 
@@ -16,41 +16,45 @@
 namespace Doodle
 {
     /**
-     * 着色器侧的 pass 身份
+     * 渲染 pass 的种类：pass 与着色器两侧共用的键
      *
      * 一个着色器资产可以按 pass 各存一份数据（不同字节码 / 渲染状态）。
      * loader 把描述文件里的 passes.forward / passes.shadow 映射成这个枚举；
-     * 各 pass 类在构造时把自己的枚举交给 DoodleRenderPass，基类按它取契约、
-     * 用 shader.GetPass(这个枚举) 取着色器的那一份。
+     * 各 pass 类在构造时把自己的枚举交给 DoodleRenderPass，基类按它取布局
+     * （GetRenderPassLayout）、用 shader.GetPass(这个枚举) 取着色器的那一份。
      *
      * 它不是渲染 pass 的基类，不决定 pass 顺序，也不替代 DoodleForwardPass /
-     * DoodleShadowPass —— 真正的 pass 类仍然各自存在，这里只解决「这份着色器
-     * 数据属于哪个 pass」。
+     * DoodleShadowPass —— 真正的 pass 类仍然各自存在，这里只解决「这份布局、
+     * 这份着色器数据属于哪种 pass」。
      */
-    enum class EDoodlePassType : std::uint8_t
+    enum class EDoodleRenderPassType : std::uint8_t
     {
         Forward = 0,
         Shadow = 1,
     };
 
     /**
-     * 一个 pass 对它的着色器提出的接口契约：set 0 与 push constant
+     * 管线布局里归 pass 的那部分：set 0 与逐绘制项数据
      *
-     * 纯数据，没有 Initialize / Destroy、不持有 Vulkan 句柄。两处读它：
+     * 每种 pass 一份静态数据，没有 Initialize / Destroy、不持有 Vulkan 句柄。两处读它：
      * - DoodleShader::Initialize 反射完 SPIR-V 后，按它核对每个 pass 的 set 0 与 push constant；
-     * - DoodleRenderPass::Initialize 按自己的 pass 类型取它，建本 pass 的 set 0 UBO /
-     *   布局 / 池 / 集合，并记下 push 范围 —— 管线布局与 vkCmdPushConstants 都用这一份。
+     * - DoodleRenderPass 按自己的 pass 类型取它：Initialize 建本 pass 的 set 0 UBO /
+     *   布局 / 池 / 集合；建管线布局与录制时的 vkCmdPushConstants 都读 drawItemDataRange
+     *   （GetDrawItemDataRange）。pass 不另存副本，用到时按类型再取。
      *
-     * 一个查着色器、一个建资源，两边认同一份定义；加 shadow / post 时不会出现
-     * 某处还写着前一个 pass 的绑定形状。
+     * 它也是 pass 与着色器之间的契约：一个查着色器、一个建资源，两边认同一份定义；
+     * 加 shadow / post 时不会出现某处还写着前一个 pass 的绑定形状。
      *
      * set 1（材质贴图）不在这里：它的形状由每个着色器自己声明，规则见
-     * DoodleMaterialShaderInterface.h。
+     * DoodleMaterialTextureSlot.h。附件格式也不在这里：它要等附件建好才知道、会随
+     * 交换链重建变化，不能按 pass 类型静态定死，见 DoodleRenderPassAttachmentFormats。
      */
-    struct DoodlePassShaderInterface
+    struct DoodleRenderPassLayout
     {
         /**
          * set 0 的 UBO 绑定（binding / 类型 / 数量 / 阶段）
+         *
+         * 只能是单个 UBO（UNIFORM_BUFFER、数量 1）：DoodleRenderPass 按它建布局 / 池 / 集合并写入，不另做检查
          */
         VkDescriptorSetLayoutBinding passUboBinding;
 
@@ -60,21 +64,25 @@ namespace Doodle
         uint32_t passUboSize = 0;
 
         /**
-         * 这个 pass 的 push constant 范围：管线布局与 vkCmdPushConstants 都用它
+         * 逐绘制项数据块（Doodle...PassDrawItemData）的范围
+         *
+         * 名字按数据起，与数据块同口径；它现在经 push constant 传，所以类型是
+         * VkPushConstantRange。管线布局与录制时的 vkCmdPushConstants 都用这一份，
+         * 着色器的 push_constant block 只能落在它之内
          */
-        VkPushConstantRange pushConstantRange{};
+        VkPushConstantRange drawItemDataRange{};
     };
 
     /**
-     * 取某个 pass 的着色器接口契约
+     * 取某种 pass 的布局
      *
      * 返回的引用是静态对象，有效期与进程相同；调用方只读。
      *
      * @throw std::invalid_argument pass 不是已知枚举值
      */
-    [[nodiscard]] inline const DoodlePassShaderInterface& GetPassShaderInterface(const EDoodlePassType pass)
+    [[nodiscard]] inline const DoodleRenderPassLayout& GetRenderPassLayout(const EDoodleRenderPassType pass)
     {
-        static const DoodlePassShaderInterface forward
+        static const DoodleRenderPassLayout forward
         {
             .passUboBinding =
             {
@@ -85,7 +93,7 @@ namespace Doodle
                 .pImmutableSamplers = nullptr
             },
             .passUboSize = static_cast<uint32_t>(sizeof(DoodleForwardPassUbo)),
-            .pushConstantRange =
+            .drawItemDataRange =
             {
                 .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                 .offset = 0,
@@ -93,7 +101,7 @@ namespace Doodle
             }
         };
 
-        static const DoodlePassShaderInterface shadow
+        static const DoodleRenderPassLayout shadow
         {
             .passUboBinding =
             {
@@ -104,7 +112,7 @@ namespace Doodle
                 .pImmutableSamplers = nullptr
             },
             .passUboSize = static_cast<uint32_t>(sizeof(DoodleShadowPassUbo)),
-            .pushConstantRange =
+            .drawItemDataRange =
             {
                 .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
                 .offset = 0,
@@ -114,10 +122,10 @@ namespace Doodle
 
         switch (pass)
         {
-        case EDoodlePassType::Forward:
+        case EDoodleRenderPassType::Forward:
             return forward;
 
-        case EDoodlePassType::Shadow:
+        case EDoodleRenderPassType::Shadow:
             return shadow;
         }
 

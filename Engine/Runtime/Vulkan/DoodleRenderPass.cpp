@@ -16,34 +16,47 @@
 
 namespace Doodle
 {
-    void DoodleRenderPass::Initialize(const DoodleRenderPassInitInfo& initInfo,
-                                      const DoodleVulkanPipelinePassConfig& passConfig)
+    void DoodleRenderPass::Initialize(const DoodleRenderPassInitInfo& initInfo)
     {
-        //本 pass 的 set 0 与 push 范围按自己的契约取：着色器加载时按同一份核对
-        const DoodlePassShaderInterface& passInterface = GetPassShaderInterface(m_passType);
-
         m_pDevice = &initInfo.device;
         m_pipelineCompileCache = initInfo.pipelineCompileCache;
-        m_pushConstantRange = passInterface.pushConstantRange;
-        m_passConfig = passConfig;
+
+        //附件格式向派生类要一次记下：之后新建的管线都按这份建。派生类在调这里之前已经绑好了自己的附件来源
+        m_attachmentFormats = GetAttachmentFormats();
 
         //每个 pass 一份 set 0 常量资源
-        CreatePassUboResources(passInterface);
+        CreatePassUboResources();
     }
 
     void DoodleRenderPass::Destroy()
     {
-        //条目里的管线是显式 Destroy 的：DoodleVulkanPipelineObject 的析构不收句柄
+        //表里的管线是显式 Destroy 的：DoodleVulkanPipelineObject 的析构不收句柄
         DestroyPipelines();
 
-        //管线先走：它们的管线布局引用 set 0 布局。然后拆本 pass 的常量资源；
-        //最后交给派生类拆自己的资源 —— 此时 device / 句柄还没清空
+        //管线先走：它们的管线布局引用 set 0 布局。然后拆本 pass 的常量资源
         DestroyPassUboResources();
-        OnDestroy();
 
-        m_pushConstantRange = {};
         m_pipelineCompileCache = VK_NULL_HANDLE;
         m_pDevice = nullptr;
+    }
+
+    void DoodleRenderPass::RebuildIfAttachmentFormatsChanged()
+    {
+        //按附件现取一份，和表里管线建的时候用的那份比：只变尺寸时格式相同，管线不用动
+        const DoodleRenderPassAttachmentFormats attachmentFormats = GetAttachmentFormats();
+        if (attachmentFormats == m_attachmentFormats)
+        {
+            return;
+        }
+
+        //每条管线按自己记下的着色器 pass 数据、用新的附件格式重建；对象不动，交出去的引用有效
+        for (auto& entry : m_pipelines)
+        {
+            entry.second->Rebuild(m_pipelineCompileCache, attachmentFormats);
+        }
+
+        //全部成功才记下新格式：之后再解析的管线也用它
+        m_attachmentFormats = attachmentFormats;
     }
 
     void DoodleRenderPass::WarmupShaders(const std::vector<const DoodleShader*>& shaders)
@@ -71,34 +84,12 @@ namespace Doodle
         }
     }
 
-    void DoodleRenderPass::RebuildPipelines(const DoodleVulkanPipelinePassConfig& passConfig)
-    {
-        //每条管线按条目里那份描述、用新的 pass 配置重建；对象不动，交出去的引用有效
-        for (auto& entry : m_pipelinesByShader)
-        {
-            entry.second->pipeline.Rebuild(m_pipelineCompileCache, passConfig, entry.second->shaderPass);
-        }
-
-        //全部成功才记下新配置：之后再解析的管线也用它
-        m_passConfig = passConfig;
-    }
-
-    std::size_t DoodleRenderPass::GetPipelineCount() const
-    {
-        return m_pipelinesByShader.size();
-    }
-
-    DoodleVulkanPipelinePassConfig DoodleRenderPass::GetPassConfig() const
-    {
-        return m_passConfig;
-    }
-
     const DoodleVulkanPipelineObject& DoodleRenderPass::ResolvePipeline(const DoodleShader& shader)
     {
-        const auto it = m_pipelinesByShader.find(&shader);
-        if (it != m_pipelinesByShader.end())
+        const auto it = m_pipelines.find(&shader);
+        if (it != m_pipelines.end())
         {
-            return it->second->pipeline;
+            return *it->second;
         }
 
         const DoodleShaderPass* pPass = shader.GetPass(m_passType);
@@ -107,12 +98,10 @@ namespace Doodle
             throw std::invalid_argument("shader '" + shader.GetAssetPath() + "' has no description for this pass");
         }
 
-        return CreatePipelineItem(shader, *pPass).pipeline;
+        return CreatePipeline(shader, *pPass);
     }
 
-    DoodleRenderPass::PipelineItem& DoodleRenderPass::CreatePipelineItem(
-        const DoodleShader& shader,
-        const DoodleShaderPass& shaderPass)
+    const DoodleVulkanPipelineObject& DoodleRenderPass::CreatePipeline(const DoodleShader& shader, const DoodleShaderPass& shaderPass)
     {
         //set 0 布局在 Initialize 里建好；没有它说明 pass 还没初始化（或已经销毁），
         //建出来的管线在录制时没有可绑的常量集，不如当场说清楚
@@ -124,26 +113,26 @@ namespace Doodle
         //先把条目放进表、再建管线：放表这一步只可能因为内存不足失败，
         //那时还什么都没建；建管线失败就把刚放进去的条目摘掉 —— 两条失败路径都不留
         //半截状态，也不会漏掉已经建出来的句柄
-        auto pItem = std::make_unique<PipelineItem>();
-        pItem->shaderPass = shaderPass;
-        const auto inserted = m_pipelinesByShader.emplace(&shader, std::move(pItem));
+        const auto inserted = m_pipelines.emplace(&shader, std::make_unique<DoodleVulkanPipelineObject>());
 
         try
         {
-            inserted.first->second->pipeline.Initialize(
+            //逐绘制项数据走 push constant：管线布局按契约里的范围声明，
+            //派生 pass 录制时的 vkCmdPushConstants 经 GetDrawItemDataRange 取的是同一份
+            inserted.first->second->Initialize(
             {
                 .device = *m_pDevice,
                 .pipelineCompileCache = m_pipelineCompileCache,
                 .passUboDescriptorSetLayout = m_passUboDescriptorSetLayout,
-                .pushConstantRange = m_pushConstantRange,
-                .passConfig = m_passConfig,
-                .shaderPass = inserted.first->second->shaderPass
+                .pushConstantRange = GetDrawItemDataRange(),
+                .attachmentFormats = m_attachmentFormats,
+                .shaderPass = shaderPass
             });
         }
         catch (...)
         {
             //Initialize 失败时自己会收掉已建的部分，这里只需要把条目拿走
-            m_pipelinesByShader.erase(inserted.first);
+            m_pipelines.erase(inserted.first);
             throw;
         }
 
@@ -152,26 +141,19 @@ namespace Doodle
 
     void DoodleRenderPass::DestroyPipelines()
     {
-        for (auto& entry : m_pipelinesByShader)
+        for (auto& entry : m_pipelines)
         {
-            entry.second->pipeline.Destroy();
+            entry.second->Destroy();
         }
-        m_pipelinesByShader.clear();
+        m_pipelines.clear();
     }
 
-    void DoodleRenderPass::CreatePassUboResources(const DoodlePassShaderInterface& passInterface)
+    void DoodleRenderPass::CreatePassUboResources()
     {
-        const VkDescriptorSetLayoutBinding& passUboBinding = passInterface.passUboBinding;
-        const VkDeviceSize passUboSize = passInterface.passUboSize;
-
-        //set 0 只声明一个 UBO 绑定；布局 / 池 / 集合 / 写入都按它建
-        if (passUboBinding.descriptorType != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
-            passUboBinding.descriptorCount != 1 ||
-            passUboBinding.pImmutableSamplers != nullptr ||
-            passUboSize == 0)
-        {
-            throw std::invalid_argument("render pass: set 0 must be a single, non-empty uniform buffer");
-        }
+        //set 0 按本 pass 的契约取：着色器加载时按同一份核对
+        const DoodleRenderPassLayout& passLayout = GetRenderPassLayout(m_passType);
+        const VkDescriptorSetLayoutBinding& passUboBinding = passLayout.passUboBinding;
+        const VkDeviceSize passUboSize = passLayout.passUboSize;
 
         try
         {
@@ -191,8 +173,7 @@ namespace Doodle
                 .bindingCount = 1,
                 .pBindings = &passUboBinding
             };
-            if (vkCreateDescriptorSetLayout(m_pDevice->GetLogicalDevice(), &layoutInfo, nullptr,
-                                            &m_passUboDescriptorSetLayout) != VK_SUCCESS)
+            if (vkCreateDescriptorSetLayout(m_pDevice->GetLogicalDevice(), &layoutInfo, nullptr, &m_passUboDescriptorSetLayout) != VK_SUCCESS)
             {
                 throw std::runtime_error("failed to create the pass set 0 layout!");
             }
@@ -228,8 +209,7 @@ namespace Doodle
                 .pSetLayouts = layouts.data()
             };
             m_passUboDescriptorSets.fill(VK_NULL_HANDLE);
-            if (vkAllocateDescriptorSets(m_pDevice->GetLogicalDevice(), &allocInfo,
-                                         m_passUboDescriptorSets.data()) != VK_SUCCESS)
+            if (vkAllocateDescriptorSets(m_pDevice->GetLogicalDevice(), &allocInfo, m_passUboDescriptorSets.data()) != VK_SUCCESS)
             {
                 throw std::runtime_error("failed to allocate the pass set 0 descriptor sets!");
             }
