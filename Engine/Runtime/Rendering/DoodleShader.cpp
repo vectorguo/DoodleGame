@@ -308,7 +308,7 @@ namespace Doodle
         }
         if (pFrameBinding != nullptr)
         {
-            const VkDescriptorSetLayoutBinding& passBinding = passLayout.passUboBinding;
+            const VkDescriptorSetLayoutBinding& passBinding = passLayout.uboBinding;
             if (pFrameBinding->binding != passBinding.binding ||
                 pFrameBinding->descriptorType != passBinding.descriptorType ||
                 pFrameBinding->descriptorCount != passBinding.descriptorCount)
@@ -319,11 +319,11 @@ namespace Doodle
             {
                 throw std::runtime_error("per-frame constants are used in a shader stage the render pass layout does not cover");
             }
-            if (pFrameBinding->blockSize > passLayout.passUboSize)
+            if (pFrameBinding->blockSize > passLayout.uboSize)
             {
                 throw std::runtime_error(
                     "per-frame constants block is " + std::to_string(pFrameBinding->blockSize) +
-                    " bytes but this pass allows " + std::to_string(passLayout.passUboSize) +
+                    " bytes but this pass allows " + std::to_string(passLayout.uboSize) +
                     " bytes");
             }
         }

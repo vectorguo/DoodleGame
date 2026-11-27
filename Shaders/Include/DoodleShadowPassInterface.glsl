@@ -7,7 +7,7 @@
 // - 需要 alpha 镂空的着色器在 set 1 声明贴图，名字与 binding 要和它的 forward 一致 ——
 //   一个着色器的各个 pass 合用一份 set 1（见 DoodleMaterialTextureSlot.h）。
 //
-// set/binding 与 DoodleRenderPassLayout 里的 shadow passUboBinding 对齐
+// set/binding 与 DoodleRenderPassLayout 里的 shadow uboBinding 对齐
 
 layout(set = 0, binding = 0, std140) uniform ShadowPassUbo
 {

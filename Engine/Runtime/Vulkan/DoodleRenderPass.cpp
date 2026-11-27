@@ -40,25 +40,6 @@ namespace Doodle
         m_pDevice = nullptr;
     }
 
-    void DoodleRenderPass::RebuildIfAttachmentFormatsChanged()
-    {
-        //按附件现取一份，和表里管线建的时候用的那份比：只变尺寸时格式相同，管线不用动
-        const DoodleRenderPassAttachmentFormats attachmentFormats = GetAttachmentFormats();
-        if (attachmentFormats == m_attachmentFormats)
-        {
-            return;
-        }
-
-        //每条管线按自己记下的着色器 pass 数据、用新的附件格式重建；对象不动，交出去的引用有效
-        for (auto& entry : m_pipelines)
-        {
-            entry.second->Rebuild(m_pipelineCompileCache, attachmentFormats);
-        }
-
-        //全部成功才记下新格式：之后再解析的管线也用它
-        m_attachmentFormats = attachmentFormats;
-    }
-
     void DoodleRenderPass::WarmupShaders(const std::vector<const DoodleShader*>& shaders)
     {
         //只解析 / 创建管线，不录制：把编译代价和失败点放在加载边界上。
@@ -82,6 +63,25 @@ namespace Doodle
             //结果不用：解析本身就会把管线建出来并填进表
             static_cast<void>(ResolvePipeline(*pShader));
         }
+    }
+
+    void DoodleRenderPass::OnAttachmentsRecreated()
+    {
+        //按附件现取一份，和表里管线建的时候用的那份比：只变尺寸时格式相同，管线不用动
+        const DoodleRenderPassAttachmentFormats attachmentFormats = GetAttachmentFormats();
+        if (attachmentFormats == m_attachmentFormats)
+        {
+            return;
+        }
+
+        //每条管线按自己记下的着色器 pass 数据、用新的附件格式重建；对象不动，交出去的引用有效
+        for (auto& entry : m_pipelines)
+        {
+            entry.second->Rebuild(m_pipelineCompileCache, attachmentFormats);
+        }
+
+        //全部成功才记下新格式：之后再解析的管线也用它
+        m_attachmentFormats = attachmentFormats;
     }
 
     const DoodleVulkanPipelineObject& DoodleRenderPass::ResolvePipeline(const DoodleShader& shader)
@@ -152,8 +152,8 @@ namespace Doodle
     {
         //每帧常量的绑定与大小按本 pass 的契约取：着色器加载时按同一份核对
         const DoodleRenderPassLayout& passLayout = GetRenderPassLayout(m_passType);
-        const VkDescriptorSetLayoutBinding& passUboBinding = passLayout.passUboBinding;
-        const VkDeviceSize passUboSize = passLayout.passUboSize;
+        const VkDescriptorSetLayoutBinding& uboBinding = passLayout.uboBinding;
+        const VkDeviceSize uboSize = passLayout.uboSize;
 
         try
         {
@@ -162,7 +162,7 @@ namespace Doodle
             for (DoodleGraphicsBuffer& buffer : m_passUbos)
             {
                 buffer.Initialize(*m_pDevice,
-                                  passUboSize,
+                                  uboSize,
                                   VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                                   DoodleGraphicsBuffer::EMemoryType::HostVisible);
             }
@@ -171,7 +171,7 @@ namespace Doodle
             {
                 .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
                 .bindingCount = 1,
-                .pBindings = &passUboBinding
+                .pBindings = &uboBinding
             };
             if (vkCreateDescriptorSetLayout(m_pDevice->GetLogicalDevice(), &layoutInfo, nullptr, &m_passUboDescriptorSetLayout) != VK_SUCCESS)
             {
@@ -222,14 +222,14 @@ namespace Doodle
                 {
                     .buffer = m_passUbos[i].GetBuffer(),
                     .offset = 0,
-                    .range = passUboSize
+                    .range = uboSize
                 };
 
                 const VkWriteDescriptorSet descriptorWrite
                 {
                     .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                     .dstSet = m_passUboDescriptorSets[i],
-                    .dstBinding = passUboBinding.binding,
+                    .dstBinding = uboBinding.binding,
                     .dstArrayElement = 0,
                     .descriptorCount = 1,
                     .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,

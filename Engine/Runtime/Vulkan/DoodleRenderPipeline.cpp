@@ -151,7 +151,7 @@ namespace Doodle
         //和自己记下的那份比。这里按渲染顺序挨个通知，以后加 pass 不用改这一处
         for (auto* pRenderPass : GetRenderPasses())
         {
-            pRenderPass->RebuildIfAttachmentFormatsChanged();
+            pRenderPass->OnAttachmentsRecreated();
         }
     }
 

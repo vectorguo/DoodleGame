@@ -60,12 +60,12 @@ namespace Doodle
          *
          * 只能是单个 UBO（UNIFORM_BUFFER、数量 1）：DoodleRenderPass 按它建布局 / 池 / 集合并写入，不另做检查
          */
-        VkDescriptorSetLayoutBinding passUboBinding;
+        VkDescriptorSetLayoutBinding uboBinding;
 
         /**
          * 这个 pass 的 UBO 字节数：pass 按它建缓冲，着色器反射出的块不得超过它
          */
-        uint32_t passUboSize = 0;
+        uint32_t uboSize = 0;
 
         /**
          * 逐绘制项数据块（Doodle...PassDrawItemData）的范围
@@ -88,7 +88,7 @@ namespace Doodle
     {
         static const DoodleRenderPassLayout forward
         {
-            .passUboBinding =
+            .uboBinding =
             {
                 .binding = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -96,7 +96,7 @@ namespace Doodle
                 .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                 .pImmutableSamplers = nullptr
             },
-            .passUboSize = static_cast<uint32_t>(sizeof(DoodleForwardPassUbo)),
+            .uboSize = static_cast<uint32_t>(sizeof(DoodleForwardPassUbo)),
             .drawItemDataRange =
             {
                 .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -107,7 +107,7 @@ namespace Doodle
 
         static const DoodleRenderPassLayout shadow
         {
-            .passUboBinding =
+            .uboBinding =
             {
                 .binding = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -115,7 +115,7 @@ namespace Doodle
                 .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
                 .pImmutableSamplers = nullptr
             },
-            .passUboSize = static_cast<uint32_t>(sizeof(DoodleShadowPassUbo)),
+            .uboSize = static_cast<uint32_t>(sizeof(DoodleShadowPassUbo)),
             .drawItemDataRange =
             {
                 .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,

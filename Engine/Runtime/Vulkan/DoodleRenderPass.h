@@ -90,7 +90,7 @@ namespace Doodle
      *
      * **附件格式**：真相在派生类的附件来源里，派生类通过 GetAttachmentFormats 报。
      * 基类记一份表里管线建的时候用的（m_attachmentFormats）：Initialize 时问一次记下，之后新建的
-     * 管线都按它建，表里始终是同一份格式。附件重建之后调 RebuildIfAttachmentFormatsChanged，
+     * 管线都按它建，表里始终是同一份格式。附件重建之后调 OnAttachmentsRecreated，
      * 现取一份和它比，变了才原地重建全部管线。建管线只读这份记录、不碰附件。
      *
      * **每个着色器在本 pass 一条管线**：键是着色器资产指针。渲染状态、顶点 / 实例
@@ -108,7 +108,7 @@ namespace Doodle
      * 要先把它的管线从各 pass 的表里拆掉，再销毁资产。
      *
      * **管线对象稳定**：每条管线单独堆上分配（unique_ptr），ResolvePipeline 返回的
-     * 引用在 Destroy 之前一直有效。附件格式变化时 RebuildIfAttachmentFormatsChanged 原地重建，
+     * 引用在 Destroy 之前一直有效。附件格式变化时 OnAttachmentsRecreated 原地重建，
      * 交出去的引用照样有效。
      *
      * **常驻，不淘汰**：管线数量等于本 pass 有描述的着色器数量，与世界多大无关，
@@ -170,23 +170,6 @@ namespace Doodle
         virtual void Render(const DoodleFrameContext& frameContext, const DoodleRenderPassContext& passContext) = 0;
 
         /**
-         * 附件重建之后调用：按派生类现取的附件格式和表里管线建的时候用的那份比，
-         * 变了就原地重建这个 pass 的每一条管线
-         *
-         * 交换链重建（以后还有阴影图换格式）之后由 DoodleRenderPipeline 调用。只变尺寸时
-         * 格式相同，管线不动（视口与剪裁是动态状态）。每条管线只换管线本身，管线布局与
-         * 对象地址都不变，之前交出去的引用照样有效。
-         *
-         * 某一条建失败时异常向上抛：失败之前的几条已经是新格式，失败的那条和之后的
-         * 还是旧格式（每条各自保证「建不出新的就留着旧的」），记录的附件格式保持旧值。
-         * 这条路只会因设备级故障走到，调用方随后走销毁流程，不再继续画
-         *
-         * @note 前置条件：GPU 已空闲 —— 旧管线可能还被在途的命令引用着；派生类的附件
-         *       已经重建好；表里的着色器资产都还活着（管线按资产里的 pass 数据重建）
-         */
-        void RebuildIfAttachmentFormatsChanged();
-
-        /**
          * 预先建出这批着色器在这个 pass 里会用到的管线，不录任何命令
          *
          * 由 DoodleRenderPipeline 在取帧之前每帧调用，输入是待预热队列
@@ -209,6 +192,24 @@ namespace Doodle
          * @note 可重复调用；已经建过的管线不会重建。前置条件：已初始化、未 Destroy
          */
         virtual void WarmupShaders(const std::vector<const DoodleShader*>& shaders);
+
+        /**
+         * 附件重建之后调用：按派生类现取的附件格式和表里管线建的时候用的那份比，
+         * 变了就原地重建这个 pass 的每一条管线
+         *
+         * 交换链重建（以后还有阴影图换格式）之后由 DoodleRenderPipeline 调用，每个 pass 都
+         * 通知，不管这次重建的是不是它的附件。只变尺寸、或附件没动时格式相同，管线不动
+         * （视口与剪裁是动态状态）。每条管线只换管线本身，管线布局与对象地址都不变，
+         * 之前交出去的引用照样有效。
+         *
+         * 某一条建失败时异常向上抛：失败之前的几条已经是新格式，失败的那条和之后的
+         * 还是旧格式（每条各自保证「建不出新的就留着旧的」），记录的附件格式保持旧值。
+         * 这条路只会因设备级故障走到，调用方随后走销毁流程，不再继续画
+         *
+         * @note 前置条件：GPU 已空闲 —— 旧管线可能还被在途的命令引用着；派生类的附件
+         *       已经重建好；表里的着色器资产都还活着（管线按资产里的 pass 数据重建）
+         */
+        void OnAttachmentsRecreated();
 
         /**
          * 这个 pass 里有几条管线
@@ -243,7 +244,7 @@ namespace Doodle
          * 取某个着色器在本 pass 里的管线；没解析过就建一条
          *
          * 键是着色器资产。资产常驻、地址稳定（见类注释），表的大小只跟着着色器
-         * 数量走；RebuildIfAttachmentFormatsChanged 原地重建不改变管线对象地址，已返回的引用一直有效。
+         * 数量走；OnAttachmentsRecreated 原地重建不改变管线对象地址，已返回的引用一直有效。
          *
          * @throw std::invalid_argument 着色器没有本 pass 的描述；其余同
          *        DoodleVulkanPipelineObject::Initialize（描述不合法或管线建不出来，
@@ -269,7 +270,7 @@ namespace Doodle
          * 本 pass 的颜色 / 深度附件格式与采样数，由派生类按自己的附件现取
          *
          * 基类只在两处问：Initialize 时记下第一份（m_attachmentFormats），附件重建后
-         * RebuildIfAttachmentFormatsChanged 再取一份来比。两处附件都在：调基类 Initialize 之前
+         * OnAttachmentsRecreated 再取一份来比。两处附件都在：调基类 Initialize 之前
          * 派生类已经绑好附件来源，比对在附件重建之后。还没有附件的 pass（阴影骨架）
          * 返回占位值
          */
@@ -329,7 +330,7 @@ namespace Doodle
 
         /**
          * 表里管线建的时候用的附件格式与采样数：Initialize 时按 GetAttachmentFormats 记下，
-         * 新建的管线都按它建；RebuildIfAttachmentFormatsChanged 全部重建成功后才换
+         * 新建的管线都按它建；格式变了，OnAttachmentsRecreated 把管线全部重建成功后才换
          *
          * 不是附件此刻的格式（那是 GetAttachmentFormats）：附件重建之后、比对之前两者可能不同 ——
          * 要不要重建正是靠这份旧值判断

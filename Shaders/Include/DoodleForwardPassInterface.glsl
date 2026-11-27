@@ -8,7 +8,7 @@
 // - push constant 只能落在 forward pass 的 push constant 范围之内。
 // 对不上直接报错，而不是画出错误的结果
 //
-// set/binding 与 DoodleRenderPassLayout 里的 passUboBinding 对齐
+// set/binding 与 DoodleRenderPassLayout 里的 uboBinding 对齐
 
 layout(set = 0, binding = 0, std140) uniform ForwardPassUbo
 {
