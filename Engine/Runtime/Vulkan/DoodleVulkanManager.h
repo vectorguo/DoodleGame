@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "Utility/DoodleStd.h"
+#include "Utility/DoodleCommon.h"
 
 #include "DoodleCommandManager.h"
 #include "Rendering/DoodleFrameContext.h"

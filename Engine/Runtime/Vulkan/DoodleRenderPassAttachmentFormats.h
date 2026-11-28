@@ -4,9 +4,7 @@
 
 #pragma once
 
-#include "Utility/DoodleStd.h"
-
-#include <vulkan/vulkan_core.h>
+#include "Utility/DoodleCommon.h"
 
 namespace Doodle
 {

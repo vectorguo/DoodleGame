@@ -5,9 +5,7 @@
 
 #pragma once
 
-#include "Utility/DoodleStd.h"
-
-#include <glm/glm.hpp>
+#include "Utility/DoodleCommon.h"
 
 namespace Doodle
 {

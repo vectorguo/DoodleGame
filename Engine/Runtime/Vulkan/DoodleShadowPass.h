@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "Utility/DoodleStd.h"
+#include "Utility/DoodleCommon.h"
 
 #include "DoodleRenderPass.h"
 

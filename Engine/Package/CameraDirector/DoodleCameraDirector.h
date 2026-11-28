@@ -7,10 +7,7 @@
 
 #pragma once
 
-#include "Utility/DoodleStd.h"
-
-#include <glm/glm.hpp>
-#include <glm/gtc/quaternion.hpp>
+#include "Utility/DoodleCommon.h"
 
 #include "Core/DoodleComponent.h"
 

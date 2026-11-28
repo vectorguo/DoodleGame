@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "Utility/DoodleStd.h"
+#include "Utility/DoodleCommon.h"
 
 #include "Rendering/DoodleSubmesh.h"
 #include "Rendering/DoodleVertex.h"

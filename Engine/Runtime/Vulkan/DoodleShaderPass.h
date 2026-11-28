@@ -7,9 +7,7 @@
 
 #pragma once
 
-#include "Utility/DoodleStd.h"
-
-#include <vulkan/vulkan_core.h>
+#include "Utility/DoodleCommon.h"
 
 #include "Rendering/DoodleRenderState.h"
 #include "Rendering/DoodleVertex.h"

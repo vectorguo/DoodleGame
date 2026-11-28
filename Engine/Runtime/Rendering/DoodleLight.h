@@ -7,9 +7,7 @@
 
 #pragma once
 
-#include "Utility/DoodleStd.h"
-
-#include <glm/vec3.hpp>
+#include "Utility/DoodleCommon.h"
 
 #include "Core/DoodleComponent.h"
 

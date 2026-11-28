@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include <vulkan/vulkan_core.h>
+#include "Utility/DoodleCommon.h"
 
 #include "DoodleRenderPassAttachmentFormats.h"
 #include "Rendering/DoodleRenderState.h"

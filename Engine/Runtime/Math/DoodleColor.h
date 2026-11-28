@@ -7,9 +7,7 @@
 
 #pragma once
 
-#include "Utility/DoodleStd.h"
-
-#include <glm/vec4.hpp>
+#include "Utility/DoodleCommon.h"
 
 namespace Doodle
 {

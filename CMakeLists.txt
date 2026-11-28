@@ -192,7 +192,7 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Core/DoodleBuiltinComponentRegistration.h
     Engine/Runtime/Core/DoodleBuiltinComponentRegistration.cpp
     Engine/Runtime/Utility/Singleton.h
-    Engine/Runtime/Utility/DoodleStd.h
+    Engine/Runtime/Utility/DoodleCommon.h
         Engine/Runtime/Rendering/DoodleFrameContext.cpp
 )
 

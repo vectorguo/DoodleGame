@@ -5,9 +5,7 @@
 
 #pragma once
 
-#include "Utility/DoodleStd.h"
-
-#include <vulkan/vulkan_core.h>
+#include "Utility/DoodleCommon.h"
 
 #include "DoodleForwardPassData.h"
 #include "DoodleShadowPassData.h"
