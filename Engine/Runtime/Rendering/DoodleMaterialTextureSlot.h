@@ -5,8 +5,7 @@
 
 #pragma once
 
-#include <cstdint>
-#include <string>
+#include "Utility/DoodleStd.h"
 
 namespace Doodle
 {

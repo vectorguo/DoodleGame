@@ -5,8 +5,7 @@
 
 #pragma once
 
-#include <cstdint>
-#include <stdexcept>
+#include "Utility/DoodleStd.h"
 
 #include <vulkan/vulkan_core.h>
 

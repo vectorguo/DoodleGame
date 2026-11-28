@@ -7,8 +7,7 @@
 
 #pragma once
 
-#include <string>
-#include <vector>
+#include "Utility/DoodleStd.h"
 
 #include <glm/glm.hpp>
 

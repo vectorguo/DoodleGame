@@ -7,10 +7,7 @@
 
 #pragma once
 
-#include <cstddef>
-#include <span>
-#include <string_view>
-#include <vector>
+#include "Utility/DoodleStd.h"
 
 #include "Rendering/DoodleSubmesh.h"
 #include "Rendering/DoodleVertex.h"

@@ -7,8 +7,7 @@
 
 #pragma once
 
-#include <string>
-#include <string_view>
+#include "Utility/DoodleStd.h"
 
 namespace Doodle
 {

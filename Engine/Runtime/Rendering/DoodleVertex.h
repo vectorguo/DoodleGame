@@ -6,10 +6,7 @@
 //
 #pragma once
 
-#include <cstddef>
-#include <stdexcept>
-#include <string>
-#include <vector>
+#include "Utility/DoodleStd.h"
 
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>

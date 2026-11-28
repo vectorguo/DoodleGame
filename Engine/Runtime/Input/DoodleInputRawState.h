@@ -7,9 +7,7 @@
 
 #pragma once
 
-#include <array>
-#include <cstddef>
-#include <cstdint>
+#include "Utility/DoodleStd.h"
 
 #include <glm/glm.hpp>
 

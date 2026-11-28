@@ -7,9 +7,7 @@
 
 #pragma once
 
-#include <cstddef>
-#include <span>
-#include <string_view>
+#include "Utility/DoodleStd.h"
 
 #include "Scene/DoodleSceneData.h"
 

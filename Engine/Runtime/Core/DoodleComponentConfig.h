@@ -7,10 +7,7 @@
 
 #pragma once
 
-#include <initializer_list>
-#include <string>
-#include <string_view>
-#include <vector>
+#include "Utility/DoodleStd.h"
 
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>

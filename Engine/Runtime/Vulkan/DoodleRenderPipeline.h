@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include <array>
+#include "Utility/DoodleStd.h"
 
 #include "DoodleDepthImages.h"
 #include "DoodleDescriptorManager.h"

@@ -7,11 +7,7 @@
 
 #pragma once
 
-#include <array>
-#include <cstddef>
-#include <memory>
-#include <unordered_map>
-#include <vector>
+#include "Utility/DoodleStd.h"
 
 #include <vulkan/vulkan_core.h>
 

@@ -7,10 +7,7 @@
 
 #pragma once
 
-#include <map>
-#include <string>
-#include <string_view>
-#include <type_traits>
+#include "Utility/DoodleStd.h"
 
 #include "DoodleComponentConfig.h"
 #include "DoodleGameObject.h"

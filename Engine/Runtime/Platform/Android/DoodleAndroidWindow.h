@@ -7,10 +7,7 @@
 
 #pragma once
 
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
-#include <vector>
+#include "Utility/DoodleStd.h"
 
 #include "../DoodleWindow.h"
 

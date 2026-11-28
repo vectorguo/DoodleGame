@@ -7,8 +7,7 @@
 
 #pragma once
 
-#include <cmath>
-#include <type_traits>
+#include "Utility/DoodleStd.h"
 
 #include <glm/vec4.hpp>
 

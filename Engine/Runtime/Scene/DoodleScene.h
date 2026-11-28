@@ -7,10 +7,7 @@
 
 #pragma once
 
-#include <memory>
-#include <string>
-#include <string_view>
-#include <vector>
+#include "Utility/DoodleStd.h"
 
 #include "Core/DoodleLifecycleState.h"
 

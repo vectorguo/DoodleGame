@@ -192,7 +192,18 @@ set(DOODLE_SHARED_SOURCES
     Engine/Runtime/Core/DoodleBuiltinComponentRegistration.h
     Engine/Runtime/Core/DoodleBuiltinComponentRegistration.cpp
     Engine/Runtime/Utility/Singleton.h
+    Engine/Runtime/Utility/DoodleStd.h
         Engine/Runtime/Rendering/DoodleFrameContext.cpp
+)
+
+# 预编译头是 C++ 的（<array> 这类头在 C 里不存在），C 源文件不能带着它编。
+# 这两个 .c 是仓库自带的第三方实现，跳过预编译头按原样编。
+# 少写这个，C 编译器会把 DoodlePrecompiled.h 当成 C 源码解析，报
+# "fatal error: 'array' file not found"
+set_source_files_properties(
+    Engine/ThirdParty/ufbx/ufbx.c
+    Engine/ThirdParty/spirv_reflect/spirv_reflect.c
+    PROPERTIES SKIP_PRECOMPILE_HEADERS ON
 )
 
 # macOS 专属：窗口、文件来源与日志实现
@@ -433,6 +444,12 @@ if(ANDROID)
     # Looper、事件队列、窗口命令（APP_CMD_INIT_WINDOW 之类）都出自这里
     set(_doodle_native_app_glue_dir "${ANDROID_NDK}/sources/android/native_app_glue")
 
+    # 同上：C 源文件跳过 C++ 预编译头
+    set_source_files_properties(
+        "${_doodle_native_app_glue_dir}/android_native_app_glue.c"
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON
+    )
+
     # 引擎静态库：Vulkan、资产、场景、平台适配器。
     # 这里没有 GamePlay，也没有 android_main —— 依赖方向是单向的
     add_library(DoodleEngine STATIC
@@ -472,6 +489,14 @@ if(ANDROID)
         ${CMAKE_CURRENT_SOURCE_DIR}/App
         ${CMAKE_CURRENT_SOURCE_DIR}/GamePlay
     )
+
+    # 预编译头：标准库统一头 + vulkan / glm / nlohmann 预编译一次，
+    # 每个 TU 强制包含在前面。各文件里照常写 #include，命中 #pragma once 零成本。
+    # PCH 只依赖它自己包含的头：改工程头不会让它失效
+    target_precompile_headers(DoodleEngine PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Engine/Runtime/Utility/DoodlePrecompiled.h)
+    target_precompile_headers(DoodleGame PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Engine/Runtime/Utility/DoodlePrecompiled.h)
 
     # Vulkan 头文件里那些平台类型（VkAndroidSurfaceCreateInfoKHR、
     # vkCreateAndroidSurfaceKHR）都在 #ifdef VK_USE_PLATFORM_ANDROID_KHR 里，
@@ -659,6 +684,14 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/App
         ${CMAKE_CURRENT_SOURCE_DIR}/GamePlay
     )
+
+    # 预编译头：标准库统一头 + vulkan / glm / nlohmann 预编译一次，
+    # 每个 TU 强制包含在前面。各文件里照常写 #include，命中 #pragma once 零成本。
+    # PCH 只依赖它自己包含的头：改工程头不会让它失效
+    target_precompile_headers(DoodleEngine PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Engine/Runtime/Utility/DoodlePrecompiled.h)
+    target_precompile_headers(DoodleGame PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/Engine/Runtime/Utility/DoodlePrecompiled.h)
 
     # VK_USE_PLATFORM_WIN32_KHR —— 与 Android 的 VK_USE_PLATFORM_ANDROID_KHR 同理：
     #   VkWin32SurfaceCreateInfoKHR、vkCreateWin32SurfaceKHR 都在这个宏后面
@@ -860,6 +893,14 @@ target_include_directories(DoodleGame PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/App
     ${CMAKE_CURRENT_SOURCE_DIR}/GamePlay
 )
+
+# 预编译头：标准库统一头 + vulkan / glm / nlohmann 预编译一次，
+# 每个 TU 强制包含在前面。各文件里照常写 #include，命中 #pragma once 零成本。
+# PCH 只依赖它自己包含的头：改工程头不会让它失效
+target_precompile_headers(DoodleEngine PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/Engine/Runtime/Utility/DoodlePrecompiled.h)
+target_precompile_headers(DoodleGame PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/Engine/Runtime/Utility/DoodlePrecompiled.h)
 
 # 把找到的两个 dylib 链进可执行文件。
 # 链接器会记下 GLFW 的绝对路径，以及 Vulkan 的 @rpath/libvulkan.1.dylib（运行时再按 rpath 找）。

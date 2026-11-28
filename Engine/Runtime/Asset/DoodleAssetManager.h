@@ -7,13 +7,7 @@
 
 #pragma once
 
-#include <memory>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <typeindex>
-#include <unordered_map>
-#include <utility>
+#include "Utility/DoodleStd.h"
 
 #include "DoodleAssetLoader.h"
 

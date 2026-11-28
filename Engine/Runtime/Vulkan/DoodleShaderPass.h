@@ -7,8 +7,7 @@
 
 #pragma once
 
-#include <cstddef>
-#include <vector>
+#include "Utility/DoodleStd.h"
 
 #include <vulkan/vulkan_core.h>
 

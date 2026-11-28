@@ -7,8 +7,7 @@
 
 #pragma once
 
-#include <mutex>
-#include <vector>
+#include "Utility/DoodleStd.h"
 
 namespace Doodle
 {

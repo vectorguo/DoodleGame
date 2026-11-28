@@ -6,8 +6,7 @@
 //
 #pragma once
 
-#include <memory>
-#include <vector>
+#include "Utility/DoodleStd.h"
 
 #include "Asset/DoodleAssetManager.h"
 #include "Scene/DoodleSceneManager.h"

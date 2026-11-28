@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include "Utility/DoodleStd.h"
+
 #include "../DoodleFileSystem.h"
 
 //前向声明。必须放在全局作用域。

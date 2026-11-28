@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include <string_view>
+#include "Utility/DoodleStd.h"
 #include <vulkan/vulkan_core.h>
 
 #include "Asset/DoodleAsset.h"

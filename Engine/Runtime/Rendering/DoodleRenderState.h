@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include "Utility/DoodleStd.h"
+
 namespace Doodle
 {
     /**

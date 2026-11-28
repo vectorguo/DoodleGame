@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include "Utility/DoodleStd.h"
+
 #include <glm/glm.hpp>
 
 namespace Doodle

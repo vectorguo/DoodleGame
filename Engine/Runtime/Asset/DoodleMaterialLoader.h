@@ -7,8 +7,7 @@
 
 #pragma once
 
-#include <memory>
-#include <string_view>
+#include "Utility/DoodleStd.h"
 
 #include "DoodleAssetLoader.h"
 #include "Rendering/DoodleMaterial.h"

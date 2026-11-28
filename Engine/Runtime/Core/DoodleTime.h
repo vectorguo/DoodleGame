@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include <chrono>
+#include "Utility/DoodleStd.h"
 
 namespace Doodle
 {

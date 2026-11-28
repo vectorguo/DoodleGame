@@ -7,10 +7,7 @@
 
 #pragma once
 
-#include <functional>
-#include <map>
-#include <string>
-#include <string_view>
+#include "Utility/DoodleStd.h"
 
 #include "Asset/DoodleAsset.h"
 #include "Math/DoodleColor.h"

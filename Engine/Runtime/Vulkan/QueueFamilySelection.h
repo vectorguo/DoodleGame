@@ -6,9 +6,7 @@
 //
 #pragma once
 
-#include <algorithm>
-#include <optional>
-#include <vector>
+#include "Utility/DoodleStd.h"
 
 namespace Doodle
 {

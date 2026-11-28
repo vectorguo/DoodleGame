@@ -6,6 +6,8 @@
 //
 
 #pragma once
+#include "Utility/DoodleStd.h"
+
 #include "../DoodleApplication.h"
 
 namespace Doodle
